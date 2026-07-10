@@ -109,8 +109,8 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
         int idx = static_cast<int>(i);
         auto& rings = gpu_hist_[idx];
         int& len = gpu_hist_len_[idx];
+        int mlen = len;   // BEFORE the util push bumps len — rings stay in step
         sys::push_hist(rings.first, len, static_cast<float>(gpus[i].usage.v));
-        int mlen = len;
         sys::push_hist(rings.second, mlen, static_cast<float>(gpus[i].mem_usage.v));
         gpus[i].util_history = rings.first;
         gpus[i].mem_history = rings.second;

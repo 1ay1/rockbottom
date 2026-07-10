@@ -157,9 +157,10 @@ public:
                     }
                 }
                 // Combine everything into one braille glyph. A glyph carries
-                // ONE color, so pick by priority: overlay crest (must pop) >
-                // primary crest > primary fill > overlay-only fill. Fills
-                // fade toward the floor so both mountains have depth.
+                // ONE color, so pick by priority: where BOTH crests share the
+                // cell, blend the hues (an idle primary hugging the floor
+                // must never be fully painted over by the overlay); else
+                // whichever crest is present > primary fill > overlay fill.
                 const uint8_t bits = line_bits | fill_bits | over_bits | ofill_bits;
                 if (bits) {
                     std::size_t off = content.size();
@@ -168,7 +169,9 @@ public:
                     const Color bright = color_ ? *color_
                         : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
                     Color cc;
-                    if (over_bits) {
+                    if (line_bits && over_bits) {
+                        cc = mix(bright, overlay_color_, 0.5);
+                    } else if (over_bits) {
                         cc = overlay_color_;
                     } else if (line_bits) {
                         cc = bright;
