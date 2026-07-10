@@ -150,7 +150,6 @@ public:
                 uint8_t line_bits = 0;
                 uint8_t fill_bits = 0;
                 uint8_t over_bits = 0;
-                uint8_t ofill_bits = 0;
                 uint8_t grid_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
@@ -163,10 +162,10 @@ public:
                         // parity) inks, so the mountain reads as translucent
                         // shading instead of a solid dot wall.
                         else if (gy > ly && ((gx + gy) & 1)) fill_bits |= kDot[dr][dc];
-                        if (has_overlay) {
-                            if (gy == oy)     over_bits  |= kDot[dr][dc];
-                            else if (gy > oy && ((gx + gy) & 1)) ofill_bits |= kDot[dr][dc];
-                        }
+                        // The overlay is a LINE ONLY — a second dithered
+                        // mountain over the primary's fill reads as noise
+                        // (two checker patterns interfere into a moiré band).
+                        if (has_overlay && gy == oy) over_bits |= kDot[dr][dc];
                         if (gy < ly && (!has_overlay || gy < oy) && is_grid(gy, gx))
                             grid_bits |= kDot[dr][dc];
                     }
@@ -175,8 +174,8 @@ public:
                 // ONE color, so pick by priority: where BOTH crests share the
                 // cell, blend the hues (an idle primary hugging the floor
                 // must never be fully painted over by the overlay); else
-                // whichever crest is present > primary fill > overlay fill.
-                const uint8_t bits = line_bits | fill_bits | over_bits | ofill_bits | grid_bits;
+                // whichever crest is present > primary fill.
+                const uint8_t bits = line_bits | fill_bits | over_bits | grid_bits;
                 if (bits) {
                     std::size_t off = content.size();
                     utf8(U'\u2800' + bits, content);
@@ -193,10 +192,6 @@ public:
                     } else if (fill_bits) {
                         // Depth fade: rows further from the top are dimmer.
                         cc = mix(bright, pal::bg_panel, 0.45 + 0.25 * depth);
-                    } else if (ofill_bits) {
-                        // Overlay-only fill: even fainter, so the second
-                        // mountain reads as a translucent layer behind.
-                        cc = mix(overlay_color_, pal::bg_panel, 0.62 + 0.18 * depth);
                     } else {
                         cc = pal::track;   // gridline dots
                     }
