@@ -57,6 +57,13 @@ struct App {
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
 
+        // True while a background sample is in flight. The Sampler holds
+        // cross-tick delta state (CPU busy fractions, net/proc rates), so only
+        // ONE sample may run at a time — this guard drops Ticks that arrive
+        // while a slow sample (e.g. a wedged nvidia-smi) is still running,
+        // instead of queuing a backlog on the worker thread.
+        bool        sampling = false;
+
         std::shared_ptr<Sampler> sampler = std::make_shared<Sampler>();
     };
 
@@ -64,9 +71,10 @@ struct App {
     struct Resize { int w, h; };
     struct Key { maya::KeyEvent ev; };
     struct Mouse { maya::MouseEvent ev; };
+    struct Sampled { Snapshot snap; };   // a background sample finished
     struct Quit {};
 
-    using Msg = std::variant<Tick, Resize, Key, Mouse, Quit>;
+    using Msg = std::variant<Tick, Resize, Key, Mouse, Sampled, Quit>;
 
     // ── shared layout geometry ──────────────────────────────────────────────
     // The mouse handler and view() MUST agree on where every panel lands, so
@@ -383,18 +391,49 @@ struct App {
 
     static std::pair<Model, maya::Cmd<Msg>> init() {
         Model m;
+        // The very first sample runs synchronously: there is no event loop yet
+        // to block, and the first frame should paint with real data instead of
+        // an empty snapshot. Every sample AFTER this is a background effect.
         m.snap = m.sampler->sample(m.sort, 400);
         return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
+    // runs on a dedicated detached thread; when it finishes it dispatches a
+    // Sampled{} message back through update(). task_isolated (not task) is
+    // deliberate: sample_gpu() spawns nvidia-smi and reads /proc, /sys, and a
+    // wedged syscall (dead FUSE mount, hung subprocess) must leak one thread
+    // rather than starve the shared worker pool. Marks the model in-flight so
+    // overlapping Ticks are dropped until the result lands.
+    static maya::Cmd<Msg> sample_cmd(Model& m) {
+        m.sampling = true;
+        auto sampler = m.sampler;   // shared_ptr copy: outlives this update()
+        SortKey sort = m.sort;
+        return maya::Cmd<Msg>::task_isolated(
+            [sampler, sort](std::function<void(Msg)> dispatch) {
+                dispatch(Sampled{sampler->sample(sort, 400)});
+            });
     }
 
     static std::pair<Model, maya::Cmd<Msg>> update(Model m, Msg msg) {
         using C = maya::Cmd<Msg>;
         return std::visit(maya::overload{
-            [&](Tick) {
-                if (!m.paused) { ++m.ticks; m.snap = m.sampler->sample(m.sort, 400); }
+            [&](Tick) -> std::pair<Model, C> {
                 if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
+                // Kick a background sample unless paused or one's already running.
+                if (!m.paused && !m.sampling) {
+                    ++m.ticks;
+                    C c = sample_cmd(m);
+                    return {std::move(m), std::move(c)};
+                }
+                return {std::move(m), C{}};
+            },
+            [&](Sampled sm) -> std::pair<Model, C> {
+                // Pure fold: the effect already did the I/O off-thread.
+                m.snap = std::move(sm.snap);
+                m.sampling = false;
                 clamp_sel(m);
-                return std::pair{std::move(m), C{}};
+                return {std::move(m), C{}};
             },
             [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
             [&](Key k)    { return on_key(std::move(m), k.ev); },
@@ -420,7 +459,9 @@ struct App {
                     ? Toast{verb + m.pending->name + " (" + std::to_string(m.pending->pid) + ")" + tail, false}
                     : Toast{err, true};
                 m.pending.reset();
-                m.snap = m.sampler->sample(m.sort, 400);
+                // Refresh the list off-thread so the killed process drops out
+                // promptly without blocking on a full re-sample here.
+                if (!m.sampling) { auto c = sample_cmd(m); return {std::move(m), std::move(c)}; }
             } else if (key(ev, 'n') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
                 m.pending.reset();
             }
@@ -562,9 +603,14 @@ struct App {
     }
 
     static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
-        m.snap = m.sampler->sample(m.sort, 400);
+        // Sort changed: re-sample in the background rather than blocking the
+        // keystroke. The list keeps showing the old order for one frame, then
+        // Sampled{} folds in the re-sorted snapshot. If a sample is already in
+        // flight we let it finish (its result will already carry the new sort).
         clamp_sel(m);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        if (m.sampling) return {std::move(m), maya::Cmd<Msg>{}};
+        auto c = sample_cmd(m);
+        return {std::move(m), std::move(c)};
     }
 
     // ── subscriptions ───────────────────────────────────────────────────────
