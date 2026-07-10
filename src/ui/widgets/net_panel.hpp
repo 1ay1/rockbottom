@@ -24,31 +24,18 @@ class NetPanel {
 public:
     explicit NetPanel(const std::vector<NetIface>& n) : nets_(n) {}
 
-    // An iface is "quiet" only if it moved zero bytes across the whole
-    // history window. Anything with a pulse — even currently at 0B/s —
-    // keeps its full row (baseline sparks keep its graph visible).
-    [[nodiscard]] static bool quiet(const NetIface& n) {
-        if (n.rx.per_sec + n.tx.per_sec >= 1.0) return false;
-        for (int i = 0; i < n.hist_len; ++i)
-            if (n.rx_history[static_cast<std::size_t>(i)] >= 1.0f ||
-                n.tx_history[static_cast<std::size_t>(i)] >= 1.0f)
-                return false;
-        return true;
-    }
+    // The pane always shows the top 4 interfaces (the sampler sorts by
+    // traffic rate, name as tiebreak) — a stable roster that never grows a
+    // dozen rows of dead utun tunnels. Everything past 4 folds into one
+    // dim summary line.
+    static constexpr int kMaxRows = 4;
 
-    // Rows the card body occupies: live ifaces + one collapsed "N idle" line.
-    // Layout math in app.hpp must use this, not nets.size().
+    // Rows the card body occupies. Layout math in app.hpp must use this,
+    // not nets.size().
     [[nodiscard]] static int rows(const std::vector<NetIface>& nets) {
         if (nets.empty()) return 1;
-        int live = 0;
-        for (const auto& n : nets)
-            if (!quiet(n)) ++live;
-        int idle = static_cast<int>(nets.size()) - live;
-        if (live == 0) {
-            live = std::min(3, static_cast<int>(nets.size()));
-            idle = static_cast<int>(nets.size()) - live;
-        }
-        return live + (idle > 0 ? 1 : 0);
+        const int n = static_cast<int>(nets.size());
+        return std::min(n, kMaxRows) + (n > kMaxRows ? 1 : 0);
     }
 
     operator maya::Element() const { return build(); }
@@ -63,17 +50,9 @@ public:
 
         std::vector<const NetIface*> live;
         std::vector<std::string> idle_names;
-        for (const auto& n : nets_)
-            (quiet(n) ? (void)idle_names.push_back(n.name) : (void)live.push_back(&n));
-
-        // If literally everything is silent, promote the first few so the
-        // panel never reads empty.
-        if (live.empty() && !nets_.empty()) {
-            idle_names.clear();
-            for (const auto& n : nets_) {
-                if (live.size() < 3) live.push_back(&n);
-                else idle_names.push_back(n.name);
-            }
+        for (const auto& n : nets_) {
+            if (static_cast<int>(live.size()) < kMaxRows) live.push_back(&n);
+            else idle_names.push_back(n.name);
         }
 
         for (const auto* np : live) {
@@ -126,7 +105,7 @@ public:
             std::vector<std::string> names = idle_names;
             rows.push_back(Element{ComponentElement{
                 .render = [count, names](int w, int) -> Element {
-                    std::string label = std::to_string(count) + " idle";
+                    std::string label = std::to_string(count) + " more";
                     std::string list;
                     std::size_t shown = 0;
                     int budget = std::max(0, w - static_cast<int>(label.size()) - 4);
