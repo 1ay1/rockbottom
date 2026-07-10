@@ -51,6 +51,16 @@ public:
             std::string name = std::string(fmt::clip(n.name, 7));
             std::string rx = std::string(humanize_rate(n.rx));
             std::string tx = std::string(humanize_rate(n.tx));
+            // Idle interfaces (no live rate, flat history) recede into the
+            // background so the active ones carry the panel.
+            bool idle = n.rx.per_sec < 1 && n.tx.per_sec < 1;
+            for (int i = 0; idle && i < n.hist_len; ++i)
+                if (n.rx_history[static_cast<std::size_t>(i)] > 0.5f ||
+                    n.tx_history[static_cast<std::size_t>(i)] > 0.5f) idle = false;
+            const Color name_c = idle ? pal::dim : pal::net_ac;
+            const Color rx_c   = idle ? pal::faint : pal::good;
+            const Color tx_c   = idle ? pal::faint : pal::hot;
+            const Color val_c  = idle ? pal::dim : pal::text;
             std::array<float, 48> rxa = rxn, txa = txn;
             int hl = n.hist_len;
             rows.push_back(Element{ComponentElement{
@@ -62,13 +72,13 @@ public:
                     int slack = std::max(0, w - fixed);
                     int each = show_spark ? slack / 2 : 0;
                     std::vector<Element> cols;
-                    cols.push_back((text(name) | nowrap | Bold | fgc(pal::net_ac) | w_<8>).build());
-                    cols.push_back((text("▼") | nowrap | fgc(pal::good)).build());
-                    cols.push_back((text(rx) | nowrap | fgc(pal::text) | w_<7>).build());
+                    cols.push_back((text(name) | nowrap | Bold | fgc(name_c) | w_<8>).build());
+                    cols.push_back((text("▼") | nowrap | fgc(rx_c)).build());
+                    cols.push_back((text(rx) | nowrap | fgc(val_c) | w_<7>).build());
                     if (each > 0)
                         cols.push_back(Spark{rxa.data(), hl}.cells(each).color(pal::good).build_fixed());
-                    cols.push_back((text("▲") | nowrap | fgc(pal::hot)).build());
-                    cols.push_back((text(tx) | nowrap | fgc(pal::text) | w_<7>).build());
+                    cols.push_back((text("▲") | nowrap | fgc(tx_c)).build());
+                    cols.push_back((text(tx) | nowrap | fgc(val_c) | w_<7>).build());
                     if (each > 0)
                         cols.push_back(Spark{txa.data(), hl}.cells(each).color(pal::hot).build_fixed());
                     return (h(std::move(cols)) | gap(1)).build();

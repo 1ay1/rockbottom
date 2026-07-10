@@ -2,9 +2,9 @@
 //
 // Renders a history ring on a fixed 0..1 (0-100%) scale using braille dots
 // (U+2800, 2x4 sub-cell resolution) for a crisp continuous trace, backed by
-// a dim filled area so the "mountain" reads at a glance while the bright
-// leading line shows the exact shape. The line color follows the load
-// gradient of the *latest* sample, so a spiking graph glows amber/red.
+// a dim depth-faded area fill so the "mountain" reads at a glance while the
+// bright leading line shows the exact shape. The line color follows the load
+// gradient at each column, so a spiking graph glows amber/red at the spike.
 //
 //   Graph{hist.data(), len}.cells(46).rows(4)
 //
@@ -139,6 +139,7 @@ public:
 
             for (int c = 0; c < cells_; ++c) {
                 uint8_t line_bits = 0;
+                uint8_t fill_bits = 0;
                 uint8_t over_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
@@ -146,24 +147,31 @@ public:
                     int oy = has_overlay ? oline[static_cast<std::size_t>(gx)] : -1;
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
-                        if (gy == ly) line_bits |= kDot[dr][dc];
-                        if (gy == oy) over_bits |= kDot[dr][dc];
+                        if (gy == ly)      line_bits |= kDot[dr][dc];
+                        else if (gy > ly)  fill_bits |= kDot[dr][dc];
+                        if (gy == oy)      over_bits |= kDot[dr][dc];
                     }
                 }
-                // Combine both traces into one braille glyph. A single glyph
-                // can only carry one color, so we colour the cell by the
-                // OVERLAY hue whenever it holds an overlay dot (the RAM/VRAM
-                // line should pop over the primary trace); otherwise the
-                // primary hue.
-                const uint8_t bits = line_bits | over_bits;
+                // Combine everything into one braille glyph. A glyph carries
+                // ONE color, so pick by priority: overlay line (must pop) >
+                // bright trace crest > dim area fill. The fill fades toward
+                // the floor so the mountain has depth instead of reading as
+                // a solid slab.
+                const uint8_t bits = line_bits | fill_bits | over_bits;
                 if (bits) {
                     std::size_t off = content.size();
                     utf8(U'\u2800' + bits, content);
+                    const Color bright = color_ ? *color_
+                        : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
                     Color cc;
                     if (over_bits) {
                         cc = overlay_color_;
+                    } else if (line_bits) {
+                        cc = bright;
                     } else {
-                        cc = color_ ? *color_ : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
+                        // Depth fade: rows further from the top are dimmer.
+                        const double depth = rows_ > 1 ? static_cast<double>(r) / (rows_ - 1) : 1.0;
+                        cc = mix(bright, pal::bg_panel, 0.55 + 0.25 * depth);
                     }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {

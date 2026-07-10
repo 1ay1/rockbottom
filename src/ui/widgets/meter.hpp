@@ -75,20 +75,25 @@ public:
         content.reserve(static_cast<std::size_t>(width_) * 3);
 
         // Filled cells — each cell gets the gradient color of ITS position,
-        // so the bar itself narrates severity as it grows.
+        // so the bar itself narrates severity as it grows. The leading cell
+        // is lifted toward white — a glossy tip that marks the live edge.
+        const int tip = (full < width_ && frac8 > 0) ? full : full - 1;
         for (int i = 0; i < full && i < width_; ++i) {
             maya::Color c = color_ ? *color_
                                    : load_color((i + 0.5) / width_);
+            if (i == tip) c = mix(c, pal::white, 0.35);
             std::size_t off = content.size();
             content += kFull;
             runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
         }
 
         // Partial cell: eighth-block fill over the groove color, so the cell's
-        // unfilled remainder shows the track — a seamless boundary.
+        // unfilled remainder shows the track — a seamless boundary. As the
+        // leading edge it carries the glossy tip.
         int used = full;
         if (full < width_ && frac8 > 0) {
             maya::Color c = color_ ? *color_ : load_color((full + 0.5) / width_);
+            c = mix(c, pal::white, 0.35);
             std::size_t off = content.size();
             content += kEighths[frac8];
             auto st = maya::Style{}.with_fg(c);
