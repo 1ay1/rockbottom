@@ -236,21 +236,27 @@ struct App {
         const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right
 
         // The ALL graph is the first thing to shrink when height is scarce.
-        // Wide mode: the CPU column has its own height, so a full 4-row graph
-        // is fine. Narrow mode: everything stacks, so fit the graph into what
-        // is left after the other cards + a 5-row process table minimum.
+        // Wide mode: match the CPU column's height to the MEM+NET+DISK stack so
+        // neither column leaves a trailing gap; the graph flexes to fit.
+        // Narrow mode: everything stacks, so fit the graph into what is left
+        // after the other cards + a 5-row process table minimum.
+        const int right_stack_h = mem_h + net_h + disk_h;
         int graph_h = 4;
         if (narrow) {
             const int fixed = 2 + 3 + 1                 // header+verdict+footer
                             + 2 + 1 + cores_rows        // cpu border+blank+cores
-                            + mem_h + net_h + disk_h
+                            + right_stack_h
                             + (2 + 5)                   // proc border + 5 rows
                             + 2;                        // outer padding slack
             graph_h = std::clamp(m.height - fixed, 0, 4);
+        } else {
+            // cpu_h = 2(border) + graph_h + 1(blank) + cores_rows. Solve for
+            // the graph_h that makes cpu_h == right_stack_h, clamped sane.
+            graph_h = std::clamp(right_stack_h - 2 - 1 - cores_rows, 2, 8);
         }
         const int cpu_h  = 2 + (graph_h >= 2 ? graph_h : 1) + 1 + cores_rows;
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
-                                  : std::max(cpu_h, mem_h + net_h + disk_h);
+                                  : std::max(cpu_h, right_stack_h);
         const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
 
         ProcView pv{
