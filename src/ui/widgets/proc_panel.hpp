@@ -43,12 +43,19 @@ public:
 
         std::vector<Element> rows;
 
-        // Kill confirmation strip replaces the header while pending.
-        if (view_.pending) rows.push_back(confirm_strip());
-        else               rows.push_back(header_row());
-
         const auto& procs = view_.procs;
         const int n = static_cast<int>(procs.size());
+        // Scroll window that keeps the selection visible.
+        const int body_rows = std::max(3, view_.max_rows - 1);
+        const bool scrolling = n > body_rows;
+        // When the scrollbar shows it eats gutter(1)+bar(1) on the right of the
+        // body rows; reserve the same on the header (the header's own gap(1)
+        // supplies one col, this blank the other) so THR stays aligned.
+        const int rgutter = scrolling ? 1 : 0;
+
+        // Kill confirmation strip replaces the header while pending.
+        if (view_.pending) rows.push_back(confirm_strip());
+        else               rows.push_back(header_row(rgutter));
 
         // Culprit detection on the visible (filtered) list.
         int hi = -1;
@@ -63,8 +70,6 @@ public:
             ? (hi >= 0 && procs[static_cast<std::size_t>(hi)]->mem_share.percent() > 8)
             : (hi >= 0 && best > 25);
 
-        // Scroll window that keeps the selection visible.
-        const int body_rows = std::max(3, view_.max_rows - 1);
         int start = 0;
         if (view_.selected >= body_rows) start = view_.selected - body_rows + 1;
         start = std::clamp(start, 0, std::max(0, n - body_rows));
@@ -84,7 +89,7 @@ public:
         // Scrollbar: maya's scrollbar_y renders from plain ScrollState fields,
         // so we drive it straight from our selection window — no scroll
         // plumbing, just where-am-I feedback for 380-row lists.
-        if (n > body_rows) {
+        if (scrolling) {
             ScrollState sb;
             sb.y = start;
             sb.max_y = n - body_rows;
@@ -93,6 +98,7 @@ public:
             st.thumb_color = pal::proc_ac;
             rows.push_back((h(
                 (v(body) | grow(1)),
+                Element{blank()} | width(1),
                 scrollbar_y(sb, static_cast<int>(body.size()), st)
             )).build());
         } else {
@@ -139,7 +145,7 @@ private:
         )).build();
     }
 
-    [[nodiscard]] maya::Element header_row() const {
+    [[nodiscard]] maya::Element header_row(int rgutter = 0) const {
         using namespace maya;
         using namespace maya::dsl;
         const int w = view_.width;
@@ -179,6 +185,7 @@ private:
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
         cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2> | justify(Justify::Center)).build());
         if (show_thr) cols.push_back(((text("THR") | nowrap | Bold | fgc(pal::dim)) | w_<4> | justify(Justify::End)).build());
+        if (rgutter > 0) cols.push_back((Element{blank()} | width(rgutter)).build());
         return (h(std::move(cols)) | gap(1)).build();
     }
 
