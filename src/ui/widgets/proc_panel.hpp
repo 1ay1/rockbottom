@@ -172,13 +172,13 @@ private:
         cols.push_back(((text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
         cols.push_back(((text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
         cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
-        if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<11>).build());
+        if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
         if (show_memp) cols.push_back(plain_num("MEM%", 5));
-        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<10> | justify(Justify::End)).build());
-        cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>).build());
-        if (show_thr) cols.push_back((text("THR") | nowrap | Bold | fgc(pal::dim)).build());
+        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
+        cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2> | justify(Justify::Center)).build());
+        if (show_thr) cols.push_back(((text("THR") | nowrap | Bold | fgc(pal::dim)) | w_<4> | justify(Justify::End)).build());
         return (h(std::move(cols)) | gap(1)).build();
     }
 
@@ -234,17 +234,17 @@ private:
             cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>).build());
             cols.push_back((text(fmt::clip(p.name, 32), name_st) | nowrap | grow(1)).build());
             if (show_port)
-                cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<11>).build());
+                cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<9> | justify(Justify::End)).build());
             cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6>).build());
             cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<8> | justify(Justify::End)).build());
             if (show_memp)
                 cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
             if (show_io)
-                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<10> | justify(Justify::End)).build());
-            cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2>).build());
+                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<8> | justify(Justify::End)).build());
+            cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
             if (show_thr)
-                cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)).build());
+                cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim) | w_<4> | justify(Justify::End)).build());
             return h(std::move(cols)) | gap(1);
         }();
 
