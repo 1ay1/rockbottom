@@ -60,15 +60,29 @@ public:
                 rn[static_cast<std::size_t>(i)] = io_.read_history[static_cast<std::size_t>(i)] / peak;
                 wn[static_cast<std::size_t>(i)] = io_.write_history[static_cast<std::size_t>(i)] / peak;
             }
-            rows.push_back((h(
-                text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<5>,
-                text("▼") | nowrap | fgc(pal::sky),
-                text(humanize_rate(io_.read)) | nowrap | Bold | fgc(pal::text) | w_<8>,
-                Spark{rn.data(), io_.hist_len}.cells(8).color(pal::sky),
-                text(" ▲") | nowrap | fgc(pal::pink),
-                text(humanize_rate(io_.write)) | nowrap | Bold | fgc(pal::text) | w_<8>,
-                Spark{wn.data(), io_.hist_len}.cells(8).color(pal::pink)
-            ) | gap(1)).build());
+            std::string rd = std::string(humanize_rate(io_.read));
+            std::string wr = std::string(humanize_rate(io_.write));
+            std::array<float, 48> rna = rn, wna = wn;
+            int hl = io_.hist_len;
+            rows.push_back(Element{ComponentElement{
+                .render = [=](int w, int) -> Element {
+                    const bool show_spark = w >= 34;
+                    int fixed = 5 + 1 + 8 + 2 + 8 + 5;
+                    int slack = std::max(0, w - fixed);
+                    int each = show_spark ? slack / 2 : 0;
+                    std::vector<Element> cols;
+                    cols.push_back((text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<5>).build());
+                    cols.push_back((text("▼") | nowrap | fgc(pal::sky)).build());
+                    cols.push_back((text(rd) | nowrap | Bold | fgc(pal::text) | w_<8>).build());
+                    if (each > 0)
+                        cols.push_back(Spark{rna.data(), hl}.cells(each).color(pal::sky).build_fixed());
+                    cols.push_back((text("▲") | nowrap | fgc(pal::pink)).build());
+                    cols.push_back((text(wr) | nowrap | Bold | fgc(pal::text) | w_<8>).build());
+                    if (each > 0)
+                        cols.push_back(Spark{wna.data(), hl}.cells(each).color(pal::pink).build_fixed());
+                    return (h(std::move(cols)) | gap(1)).build();
+                },
+            }});
         }
 
         // ── Mounts: two per row across the full width ──
@@ -79,14 +93,39 @@ public:
                 const double f = d.usage().v;
                 std::string mnt = d.mount.size() > 12
                     ? "…" + d.mount.substr(d.mount.size() - 11) : d.mount;
-                return (h(
-                    text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>,
-                    text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>,
-                    Meter{f}.width(10),
-                    text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total))
-                        | nowrap | fgc(pal::text) | w_<12>,
-                    text(d.fstype) | nowrap | fgc(pal::dim)
-                ) | gap(1)).build();
+                std::string cap = humanize_bytes(d.used) + " / " + humanize_bytes(d.total);
+                std::string fs = d.fstype;
+                if (two_up_) {
+                    return (h(
+                        text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>,
+                        text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>,
+                        Meter{f}.width(10),
+                        text(cap) | nowrap | fgc(pal::text) | w_<12>,
+                        text(fs) | nowrap | fgc(pal::dim)
+                    ) | gap(1)).build();
+                }
+                // One mount per row: the meter fills, capacity + fstype drop
+                // out first when the panel narrows.
+                return Element{ComponentElement{
+                    .render = [=](int w, int) -> Element {
+                        const bool show_fs  = w >= 44;
+                        const bool show_cap = w >= 32;
+                        const bool show_pct = w >= 20;
+                        int used = 11 + (show_pct ? 6 : 0)
+                                 + (show_cap ? 13 : 0) + (show_fs ? 7 : 0);
+                        int mw = std::max(4, w - used);
+                        std::vector<Element> cols;
+                        cols.push_back((text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>).build());
+                        if (show_pct)
+                            cols.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>).build());
+                        cols.push_back(Meter{f}.width(mw).build_fixed());
+                        if (show_cap)
+                            cols.push_back((text(cap) | nowrap | fgc(pal::text) | w_<12>).build());
+                        if (show_fs)
+                            cols.push_back((text(fs) | nowrap | fgc(pal::dim)).build());
+                        return (h(std::move(cols)) | gap(1)).build();
+                    },
+                }};
             };
             const int n = static_cast<int>(disks_.size());
             const int step = two_up_ ? 2 : 1;

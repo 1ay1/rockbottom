@@ -34,6 +34,7 @@ struct ProcView {
     SortKey sort = SortKey::Cpu;
     int selected = 0;
     int max_rows = 10;
+    int width = 120;                      // panel inner width, for column tiers
     std::string filter;
     bool filtering = false;
     const PendingKill* pending = nullptr;

@@ -35,13 +35,28 @@ class Spark {
 public:
     Spark(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
 
-    Spark& cells(int n)             { cells_ = std::max(1, n); return *this; }
+    Spark& cells(int n)             { cells_ = n; return *this; }   // <=0 → fill
     Spark& color(maya::Color c)     { color_ = c; return *this; }
     Spark& dim_low(bool b)          { dim_low_ = b; return *this; }
+    Spark& fill()                   { cells_ = 0; return *this; }
 
     operator maya::Element() const { return build(); }
 
     [[nodiscard]] maya::Element build() const {
+        if (cells_ <= 0) {
+            Spark self = *this;
+            return maya::Element{maya::ComponentElement{
+                .render = [self](int w, int) -> maya::Element {
+                    Spark s = self;
+                    s.cells_ = std::max(1, w);
+                    return s.build_fixed();
+                },
+            }};
+        }
+        return build_fixed();
+    }
+
+    [[nodiscard]] maya::Element build_fixed() const {
         static constexpr const char* kBars[] =
             {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
 

@@ -34,22 +34,42 @@ public:
 
     Panel& grow(float g)              { grow_ = g; return *this; }
     Panel& chip(std::string c)        { chip_ = std::move(c); return *this; }
+    Panel& chip_if(bool on, std::string c) { if (on) chip_ = std::move(c); return *this; }
     Panel& tint(double t)             { tint_ = t; return *this; }
 
     [[nodiscard]] maya::Element operator()(std::vector<maya::Element> children) const {
         using namespace maya;
 
-        auto b = dsl::vstack();   // keep the builder alive; methods return refs
-        b.border(BorderStyle::Round)
-         .border_color(mix(pal::border, accent_, tint_))
-         .border_text(" " + glyph_ + " " + title_ + " ", BorderTextPos::Top)
-         .padding(0, 1, 0, 1);
-        if (!chip_.empty())
-            b.border_text_end(" " + chip_ + " ", BorderTextPos::Top);
+        // Width-aware: the chip rides the top border only when the panel is
+        // wide enough to also show the title. Below that it's dropped so the
+        // title never gets crowded out.
+        auto make = [self = *this, kids = std::move(children)](bool with_chip) mutable {
+            auto b = dsl::vstack();   // keep the builder alive; methods return refs
+            b.border(BorderStyle::Round)
+             .border_color(mix(pal::border, self.accent_, self.tint_))
+             .border_text(" " + self.glyph_ + " " + self.title_ + " ", BorderTextPos::Top)
+             .padding(0, 1, 0, 1);
+            if (with_chip && !self.chip_.empty())
+                b.border_text_end(" " + self.chip_ + " ", BorderTextPos::Top);
+            Element body = b(std::move(kids));
+            if (self.grow_ > 0) return (std::move(body) | dsl::grow(self.grow_)).build();
+            return body;
+        };
 
-        Element body = b(std::move(children));
-        if (grow_ > 0) return (std::move(body) | dsl::grow(grow_)).build();
-        return body;
+        if (chip_.empty())
+            return make(false);
+
+        // Title + chip both want horizontal room; if the inner width can't
+        // hold title+chip+margins, drop the chip.
+        const int need = static_cast<int>(glyph_.size() ? 3 : 0)
+                       + static_cast<int>(title_.size())
+                       + static_cast<int>(chip_.size()) + 8;
+        auto self = *this;
+        return Element{ComponentElement{
+            .render = [self, make, need](int w, int) mutable -> Element {
+                return make(w >= need);
+            },
+        }};
     }
 };
 

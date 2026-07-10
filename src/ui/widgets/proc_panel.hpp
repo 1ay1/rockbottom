@@ -141,22 +141,29 @@ private:
     [[nodiscard]] maya::Element header_row() const {
         using namespace maya;
         using namespace maya::dsl;
+        const int w = view_.width;
+        // Drop optional columns as width shrinks; NAME is the flex column so
+        // it always soaks up the remainder (never overflows, never starves).
+        const bool show_port = w >= 92;
+        const bool show_thr  = w >= 70;
+        const bool show_memp = w >= 62;
+        const bool show_mem  = w >= 54;
         auto hdr = [&](const char* name, SortKey self) {
             std::string s = view_.sort == self ? std::string(name) + "▾" : std::string(name);
             Color c = view_.sort == self ? pal::proc_ac : pal::dim;
             return text(s) | nowrap | Bold | fgc(c);
         };
-        return (h(
-            (text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
-            (text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
-            hdr("NAME", SortKey::Name) | w_<26>,
-            hdr("PORT", SortKey::Port) | w_<11>,
-            hdr("CPU", SortKey::Cpu) | w_<21>,
-            hdr("MEM", SortKey::Mem) | w_<20>,
-            (text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>,
-            (text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>,
-            (text("THR") | nowrap | Bold | fgc(pal::dim))
-        ) | gap(1)).build();
+        std::vector<Element> cols;
+        cols.push_back(((text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
+        cols.push_back(((text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
+        cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
+        if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<11>).build());
+        cols.push_back((hdr("CPU", SortKey::Cpu) | width(show_mem ? 21 : 14)).build());
+        cols.push_back((hdr("MEM", SortKey::Mem) | width(show_mem ? 20 : 8)).build());
+        if (show_memp) cols.push_back(((text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>).build());
+        cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>).build());
+        if (show_thr) cols.push_back((text("THR") | nowrap | Bold | fgc(pal::dim)).build());
+        return (h(std::move(cols)) | gap(1)).build();
     }
 
     [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit) const {
@@ -194,19 +201,30 @@ private:
                 port_txt += " +" + std::to_string(p.ports.size() - 1);
         }
 
-        auto row = h(
-            text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>,
-            text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>,
-            text(fmt::clip(p.name, 25), name_st) | nowrap | w_<26>,
-            text(port_txt) | nowrap | fgc(pal::sky) | w_<11>,
-            Meter{cpu_frac}.width(14),
-            text(cpu_txt, cpu_st) | nowrap | w_<6>,
-            Meter{mem_frac}.width(12).color(pal::mem_ac),
-            text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7>,
-            text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>,
-            text(dot) | nowrap | fgc(dot_c) | w_<2>,
-            text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)
-        ) | gap(1);
+        auto row = [&] {
+            const int w = view_.width;
+            const bool show_port = w >= 92;
+            const bool show_thr  = w >= 70;
+            const bool show_memp = w >= 62;
+            const bool show_mem  = w >= 54;
+            std::vector<Element> cols;
+            cols.push_back((text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>).build());
+            cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>).build());
+            cols.push_back((text(fmt::clip(p.name, 32), name_st) | nowrap | grow(1)).build());
+            if (show_port)
+                cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<11>).build());
+            cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).build_fixed());
+            cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6>).build());
+            if (show_mem)
+                cols.push_back(Meter{mem_frac}.width(12).color(pal::mem_ac).build_fixed());
+            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7>).build());
+            if (show_memp)
+                cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
+            cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2>).build());
+            if (show_thr)
+                cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)).build());
+            return h(std::move(cols)) | gap(1);
+        }();
 
         if (selected) return (std::move(row) | bgc(pal::bg_panel)).build();
         return row.build();

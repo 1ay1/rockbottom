@@ -36,13 +36,29 @@ class Graph {
 public:
     Graph(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
 
-    Graph& cells(int n)         { cells_ = std::max(1, n); return *this; }
+    Graph& cells(int n)         { cells_ = n; return *this; }   // <=0 → fill
     Graph& rows(int n)          { rows_ = std::max(1, n); return *this; }
     Graph& color(maya::Color c) { color_ = c; return *this; }
+    Graph& fill()               { cells_ = 0; return *this; }
 
     operator maya::Element() const { return build(); }
 
     [[nodiscard]] maya::Element build() const {
+        using namespace maya;
+        if (cells_ <= 0) {
+            Graph self = *this;
+            return Element{ComponentElement{
+                .render = [self](int w, int) -> Element {
+                    Graph g = self;
+                    g.cells_ = std::max(1, w);
+                    return g.build_fixed();
+                },
+            }};
+        }
+        return build_fixed();
+    }
+
+    [[nodiscard]] maya::Element build_fixed() const {
         using namespace maya;
 
         // Braille dot bit for (dot_row 0..3, dot_col 0..1).

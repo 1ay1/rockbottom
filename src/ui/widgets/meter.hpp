@@ -36,13 +36,30 @@ class Meter {
 public:
     constexpr explicit Meter(double value) : value_(std::clamp(value, 0.0, 1.0)) {}
 
-    Meter& width(int w)              { width_ = std::max(1, w); return *this; }
+    Meter& width(int w)              { width_ = w; return *this; }   // <=0 → fill
     Meter& color(maya::Color c)      { color_ = c; return *this; }
     Meter& track(maya::Color c)      { track_ = c; return *this; }
+    Meter& fill()                    { width_ = 0; return *this; }
 
     operator maya::Element() const { return build(); }
 
     [[nodiscard]] maya::Element build() const {
+        // Fill mode: size to whatever width the row hands us. Pair with
+        // `| grow(1)` so maya's box layout allocates the leftover space.
+        if (width_ <= 0) {
+            Meter self = *this;
+            return maya::Element{maya::ComponentElement{
+                .render = [self](int w, int) -> maya::Element {
+                    Meter m = self;
+                    m.width_ = std::max(1, w);
+                    return m.build_fixed();
+                },
+            }};
+        }
+        return build_fixed();
+    }
+
+    [[nodiscard]] maya::Element build_fixed() const {
         static constexpr const char* kEighths[] =
             {"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"};
         static constexpr const char* kFull = "█";

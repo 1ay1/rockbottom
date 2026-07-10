@@ -48,15 +48,32 @@ public:
                 txn[static_cast<std::size_t>(i)] = n.tx_history[static_cast<std::size_t>(i)] / peak;
             }
 
-            rows.push_back((h(
-                text(fmt::clip(n.name, 7)) | nowrap | Bold | fgc(pal::net_ac) | w_<8>,
-                text("▼") | nowrap | fgc(pal::good),
-                text(humanize_rate(n.rx)) | nowrap | fgc(pal::text) | w_<7>,
-                Spark{rxn.data(), n.hist_len}.cells(8).color(pal::good),
-                text(" ▲") | nowrap | fgc(pal::hot),
-                text(humanize_rate(n.tx)) | nowrap | fgc(pal::text) | w_<7>,
-                Spark{txn.data(), n.hist_len}.cells(8).color(pal::hot)
-            ) | gap(1)).build());
+            std::string name = std::string(fmt::clip(n.name, 7));
+            std::string rx = std::string(humanize_rate(n.rx));
+            std::string tx = std::string(humanize_rate(n.tx));
+            std::array<float, 48> rxa = rxn, txa = txn;
+            int hl = n.hist_len;
+            rows.push_back(Element{ComponentElement{
+                .render = [=](int w, int) -> Element {
+                    // Fixed columns: name(8) + ▼(1)+rx(7)+gap + ▲(2)+tx(7) +
+                    // gaps. Whatever's left feeds the two sparks equally.
+                    const bool show_spark = w >= 34;
+                    int fixed = 8 + 1 + 7 + 2 + 7 + 5;   // labels + gaps
+                    int slack = std::max(0, w - fixed);
+                    int each = show_spark ? slack / 2 : 0;
+                    std::vector<Element> cols;
+                    cols.push_back((text(name) | nowrap | Bold | fgc(pal::net_ac) | w_<8>).build());
+                    cols.push_back((text("▼") | nowrap | fgc(pal::good)).build());
+                    cols.push_back((text(rx) | nowrap | fgc(pal::text) | w_<7>).build());
+                    if (each > 0)
+                        cols.push_back(Spark{rxa.data(), hl}.cells(each).color(pal::good).build_fixed());
+                    cols.push_back((text("▲") | nowrap | fgc(pal::hot)).build());
+                    cols.push_back((text(tx) | nowrap | fgc(pal::text) | w_<7>).build());
+                    if (each > 0)
+                        cols.push_back(Spark{txa.data(), hl}.cells(each).color(pal::hot).build_fixed());
+                    return (h(std::move(cols)) | gap(1)).build();
+                },
+            }});
         }
 
         return Panel("⇅", "NETWORK", pal::net_ac)(std::move(rows));

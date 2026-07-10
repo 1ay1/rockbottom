@@ -21,10 +21,14 @@ namespace bottom::ui {
 
 class CpuPanel {
     const CpuInfo& cpu_;
-    int cols_;   // 2 = roomy (meter+spark), 3 = compact (meter only)
+    int cols_;      // 2 = roomy (meter+spark), 3 = compact (meter only)
+    int graph_w_;   // width of the ALL history graph (cells)
+    int graph_h_;   // height of the ALL graph (rows); 0 = skip it
 
 public:
-    explicit CpuPanel(const CpuInfo& c, int cols = 2) : cpu_(c), cols_(std::max(2, cols)) {}
+    explicit CpuPanel(const CpuInfo& c, int cols = 2, int graph_w = 46, int graph_h = 4)
+        : cpu_(c), cols_(std::max(2, cols)),
+          graph_w_(std::max(8, graph_w)), graph_h_(std::max(0, graph_h)) {}
 
     operator maya::Element() const { return build(); }
 
@@ -38,18 +42,28 @@ public:
         // "what has the machine been doing" trace — with the live meter and
         // bold % stacked to its left. ──
         const double tf = cpu_.total.v;
-        rows.push_back((h(
-            v(
-                h(text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
-                  text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
-                ) | gap(1),
-                blank(),
-                Meter{tf}.width(10),
-                blank()
-            ),
-            Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(46).rows(4)
-        ) | gap(2)).build());
-        rows.push_back(blank());
+        if (graph_h_ >= 2) {
+            rows.push_back((h(
+                v(
+                    h(text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
+                      text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
+                    ) | gap(1),
+                    blank(),
+                    Meter{tf}.width(10),
+                    blank()
+                ),
+                Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(graph_w_).rows(graph_h_)
+            ) | gap(2) | height(graph_h_)).build());
+            rows.push_back(blank());
+        } else {
+            // No room for the mountain — keep the live ALL meter as one row.
+            rows.push_back((h(
+                text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
+                text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>,
+                Element{Meter{tf}.fill()} | grow(1)
+            ) | gap(1)).build());
+            rows.push_back(blank());
+        }
 
         // ── Per-core grid: cols_ columns, one line each. Every core gets a
         // number, a right-aligned %, a compact meter and (when roomy) a

@@ -229,11 +229,25 @@ struct App {
         const int ncores = static_cast<int>(s.cpu.cores.size());
         const int cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;   // stay ~8 rows tall
         const int cores_rows = (ncores + cpu_cols - 1) / cpu_cols;
-        const int cpu_h  = 2 + 4 + 1 + cores_rows;                    // border + graph + blank + cores
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
         const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
         const int disk_mounts = static_cast<int>(s.disks.size());
         const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right
+
+        // The ALL graph is the first thing to shrink when height is scarce.
+        // Wide mode: the CPU column has its own height, so a full 4-row graph
+        // is fine. Narrow mode: everything stacks, so fit the graph into what
+        // is left after the other cards + a 5-row process table minimum.
+        int graph_h = 4;
+        if (narrow) {
+            const int fixed = 2 + 3 + 1                 // header+verdict+footer
+                            + 2 + 1 + cores_rows        // cpu border+blank+cores
+                            + mem_h + net_h + disk_h
+                            + (2 + 5)                   // proc border + 5 rows
+                            + 2;                        // outer padding slack
+            graph_h = std::clamp(m.height - fixed, 0, 4);
+        }
+        const int cpu_h  = 2 + (graph_h >= 2 ? graph_h : 1) + 1 + cores_rows;
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, mem_h + net_h + disk_h);
         const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
@@ -243,20 +257,30 @@ struct App {
             .sort      = m.sort,
             .selected  = m.sel,
             .max_rows  = proc_rows,
+            .width     = std::max(20, m.width - 6),
             .filter    = m.filter,
             .filtering = m.filtering,
             .pending   = m.pending ? &*m.pending : nullptr,
         };
 
         // ── Top band: CPU alone on the left · MEM / NET / DISK stacked right ──
+        // Split the inner width so neither side starves the other; the CPU
+        // graph wants the wider slice, the stat cards the rest.
+        const int inner = std::max(20, m.width - 2);      // minus outer padding
+        const int gap_w = 1;
+        const int right_w = std::clamp((inner - gap_w) * 42 / 100, 34, 56);
+        const int left_w  = inner - gap_w - right_w;
+        // Inner content width of a panel = box width - 2 border - 2 padding.
+        const int cpu_inner = (narrow ? inner : left_w) - 4;
+        const int graph_w = std::max(8, cpu_inner - 20 - 2);   // minus stub + gap
         Element top = narrow
-            ? (v(CpuPanel{s.cpu, cpu_cols}, MemPanel{s.mem}, NetPanel{s.nets},
+            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}, MemPanel{s.mem}, NetPanel{s.nets},
                  DiskPanel{s.disks, s.disk_io, false})).build()
             : (h(
-                  CpuPanel{s.cpu, cpu_cols} | grow(1),
+                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}} | width(left_w),
                   v(MemPanel{s.mem}, NetPanel{s.nets},
-                    DiskPanel{s.disks, s.disk_io, false} | grow(1)) | grow(1)
-              ) | gap(1)).build();
+                    DiskPanel{s.disks, s.disk_io, false} | grow(1)) | width(right_w)
+              ) | gap(gap_w)).build();
 
         return (v(
             Header{s, m.paused},
