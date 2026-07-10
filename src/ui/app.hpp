@@ -45,6 +45,7 @@ struct App {
         SortKey  sort = SortKey::Cpu;
         bool     paused = false;
         bool     show_help = false;
+        int      help_scroll = 0;                // scroll offset within help
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
         int      detail_scroll = 0;              // scroll offset within a pane
         int      detail_pid = 0;                 // PID the Proc pane is pinned to
@@ -319,6 +320,9 @@ struct App {
         // process table it moves the selection; anywhere else it still scrolls
         // the list so the wheel is never a dead input.
         if (me.button == MouseButton::ScrollDown) {
+            if (m.show_help) {
+                m.help_scroll += 3; clamp_help_scroll(m); return {std::move(m), C{}};
+            }
             if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
                 m.detail_scroll += 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
@@ -327,6 +331,9 @@ struct App {
             return {std::move(m), C{}};
         }
         if (me.button == MouseButton::ScrollUp) {
+            if (m.show_help) {
+                m.help_scroll -= 3; clamp_help_scroll(m); return {std::move(m), C{}};
+            }
             if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
                 m.detail_scroll -= 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
@@ -340,7 +347,7 @@ struct App {
         if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
 
         // Modal layers first — a click outside the modal dismisses it.
-        if (m.show_help) { m.show_help = false; return {std::move(m), C{}}; }
+        if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {std::move(m), C{}}; }
         if (m.detail != ui::Detail::None) {
             // The bottom tab bar is a real click target: a left click on a
             // tab switches to that domain (hit-test mirrors DetailPane::hint's
@@ -549,10 +556,17 @@ struct App {
             return {std::move(m), C{}};
         }
 
-        // 3. Help overlay: any of these dismiss.
+        // 3. Help overlay: scrollable; the usual dismiss keys close it.
         if (m.show_help) {
-            if (key(ev, '?') || key(ev, 'h') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q'))
-                m.show_help = false;
+            if (key(ev, '?') || key(ev, 'h') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                m.show_help = false; m.help_scroll = 0;
+            }
+            else if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { m.help_scroll += 1; clamp_help_scroll(m); }
+            else if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { m.help_scroll -= 1; clamp_help_scroll(m); }
+            else if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.help_scroll += 10; clamp_help_scroll(m); }
+            else if (key(ev, maya::SpecialKey::PageUp))  { m.help_scroll -= 10; clamp_help_scroll(m); }
+            else if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.help_scroll = 0; }
+            else if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.help_scroll = 1 << 20; clamp_help_scroll(m); }
             return {std::move(m), C{}};
         }
 
@@ -685,6 +699,12 @@ struct App {
         m.detail_scroll = std::clamp(m.detail_scroll, 0, max_scroll);
     }
 
+    static void clamp_help_scroll(Model& m) {
+        const int max_scroll = std::max(0, ui::HelpOverlay::content_rows(m.width)
+                                           - ui::HelpOverlay::viewport_rows(m.height));
+        m.help_scroll = std::clamp(m.help_scroll, 0, max_scroll);
+    }
+
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
         auto view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
@@ -747,7 +767,7 @@ struct App {
         using namespace maya::dsl;
         using namespace rockbottom::ui;
 
-        if (m.show_help) return HelpOverlay{};
+        if (m.show_help) return HelpOverlay{m.width, m.height, m.help_scroll};
 
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;

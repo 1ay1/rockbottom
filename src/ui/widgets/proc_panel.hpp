@@ -1,7 +1,7 @@
 // widgets/proc_panel.hpp — interactive process table.
 //
 // Renders the filtered/sorted process list with:
-//   • a selection bar (▶ + tinted background) driven by ↑/↓ j/k
+//   • a selection bar (▎ edge bar + tinted background) driven by ↑/↓ j/k
 //   • the culprit row flagged » in the health color
 //   • inline CPU mini-meter per row, state dots
 //   • a kill-confirm strip when a signal is pending
@@ -240,16 +240,15 @@ private:
         const double cpu_frac = std::clamp(p.cpu / 100.0, 0.0, 1.0);
         const double mem_frac = p.mem_share.v;
 
-        // The cursor row is "lit" with lifted ink AND rides a bg strip painted
-        // by bgc() on the row's h-container. maya's renderer inherits that
-        // ambient bg into every descendant text run that doesn't declare its
-        // own (paint-time bg inheritance), so plain fg-only styles here are
-        // enough — no per-cell with_bg plumbing.
-        auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.4) : c; };
+        // The cursor row rides a bg strip (bgc on the row's h-container;
+        // maya's ambient-bg inheritance carries it under every glyph) with a
+        // solid accent EDGE BAR on the left — the modern list-selection
+        // idiom. Ink lifts toward white so hues stay meaningful but brighter;
+        // bold is reserved for the name and PID (the row's identity), not
+        // smeared across every cell — the strip already does the shouting.
+        auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.45) : c; };
         auto cell_st = [&](Color c) {
-            Style st = Style{}.with_fg(lift(c));
-            if (selected) st = st.with_bold();
-            return st;
+            return Style{}.with_fg(lift(c));
         };
         const Color quiet  = selected ? pal::text  : pal::dim;    // dim ink, lifted
         const Color hushed = selected ? pal::label : pal::faint;  // faint ink, lifted
@@ -271,9 +270,9 @@ private:
         // to pick out privileged processes without shouting.
         Color user_c = p.user == "root" ? mix(pal::hot, pal::label, 0.55) : pal::label;
 
-        // Selection cursor beats culprit marker in the gutter; culprit keeps
-        // its red name so it stays identifiable while selected.
-        std::string gutter = selected ? "▶" : culprit ? "»" : " ";
+        // Selection edge bar beats culprit marker in the gutter; culprit
+        // keeps its red name so it stays identifiable while selected.
+        std::string gutter = selected ? "▎" : culprit ? "»" : " ";
         Color gutter_c = selected ? pal::proc_ac : culprit ? pal::crit : pal::dim;
 
         char cpu_txt[16];
@@ -317,10 +316,22 @@ private:
             std::string io_txt = iorate > 512 ? humanize_rate(ByteRate{iorate}) : "·";
             Color io_c = iorate > 512 ? pal::sky : hushed;
             std::vector<Element> cols;
-            Style pid_st = Style{}.with_fg(selected ? pal::proc_ac
+            // Edge bar carries the accent; the PID next to it goes bright
+            // white-lifted (row identity) instead of accent-on-accent.
+            Style pid_st = Style{}.with_fg(selected ? pal::white
                                           : sk == SortKey::Pid ? pal::text : gutter_c);
             if (selected) pid_st = pid_st.with_bold();
-            cols.push_back((text(gutter + std::to_string(p.pid), pid_st) | nowrap | w_<8>).build());
+            std::vector<StyledRun> pid_runs;
+            std::string pid_txt = gutter + std::to_string(p.pid);
+            if (selected) {
+                pid_runs.push_back({0, gutter.size(), Style{}.with_fg(gutter_c)});
+                pid_runs.push_back({gutter.size(), pid_txt.size() - gutter.size(), pid_st});
+                cols.push_back(Element{TextElement{.content = std::move(pid_txt), .style = {},
+                                                   .wrap = TextWrap::NoWrap,
+                                                   .runs = std::move(pid_runs)}} | width(8));
+            } else {
+                cols.push_back((text(pid_txt, pid_st) | nowrap | w_<8>).build());
+            }
             cols.push_back((text(fmt::clip(p.user, 7), cell_st(user_c)) | nowrap | w_<8>).build());
             {
                 // name (styled) + dim command trail, hard-clipped to the
@@ -381,10 +392,13 @@ private:
 
         (void)alt;
         // Selected row rides a full-width background strip (footer idiom:
-        // bgc on the h-container paints the whole band; text cells without
-        // an explicit bg show through). Combined with the lifted ink the
-        // cursor is unmissable even in peripheral vision.
-        if (selected) return (std::move(row) | bgc(pal::sel_bg)).build();
+        // bgc on the h-container paints the whole band; ambient-bg
+        // inheritance carries it under every glyph). The strip is tinted a
+        // whisper toward the proc accent so it reads as "selection", not
+        // generic gray — together with the ▎ edge bar it's unmissable in
+        // peripheral vision without any bold shouting.
+        if (selected)
+            return (std::move(row) | bgc(mix(pal::sel_bg, pal::proc_ac, 0.10))).build();
         return row.build();
     }
 };

@@ -1,66 +1,135 @@
-// widgets/help.hpp — centered help overlay built on maya::KeyHelp
-// (grouped bindings, width-adaptive columns) wrapped in the house Panel.
+// widgets/help.hpp — centered help overlay: responsive (card width tracks the
+// terminal, columns collapse when narrow) and scrollable (row-windowed body
+// with the house scrollbar when the terminal is too short for everything).
 
 #pragma once
 
 #include <maya/maya.hpp>
-#include <maya/widget/key_help.hpp>
 
 #include "../theme.hpp"
+#include "detail/common.hpp"
 #include "panel.hpp"
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 namespace rockbottom::ui {
 
 class HelpOverlay {
+    int width_  = 100;
+    int height_ = 40;
+    int scroll_ = 0;
+
 public:
+    HelpOverlay(int w, int h, int scroll) : width_(w), height_(h), scroll_(scroll) {}
+
     operator maya::Element() const { return build(); }
 
+    // One binding: keys column + description. Grouped under section rows.
+    struct Entry { const char* keys; const char* desc; };
+    struct Group { const char* name; std::vector<Entry> entries; };
+
+    [[nodiscard]] static const std::vector<Group>& groups() {
+        static const std::vector<Group> g = {
+            {"PROCESSES", {
+                {"↑↓ j k", "select process"},
+                {"/", "filter by name or pid"},
+                {"x / Del", "end process (SIGTERM)"},
+                {"K", "force-kill (SIGKILL)"},
+                {"X", "end ALL with this name"},
+                {"y / n", "confirm / cancel kill"},
+            }},
+            {"SORTING", {
+                {"s", "cycle sort column"},
+                {"c m i n P o", "cpu · mem · i/o · name · pid · port"},
+            }},
+            {"DETAIL", {
+                {"1 2 3 4 5 6", "cpu · mem · net · gpu · disk · proc"},
+                {"Enter", "open selected process detail"},
+                {"↑↓ / PgUp PgDn", "scroll the detail pane"},
+                {"g / G", "jump to top / bottom of pane"},
+                {"Esc", "close detail / help"},
+            }},
+            {"GENERAL", {
+                {"p / Space", "pause / resume"},
+                {"? / h", "toggle this help"},
+                {"q / Esc", "quit"},
+            }},
+            {"MOUSE", {
+                {"click row", "select · header sorts · footer acts"},
+                {"right-click", "end process (SIGTERM)"},
+                {"wheel", "scroll list · panes · this help"},
+            }},
+        };
+        return g;
+    }
+
+    // Total body rows at a given card width — the app uses this to clamp the
+    // scroll offset. Must mirror rows() exactly.
+    [[nodiscard]] static int content_rows(int term_w) {
+        int n = 2;   // tagline + blank
+        for (const auto& g : groups())
+            n += 1 + static_cast<int>(g.entries.size()) + 1;  // header + rows + gap
+        n += 3;      // legend footnotes
+        (void)term_w;
+        return n;
+    }
+
+    // Viewport rows available for the body at a given terminal height:
+    // outer padding(2×1) + panel border(2) + panel padding(2) = 6 chrome rows.
+    [[nodiscard]] static int viewport_rows(int term_h) {
+        return std::max(3, term_h - 8);
+    }
+
+private:
     [[nodiscard]] maya::Element build() const {
         using namespace maya;
         using namespace maya::dsl;
 
-        KeyHelp keys;
-        keys.set_title("");
-        keys.add("Up/Dn j k", "select process", "Processes");
-        keys.add("/", "filter by name or pid", "Processes");
-        keys.add("x / Del", "end process (SIGTERM)", "Processes");
-        keys.add("K", "force-kill (SIGKILL)", "Processes");
-        keys.add("X", "end ALL with this name", "Processes");
-        keys.add("y / n", "confirm / cancel kill", "Processes");
-        keys.add("s", "cycle sort column", "Sorting");
-        keys.add("c m i n P o", "cpu · mem · i/o · name · pid · port", "Sorting");
-        keys.add("1 2 3 4 5 6", "detail: cpu · mem · net · gpu · disk · proc", "Detail");
-        keys.add("Enter", "open selected process detail", "Detail");
-        keys.add("↑↓ / PgUp PgDn", "scroll the detail pane", "Detail");
-        keys.add("g / G", "jump to top / bottom of pane", "Detail");
-        keys.add("Esc", "close detail / help", "Detail");
-        keys.add("p / Space", "pause / resume", "General");
-        keys.add("? / h", "toggle this help", "General");
-        keys.add("q / Esc", "quit", "General");
-        keys.add("click row", "select · header sorts · footer acts", "Mouse");
-        keys.add("right-click", "end process (SIGTERM)", "Mouse");
-        keys.add("wheel", "scroll the process list", "Mouse");
+        // Card width tracks the terminal: ideal 70, but never wider than
+        // what fits with the centering margins; floor keeps it legible.
+        const int card_w = std::clamp(width_ - 6, 34, 70);
+        const int keys_w = card_w >= 56 ? 16 : 12;
 
-        std::vector<Element> body = {
-            (text("A calmer system monitor — it tells you what's happening.")
-                | fgc(pal::label)).build(),
-            blank(),
-            keys.build(),
-            blank(),
-            (text("Banner: green calm · blue busy · orange stressed · red critical.")
-                | fgc(pal::dim)).build(),
-            (text("stall chips = kernel PSI: % of time tasks waited on a resource.")
-                | fgc(pal::dim)).build(),
-            (text("» marks the process driving the verdict · ▶ is your selection.")
-                | fgc(pal::dim)).build(),
-        };
+        std::vector<Element> body;
+        body.push_back((text("A calmer system monitor — it tells you what's happening.")
+                        | nowrap | fgc(pal::label)).build());
+        body.push_back(blank());
 
-        Element card = Panel("?", "HELP", pal::sky)(std::move(body));
-        return (v((std::move(card) | width(70)))
+        for (const auto& g : groups()) {
+            // Section header: accent tick + spaced-out name, house style.
+            body.push_back((h(
+                text("▍", Style{}.with_fg(pal::sky)) | nowrap,
+                text(g.name, Style{}.with_fg(pal::sky).with_bold()) | nowrap
+            )).build());
+            for (const auto& e : g.entries) {
+                body.push_back((h(
+                    text("  ") | nowrap,
+                    text(e.keys, Style{}.with_fg(pal::text).with_bold())
+                        | nowrap | width(keys_w),
+                    text(e.desc, Style{}.with_fg(pal::label)) | nowrap
+                ) | gap(1)).build());
+            }
+            body.push_back(blank());
+        }
+
+        body.push_back((text("Banner: green calm · blue busy · orange stressed · red critical.")
+                        | nowrap | fgc(pal::dim)).build());
+        body.push_back((text("stall chips = kernel PSI: % of time tasks waited on a resource.")
+                        | nowrap | fgc(pal::dim)).build());
+        body.push_back((text("» marks the culprit · ▎ is your selection.")
+                        | nowrap | fgc(pal::dim)).build());
+
+        // Window the body through the shared scroller: slim bar + chevrons
+        // appear only when the terminal is too short for the full list.
+        const int view_h = viewport_rows(height_);
+        Element windowed = detail::scroller(std::move(body), scroll_, view_h, pal::sky);
+
+        Element card = Panel("?", "HELP", pal::sky)({std::move(windowed)});
+        return (v((std::move(card) | width(card_w)))
                 | align(Align::Center) | justify(Justify::Center)
-                | grow(1) | padding(2)).build();
+                | grow(1) | padding(1)).build();
     }
 };
 
