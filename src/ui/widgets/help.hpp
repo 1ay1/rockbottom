@@ -33,6 +33,9 @@ public:
         keys.add("p / Space", "pause / resume", "General");
         keys.add("? / h", "toggle this help", "General");
         keys.add("q / Esc", "quit", "General");
+        keys.add("click row", "select · header sorts · footer acts", "Mouse");
+        keys.add("right-click", "end process (SIGTERM)", "Mouse");
+        keys.add("wheel", "scroll the process list", "Mouse");
 
         std::vector<Element> body = {
             (text("A calmer system monitor — it tells you what's happening.")

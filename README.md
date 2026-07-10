@@ -177,6 +177,19 @@ There. We fixed it. You're welcome. We're not mad.
 | `?` / `h` | help, for when all of this immediately leaves your brain |
 | `q` / `Esc` | leave, go outside, touch grass |
 
+**Or just use your mouse, you absolute animal.** Full mouse support, zero misses:
+
+| Do this | Get that |
+|---------|----------|
+| **click a process** | selects it (no more arrow-key marathons) |
+| **click a column header** | sorts by it (CPU, MEM, DISK, PORT, NAME) |
+| **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
+| **right-click a process** | arms an end (SIGTERM — still asks first) |
+| **scroll wheel** | rolls the process list |
+
+The click-to-row math is anchored to the layout so a click lands on *exactly* the
+row you clicked, at every terminal size. No "close enough." We checked.
+
 ## Platform
 
 Linux only. It reads `/proc` and `/sys` with its bare hands — no ncurses, no

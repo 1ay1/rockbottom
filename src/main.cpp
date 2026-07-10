@@ -7,7 +7,7 @@
 int main() {
     maya::run<bottom::App>({
         .title = "bottom",
-        .mouse = false,
+        .mouse = true,
         .mode  = maya::Mode::Fullscreen,
     });
     return 0;

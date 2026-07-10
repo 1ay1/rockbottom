@@ -60,9 +60,270 @@ struct App {
     struct Tick {};
     struct Resize { int w, h; };
     struct Key { maya::KeyEvent ev; };
+    struct Mouse { maya::MouseEvent ev; };
     struct Quit {};
 
-    using Msg = std::variant<Tick, Resize, Key, Quit>;
+    using Msg = std::variant<Tick, Resize, Key, Mouse, Quit>;
+
+    // ── shared layout geometry ──────────────────────────────────────────────
+    // The mouse handler and view() MUST agree on where every panel lands, so
+    // the vertical/height arithmetic lives here once and both call it. Any
+    // divergence would make clicks land on the wrong row — this keeps misses
+    // at exactly zero because there is a single source of truth.
+    struct Layout {
+        bool narrow;
+        int  top_h;          // rows spanned by the CPU / MEM-NET-DISK band
+        int  proc_rows;      // ProcView.max_rows
+        int  body_rows;      // visible process rows in the table
+        int  graph_h, graph_w, cpu_cols;
+        int  right_w, left_w;
+        // Absolute (0-based) terminal rows. Outer padding is (0,1,0,1): zero
+        // vertical padding, so the vstack starts at row 0.
+        int  header_y   = 0;                 // Header widget
+        int  verdict_y  = 1;                 // VerdictBanner (3 rows: 1..3)
+        int  top_y      = 4;                 // top band first row
+        int  proc_top_y;                     // proc panel top border row
+        int  proc_hdr_y;                     // column-header row (PID USER …)
+        int  proc_body_y;                    // first process row
+        int  footer_y;                       // footer row (== height-1)
+    };
+
+    static Layout compute_layout(const Model& m) {
+        const Snapshot& s = m.snap;
+        Layout L;
+        L.narrow = m.width < 96;
+        const int ncores = static_cast<int>(s.cpu.cores.size());
+        L.cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;
+        const int cores_rows = (ncores + L.cpu_cols - 1) / L.cpu_cols;
+        const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
+        const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
+        const int disk_mounts = static_cast<int>(s.disks.size());
+        const int disk_h = 2 + 1 + disk_mounts;
+        const int right_stack_h = mem_h + net_h + disk_h;
+        if (L.narrow) {
+            const int fixed = 2 + 3 + 1 + 2 + 1 + cores_rows + right_stack_h + (2 + 5) + 2;
+            L.graph_h = std::clamp(m.height - fixed, 0, 4);
+        } else {
+            L.graph_h = std::clamp(right_stack_h - 3 - cores_rows, 2, 8);
+        }
+        const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
+        L.top_h = L.narrow ? cpu_h + mem_h + net_h + disk_h
+                           : std::max(cpu_h, right_stack_h);
+        L.proc_rows = std::max(5, m.height - 5 - L.top_h - 2);
+        L.body_rows = std::max(3, L.proc_rows - 1);
+
+        const int inner = std::max(20, m.width - 2);
+        const int gap_w = 1;
+        L.right_w = std::clamp((inner - gap_w) * 42 / 100, 34, 56);
+        L.left_w  = inner - gap_w - L.right_w;
+        const int cpu_inner = (L.narrow ? inner : L.left_w) - 4;
+        L.graph_w = std::max(8, cpu_inner - 4);
+
+        // Anchor the proc-table rows from the BOTTOM, not the top. The 1-row
+        // Header widget gets squeezed out of the v-stack when height is tight,
+        // which would shift a top-anchored table by one row and mis-route every
+        // click. The v-stack is top-aligned and leaves ONE trailing blank row,
+        // so the footer lands at height-2 and the proc panel directly above it.
+        // Counting up from the panel bottom border is exact at any height.
+        L.footer_y    = m.height - 2;
+        const int proc_bot_border = L.footer_y - 1;     // panel bottom border
+        const int proc_body_last  = proc_bot_border - 1;// last visible row
+        L.proc_body_y = proc_body_last - (L.body_rows - 1);
+        L.proc_hdr_y  = L.proc_body_y - 1;              // column-header row
+        L.proc_top_y  = L.proc_hdr_y - 1;               // panel top border
+        L.top_y       = 4;   // nominal; not used for hit-testing
+        return L;
+    }
+
+    // First visible process index given the scroll window (mirrors
+    // ProcPanel::build()'s clamp exactly so click→index is never off).
+    static int scroll_start(int sel, int n, int body_rows) {
+        int start = 0;
+        if (sel >= body_rows) start = sel - body_rows + 1;
+        return std::clamp(start, 0, std::max(0, n - body_rows));
+    }
+
+    // ── footer hit-testing ─────────────────────────────────────────────
+    enum class FooterAct { Quit, Filter, End, Kill, Sort, Pause, Help };
+
+    // Rebuild the SAME hint sequence Footer renders, tracking each label's
+    // column span so a click resolves to the right action. Only the normal-mode
+    // strip is clickable (filter/pending modes are keyboard-driven).
+    // Layout mirror of Footer::build(): outer padding adds 1 leading column;
+    // each hint is " "+k + "·"+d; hints are joined with gap(1).
+    static std::optional<FooterAct> footer_hit(const Model& m, int mx) {
+        if (m.filtering || m.pending) return std::nullopt;
+        struct H { const char* k; const char* d; FooterAct a; };
+        static const H hints[] = {
+            {"q", "quit",   FooterAct::Quit},
+            {"\u2191\u2193", "select", FooterAct::End /*label only, no action*/},
+            {"/", "filter", FooterAct::Filter},
+            {"x", "end",    FooterAct::End},
+            {"K", "kill",   FooterAct::Kill},
+            {"s", "sort",   FooterAct::Sort},
+            {"space", "pause", FooterAct::Pause},
+            {"?", "help",   FooterAct::Help},
+        };
+        int col = 1;   // outer left padding
+        for (std::size_t i = 0; i < std::size(hints); ++i) {
+            const int kw = disp_width(hints[i].k);
+            const int dw = disp_width(hints[i].d);
+            const int w  = 1 /*leading space*/ + kw + 1 /*·*/ + dw;
+            if (mx >= col && mx < col + w) {
+                // ↑↓ select has no discrete action; treat as no-op.
+                if (std::string(hints[i].k) == "\u2191\u2193") return std::nullopt;
+                return hints[i].a;
+            }
+            col += w + 1;   // + gap(1)
+        }
+        return std::nullopt;
+    }
+
+    static std::pair<Model, maya::Cmd<Msg>> dispatch_footer(Model m, FooterAct a) {
+        using C = maya::Cmd<Msg>;
+        switch (a) {
+            case FooterAct::Quit:  return {std::move(m), C::quit()};
+            case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}};
+            case FooterAct::End:   return arm_kill(std::move(m), SIGTERM);
+            case FooterAct::Kill:  return arm_kill(std::move(m), SIGKILL);
+            case FooterAct::Sort:  m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m));
+            case FooterAct::Pause: m.paused = !m.paused; return {std::move(m), C{}};
+            case FooterAct::Help:  m.show_help = true; return {std::move(m), C{}};
+        }
+        return {std::move(m), C{}};
+    }
+
+    // ── sort-header hit-testing ───────────────────────────────────────
+    // The proc panel sits under outer padding(1) + panel border(1) + panel
+    // padding(1) = 3 leading columns before the header content. We map a click
+    // in the header row to the column it lands on. Rather than reproduce every
+    // column's exact width, we split the header row into three coarse zones
+    // that are forgiving yet unambiguous: left third of the numeric block
+    // cycles nothing, but each visible sort label owns a zone. To stay simple
+    // and miss-free we test against the SAME width tiers the header uses.
+    static std::optional<SortKey> sort_header_hit(const Model& m, int mx) {
+        const int w = std::max(20, m.width - 6);   // ProcView.width
+        const bool show_port = w >= 92;
+        const bool show_memp = w >= 62;
+        const bool show_mem  = w >= 54;
+        const bool show_io   = w >= 84;
+        const bool show_thr  = w >= 70;
+        // Leading offset: outer pad(1) + border(1) + panel pad(1) = 3, but the
+        // rendered labels sit one cell left of the raw column math, so anchor
+        // at 2 and make every zone CONTIGUOUS (each swallows its trailing gap)
+        // so there are no dead columns between headers — a click anywhere in the
+        // header row resolves to exactly one column.
+        int c = 2;
+        auto zone = [&](int width) { int s = c; c += width + 1; return std::pair{s, c}; };
+        zone(8);   // PID  (no sort)
+        zone(8);   // USER (no sort)
+        int fixed = 8 + 8;                                  // PID + USER
+        if (show_port) fixed += 9 + 1;
+        fixed += (show_mem ? 14 : 8) + 1 + 6;               // CPU meter + gap + value
+        fixed += 8;                                          // MEM
+        if (show_memp) fixed += 5 + 1;
+        if (show_io)   fixed += 8 + 1;
+        fixed += 2;                                          // S
+        if (show_thr)  fixed += 4 + 1;
+        const int name_w = std::max(4, w - fixed - 2);
+        auto [name_s, name_e] = zone(name_w);
+        if (mx >= name_s && mx < name_e) return SortKey::Name;
+        if (show_port) { auto [s,e] = zone(9); if (mx >= s && mx < e) return SortKey::Port; }
+        { auto [s,e] = zone((show_mem ? 14 : 8) + 1 + 6); if (mx >= s && mx < e) return SortKey::Cpu; }
+        { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Mem; }
+        if (show_memp) { auto [s,e] = zone(5); if (mx >= s && mx < e) return SortKey::Mem; }
+        if (show_io)   { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Io; }
+        return std::nullopt;
+    }
+
+    // Display width of a UTF-8 label (wide box/arrow glyphs count as 1 cell in
+    // this app's font set except the ↑↓ pair which is two 1-cell glyphs).
+    static int disp_width(const char* s) {
+        int w = 0;
+        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ) {
+            unsigned char c = *p;
+            int len = (c < 0x80) ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xe ? 3 : 4;
+            w += 1;   // every codepoint here is one terminal cell
+            p += len;
+        }
+        return w;
+    }
+
+    // ── mouse handling ───────────────────────────────────────────────────────
+    static std::pair<Model, maya::Cmd<Msg>> on_mouse(Model m, const maya::MouseEvent& me) {
+        using C = maya::Cmd<Msg>;
+        using maya::MouseButton;
+        using maya::MouseEventKind;
+
+        // maya delivers 1-based cell coords; convert to 0-based frame rows/cols.
+        const int mx = me.x.value - 1;
+        const int my = me.y.value - 1;
+
+        const Layout L = compute_layout(m);
+        auto view = filtered(m);
+        const int n = static_cast<int>(view.size());
+
+        const bool over_table =
+            my >= L.proc_body_y && my < L.proc_body_y + L.body_rows;
+
+        // ── Scroll wheel ──
+        // Over the process table it moves the selection; anywhere else it still
+        // scrolls the list so the wheel is never a dead input.
+        if (me.button == MouseButton::ScrollDown) {
+            m.sel += 3; clamp_sel(m); return {std::move(m), C{}};
+        }
+        if (me.button == MouseButton::ScrollUp) {
+            m.sel -= 3; clamp_sel(m); return {std::move(m), C{}};
+        }
+
+        // Only act on button presses for the rest (ignore Move/Release so we
+        // don't double-fire; drags fall through harmlessly).
+        if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
+
+        // Modal layers first — a click outside the modal dismisses it.
+        if (m.show_help) { m.show_help = false; return {std::move(m), C{}}; }
+        if (m.pending) {
+            // Footer shows y·confirm / n·cancel; a click on the table row of the
+            // pending process (or anywhere) just cancels for safety — killing is
+            // keyboard-confirmed only, never a stray click.
+            m.pending.reset();
+            return {std::move(m), C{}};
+        }
+
+        // ── Footer hint clicks ──
+        if (my == L.footer_y && me.button == MouseButton::Left) {
+            if (auto act = footer_hit(m, mx)) return dispatch_footer(std::move(m), *act);
+            return {std::move(m), C{}};
+        }
+
+        // ── Sort-header clicks (the column-header row of the proc table) ──
+        if (my == L.proc_hdr_y && me.button == MouseButton::Left && !m.filtering) {
+            if (auto sk = sort_header_hit(m, mx)) {
+                m.sort = *sk;
+                return resample(std::move(m));
+            }
+            return {std::move(m), C{}};
+        }
+
+        // ── Process row clicks ──
+        if (over_table && n > 0) {
+            const int start = scroll_start(m.sel, n, L.body_rows);
+            const int row   = my - L.proc_body_y;      // 0-based visible row
+            const int idx   = start + row;
+            if (idx >= 0 && idx < n) {
+                if (me.button == MouseButton::Left) {
+                    m.sel = idx;
+                } else if (me.button == MouseButton::Right) {
+                    // Right-click a row = arm a SIGTERM on it (keyboard confirms).
+                    m.sel = idx;
+                    return arm_kill(std::move(m), SIGTERM);
+                }
+            }
+            return {std::move(m), C{}};
+        }
+
+        return {std::move(m), C{}};
+    }
 
     // ── init / update ───────────────────────────────────────────────────────
 
@@ -83,6 +344,7 @@ struct App {
             },
             [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
             [&](Key k)    { return on_key(std::move(m), k.ev); },
+            [&](Mouse mo) { return on_mouse(std::move(m), mo.ev); },
             [&](Quit)     { return std::pair{std::move(m), C::quit()}; },
         }, msg);
     }
@@ -208,6 +470,9 @@ struct App {
         }));
         subs.push_back(S::on_key([](const maya::KeyEvent& ke) -> std::optional<Msg> {
             return Key{ke};
+        }));
+        subs.push_back(S::on_mouse([](const maya::MouseEvent& me) -> std::optional<Msg> {
+            return Mouse{me};
         }));
         return S::batch(std::move(subs));
     }
