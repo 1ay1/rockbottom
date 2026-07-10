@@ -163,9 +163,12 @@ private:
         using namespace maya::dsl;
         const auto& p = *view_.pending;
         const bool hard = p.sig == SIGKILL;
+        const bool group = p.pids.size() > 1;
         Color c = hard ? pal::crit : pal::warn;
-        std::string q = std::string(hard ? "force-kill " : "end ") +
-                        p.name + " (" + std::to_string(p.pid) + ")?";
+        std::string what = group
+            ? "ALL " + std::to_string(p.pids.size()) + " × " + p.name
+            : p.name + " (" + std::to_string(p.pid) + ")";
+        std::string q = std::string(hard ? "force-kill " : "end ") + what + "?";
         return (h(
             text(" " + q + " ") | nowrap | Bold | fgc(pal::bg) | bgc(c),
             text("  y") | nowrap | Bold | fgc(pal::good),

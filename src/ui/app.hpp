@@ -506,14 +506,27 @@ struct App {
         // 1. Kill confirmation intercepts everything.
         if (m.pending) {
             if (key(ev, 'y') || key(ev, maya::SpecialKey::Enter)) {
-                std::string err = signal_process(m.pending->pid, m.pending->sig);
+                const auto& targets = m.pending->pids;
+                int ok = 0, failed = 0;
+                std::string first_err;
+                for (int pid : targets) {
+                    std::string err = signal_process(pid, m.pending->sig);
+                    if (err.empty()) ++ok;
+                    else { ++failed; if (first_err.empty()) first_err = err; }
+                }
+                const bool group = targets.size() > 1;
                 std::string verb = m.pending->sig == SIGKILL ? "force-killed " : "asked ";
                 std::string tail = m.pending->sig == SIGKILL ? "" : " to exit";
-                m.toast = err.empty()
-                    ? Toast{verb + m.pending->name + " (" + std::to_string(m.pending->pid) + ")" + tail, false}
-                    : Toast{err, true};
+                std::string what = group
+                    ? std::to_string(ok) + " × " + m.pending->name
+                    : m.pending->name + " (" + std::to_string(m.pending->pid) + ")";
+                if (failed)
+                    m.toast = Toast{first_err + (group ? " (+" + std::to_string(failed - 1) + " more failed)"
+                                                        : ""), true};
+                else
+                    m.toast = Toast{verb + what + tail, false};
                 m.pending.reset();
-                // Refresh the list off-thread so the killed process drops out
+                // Refresh the list off-thread so killed processes drop out
                 // promptly without blocking on a full re-sample here.
                 if (!m.sampling) { auto c = sample_cmd(m); return {std::move(m), std::move(c)}; }
             } else if (key(ev, 'n') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
@@ -568,6 +581,7 @@ struct App {
                 }
                 if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
+                if (key(ev, 'X')) return arm_kill_all(std::move(m), SIGTERM);
             } else {
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0;
@@ -623,6 +637,7 @@ struct App {
         // Kill.
         if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
         if (key(ev, 'K'))                                      return arm_kill(std::move(m), SIGKILL);
+        if (key(ev, 'X'))                                      return arm_kill_all(std::move(m), SIGTERM);
 
         return {std::move(m), C{}};
     }
@@ -674,7 +689,23 @@ struct App {
         auto view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
-            m.pending = PendingKill{p->pid, p->name, sig};
+            m.pending = PendingKill{p->pid, p->name, sig, {p->pid}};
+        }
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Arm a kill for EVERY process sharing the selected row's name (the
+    // "kill all Chrome Helpers" move). Same keyboard-confirm flow — the
+    // confirm strip shows the count so there are no surprises.
+    static std::pair<Model, maya::Cmd<Msg>> arm_kill_all(Model m, int sig) {
+        auto view = filtered(m);
+        if (!view.empty() && m.sel < static_cast<int>(view.size())) {
+            const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
+            std::vector<int> pids;
+            for (const auto& q : m.snap.procs)
+                if (q.name == p->name) pids.push_back(q.pid);
+            if (pids.empty()) pids.push_back(p->pid);
+            m.pending = PendingKill{p->pid, p->name, sig, std::move(pids)};
         }
         return {std::move(m), maya::Cmd<Msg>{}};
     }

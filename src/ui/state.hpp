@@ -12,11 +12,13 @@
 
 namespace rockbottom {
 
-// A kill awaiting confirmation.
+// A kill awaiting confirmation. `pids` may carry a whole GROUP (kill-all-
+// by-name); `pid` stays the anchor process for messaging either way.
 struct PendingKill {
     int pid = 0;
     std::string name;
     int sig = SIGTERM;
+    std::vector<int> pids;   // every target; size()>1 = group kill
 };
 
 // Transient notification shown in the footer for a few ticks.

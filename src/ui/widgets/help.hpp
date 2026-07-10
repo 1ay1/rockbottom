@@ -27,6 +27,7 @@ public:
         keys.add("/", "filter by name or pid", "Processes");
         keys.add("x / Del", "end process (SIGTERM)", "Processes");
         keys.add("K", "force-kill (SIGKILL)", "Processes");
+        keys.add("X", "end ALL with this name", "Processes");
         keys.add("y / n", "confirm / cancel kill", "Processes");
         keys.add("s", "cycle sort column", "Sorting");
         keys.add("c m i n P o", "cpu · mem · i/o · name · pid · port", "Sorting");
