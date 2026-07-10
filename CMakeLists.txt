@@ -22,10 +22,16 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
 endif()
 add_subdirectory(third_party/maya)
 
-# ── bottom ───────────────────────────────────────────────────────────────────
+# ── bottom ─────────────────────────────────────────────────────────────────────────────
 add_executable(bottom
-    src/app.cpp
-    src/sampler.cpp
+    src/main.cpp
+    src/core/sampler.cpp
+    src/core/verdict.cpp
+    src/core/collectors/cpu.cpp
+    src/core/collectors/mem.cpp
+    src/core/collectors/disk.cpp
+    src/core/collectors/net.cpp
+    src/core/collectors/proc.cpp
 )
 target_link_libraries(bottom PRIVATE maya)
 target_compile_features(bottom PRIVATE cxx_std_26)
