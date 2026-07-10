@@ -1,20 +1,24 @@
-// procfs.hpp — Shared, side-effect-light helpers for reading /proc and /sys.
-// Every collector includes this; nothing here holds state.
+// platform/common/sys_util.hpp — OS-agnostic helpers shared by every backend.
+//
+// Nothing here touches a platform-specific API: string trimming, a ring-buffer
+// push, uid→name resolution (POSIX), and a generic file slurp usable on any
+// OS that exposes text files. Backend-specific readers (Linux /proc parsing,
+// macOS sysctl/mach) live in their own platform directories and may build on
+// top of these.
 
 #pragma once
 
 #include <array>
-#include <cstdint>
+#include <cstddef>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <pwd.h>
 #include <unistd.h>
 
-namespace rockbottom::procfs {
+namespace rockbottom::sys {
 
-// Read an entire file into a string. Empty string on failure (procfs files are
-// small and virtual, so a full slurp is cheap and simplest).
+// Read an entire (small, virtual) file into a string. Empty on failure.
 inline std::string slurp(const char* path) {
     std::ifstream f(path);
     if (!f) return {};
@@ -49,4 +53,4 @@ inline std::string user_of(uid_t uid) {
     return std::to_string(uid);
 }
 
-}  // namespace rockbottom::procfs
+}  // namespace rockbottom::sys

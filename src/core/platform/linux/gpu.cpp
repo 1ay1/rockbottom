@@ -12,8 +12,8 @@
 // nvidia-smi is only spawned if the binary exists AND an NVIDIA DRM card is
 // present, so machines without one pay nothing.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <array>

@@ -2,55 +2,37 @@
 // collectors/*.cpp; this file wires them together and owns lifecycle.
 
 #include "sampler.hpp"
-#include "procfs.hpp"
 
-#include <algorithm>
-#include <cstdio>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
 #include <string>
-#include <sys/utsname.h>
 #include <unistd.h>
 
 namespace rockbottom {
 
-using namespace procfs;
+// signal_process is pure POSIX (kill(2)) — identical on Linux and macOS — so it
+// lives in the OS-agnostic orchestrator rather than a per-platform backend.
+std::string signal_process(int pid, int sig) {
+    if (::kill(pid, sig) == 0) return {};
+    switch (errno) {
+        case EPERM: return "permission denied — not your process";
+        case ESRCH: return "process no longer exists";
+        default:    return "kill failed";
+    }
+}
 
+// read_static() and every sample_*() collector are defined per-platform under
+// platform/<os>/. sysconf() is POSIX, so the tick-rate / page-size probe is
+// safe to keep here in the OS-agnostic orchestrator; the constructor then hands
+// off to the platform read_static() for the machine-identity facts.
 Sampler::Sampler() {
     clk_tck_ = ::sysconf(_SC_CLK_TCK);
     if (clk_tck_ <= 0) clk_tck_ = 100;
     page_size_ = ::sysconf(_SC_PAGESIZE);
     if (page_size_ <= 0) page_size_ = 4096;
     read_static();
-}
-
-void Sampler::read_static() {
-    char host[256] = {};
-    if (::gethostname(host, sizeof host - 1) == 0) hostname_ = host;
-
-    utsname u{};
-    if (::uname(&u) == 0) kernel_ = std::string(u.sysname) + " " + u.release;
-
-    std::ifstream ci("/proc/cpuinfo");
-    std::string line;
-    int cores = 0;
-    while (std::getline(ci, line)) {
-        if (line.rfind("processor", 0) == 0) ++cores;
-        else if (cpu_model_.empty() && line.rfind("model name", 0) == 0) {
-            auto c = line.find(':');
-            if (c != std::string::npos) cpu_model_ = trim(line.substr(c + 1));
-        }
-    }
-    ncpu_ = std::max(1, cores);
-    if (cpu_model_.empty()) cpu_model_ = "CPU";
-
-    std::ifstream mi("/proc/meminfo");
-    while (std::getline(mi, line)) {
-        if (line.rfind("MemTotal:", 0) == 0) {
-            std::uint64_t kb = 0;
-            std::sscanf(line.c_str(), "MemTotal: %lu kB", &kb);
-            ram_total_ = Bytes{kb * 1024};
-            break;
-        }
-    }
 }
 
 Snapshot Sampler::sample(SortKey sort, int top_n) {
@@ -62,8 +44,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     Snapshot s;
     s.hostname = hostname_;
     s.kernel = kernel_;
-    s.uptime_sec = static_cast<std::uint64_t>(
-        std::strtod(first_line(slurp("/proc/uptime")).c_str(), nullptr));
+    s.uptime_sec = uptime_sec();
 
     sample_cpu(s.cpu);
     sample_mem(s.mem);

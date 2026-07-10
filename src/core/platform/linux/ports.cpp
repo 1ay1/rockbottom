@@ -12,8 +12,8 @@
 // Cost is bounded: one readlink per fd, and we only resolve inodes that
 // phase 1 actually collected.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <cstdint>

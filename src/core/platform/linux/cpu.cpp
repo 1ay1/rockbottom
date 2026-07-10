@@ -1,18 +1,60 @@
 // collectors/cpu.cpp — /proc/stat + /sys cpufreq + thermal zones.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/utsname.h>
+#include <unistd.h>
 
 namespace rockbottom {
 
 using namespace procfs;
+
+// Static machine facts, read once at construction: hostname + kernel (POSIX),
+// core count + CPU model (/proc/cpuinfo), and total RAM (/proc/meminfo).
+void Sampler::read_static() {
+    char host[256] = {};
+    if (::gethostname(host, sizeof host - 1) == 0) hostname_ = host;
+
+    utsname u{};
+    if (::uname(&u) == 0) kernel_ = std::string(u.sysname) + " " + u.release;
+
+    std::ifstream ci("/proc/cpuinfo");
+    std::string line;
+    int cores = 0;
+    while (std::getline(ci, line)) {
+        if (line.rfind("processor", 0) == 0) ++cores;
+        else if (cpu_model_.empty() && line.rfind("model name", 0) == 0) {
+            auto c = line.find(':');
+            if (c != std::string::npos) cpu_model_ = trim(line.substr(c + 1));
+        }
+    }
+    ncpu_ = std::max(1, cores);
+    if (cpu_model_.empty()) cpu_model_ = "CPU";
+
+    std::ifstream mi("/proc/meminfo");
+    while (std::getline(mi, line)) {
+        if (line.rfind("MemTotal:", 0) == 0) {
+            std::uint64_t kb = 0;
+            std::sscanf(line.c_str(), "MemTotal: %lu kB", &kb);
+            ram_total_ = Bytes{kb * 1024};
+            break;
+        }
+    }
+}
+
+// Seconds since boot, from the first field of /proc/uptime.
+std::uint64_t Sampler::uptime_sec() const {
+    return static_cast<std::uint64_t>(
+        std::strtod(first_line(slurp("/proc/uptime")).c_str(), nullptr));
+}
 
 void Sampler::sample_cpu(CpuInfo& cpu) {
     cpu.model = cpu_model_;

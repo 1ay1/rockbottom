@@ -2,10 +2,12 @@
 //
 // `Sampler` owns the cross-tick state needed to compute deltas (CPU busy
 // fractions, network rates, per-process CPU) and the rolling history rings.
-// Its per-domain collection methods are DEFINED IN SEPARATE TRANSLATION UNITS
-// under core/collectors/ — cpu.cpp, mem.cpp, disk.cpp, net.cpp, proc.cpp — and
-// the health verdict in core/verdict.cpp. This header is the shared contract
-// between them, so each collector compiles independently.
+// Its per-domain collection methods are the PLATFORM CONTRACT: this header is
+// OS-agnostic, and each supported OS supplies a full set of implementations
+// under core/platform/<os>/ (linux/ reads /proc + /sys; darwin/ uses
+// sysctl / mach / libproc / IOKit). CMake compiles exactly one backend. The
+// orchestration (sampler.cpp) and the verdict engine (verdict.cpp) stay
+// platform-free, so a new OS only ever means a new platform/<os>/ directory.
 
 #pragma once
 
@@ -41,8 +43,9 @@ private:
     struct CpuTimes { std::uint64_t idle = 0, total = 0; };
     struct ProcPrev { std::uint64_t cpu_ticks = 0; std::uint64_t io_read = 0, io_write = 0; };
 
-    // Collectors (each lives in its own .cpp under collectors/).
+    // Collectors (each lives in its own .cpp under platform/<os>/).
     void    read_static();
+    std::uint64_t uptime_sec() const;   // seconds since boot (platform-specific)
     void    sample_cpu(CpuInfo&);
     void    sample_mem(MemInfo&);
     void    sample_mem_rates(MemInfo&, double dt);   // vmstat swap in/out

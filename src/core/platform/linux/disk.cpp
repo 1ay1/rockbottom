@@ -1,7 +1,7 @@
 // collectors/disk.cpp — /proc/mounts + statvfs, deduped by device.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <fstream>

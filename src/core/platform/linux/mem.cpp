@@ -1,7 +1,7 @@
 // collectors/mem.cpp — /proc/meminfo.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <cstdint>
 #include <fstream>

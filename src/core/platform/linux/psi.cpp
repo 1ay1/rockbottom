@@ -5,8 +5,8 @@
 // human asks when the machine feels slow. Neither htop nor btop surfaces
 // this; for rockbottom it feeds the verdict directly.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <cstdio>
 #include <string>

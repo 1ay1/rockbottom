@@ -1,7 +1,7 @@
 // collectors/net.cpp — /proc/net/dev, byte counters → per-second rates.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <array>

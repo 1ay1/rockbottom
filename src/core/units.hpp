@@ -141,8 +141,11 @@ inline std::string humanize_duration(std::uint64_t sec) {
     std::uint64_t h = sec / 3600;  sec %= 3600;
     std::uint64_t m = sec / 60;    sec %= 60;
     char buf[48];
-    if (d) std::snprintf(buf, sizeof buf, "%lud %02lu:%02lu:%02lu", d, h, m, sec);
-    else   std::snprintf(buf, sizeof buf, "%02lu:%02lu:%02lu", h, m, sec);
+    // Cast to unsigned long long so the %llu specifiers are correct whether
+    // uint64_t is `unsigned long` (Linux LP64) or `unsigned long long` (macOS).
+    auto L = [](std::uint64_t v) { return static_cast<unsigned long long>(v); };
+    if (d) std::snprintf(buf, sizeof buf, "%llud %02llu:%02llu:%02llu", L(d), L(h), L(m), L(sec));
+    else   std::snprintf(buf, sizeof buf, "%02llu:%02llu:%02llu", L(h), L(m), L(sec));
     return buf;
 }
 

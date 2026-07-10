@@ -3,8 +3,8 @@
 // Sums sectors read/written across physical block devices (skipping
 // partitions and virtual devices), converts deltas to bytes/sec.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <cctype>
 #include <fstream>

@@ -218,7 +218,8 @@ mutations, the kind of clean code that would make your therapist proud:
 |-------|-------|------|
 | Units | `src/core/units.hpp` | Strong dimensional types + the humanizers that turn scary numbers into `4.2G` |
 | Data | `src/core/metrics.hpp` | Pure `Snapshot` value types + the almighty `Verdict` |
-| Sampler | `src/core/sampler.*` + `collectors/` | The one grubby place that touches the real world (`/proc`, `/sys`, `nvidia-smi`) |
+| Sampler | `src/core/sampler.*` + `verdict.cpp` | OS-agnostic: orchestration, cross-tick deltas, and the diagnosis engine |
+| Platform | `src/core/platform/<os>/` | The one grubby place that touches the real world — `linux/` reads `/proc` + `/sys`; `darwin/` uses mach / sysctl / libproc / IOKit. CMake compiles exactly one |
 | App | `src/ui/app.hpp` | `Model` + `Msg` + `update` + a pure `view` |
 | Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
 
@@ -232,6 +233,8 @@ shoes off.
 Needs a C++26 compiler (GCC 15+; built on GCC 16) and CMake 3.28+. Yes, it's a
 fancy compiler. The type theory has *demands.* It's an artist.
 
+**Linux:**
+
 ```bash
 git clone --recurse-submodules https://github.com/1ay1/rockbottom
 cd rockbottom
@@ -239,6 +242,28 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/rb
 ```
+
+**macOS** (Apple Silicon or Intel) builds with Homebrew GCC — the same
+toolchain maya's own CI uses. That's the whole story: no Clang, no libc++
+gymnastics.
+
+```bash
+brew install gcc cmake
+git clone --recurse-submodules https://github.com/1ay1/rockbottom
+cd rockbottom
+cmake -B build -DCMAKE_BUILD_TYPE=Release   # auto-picks Homebrew g++
+cmake --build build -j
+./build/rb
+```
+
+CMake finds Homebrew's newest `g++-N` for you (override with
+`-DCMAKE_CXX_COMPILER=g++-15` or `CXX=...`). Apple's kernel headers use the C11
+`_Static_assert` spelling that g++ rejects at namespace scope, so the macOS
+backend aliases it to C++'s `static_assert` before including any SDK header
+(`src/core/platform/darwin/mach_util.hpp`) — one line that lets plain GCC parse
+all of mach / IOKit / libproc. Why not just use Clang? Apple/LLVM libc++ still
+doesn't ship `std::move_only_function`, which maya requires; libstdc++ does. So
+GCC it is.
 
 Cloned it and forgot `--recurse-submodules`, you beautiful disaster?
 
@@ -281,10 +306,23 @@ did not check.
 
 ## Platform
 
-Linux only. It reads `/proc` and `/sys` with its bare hands — no ncurses, no
-dependencies, no phoning home to sell your fan speeds to advertisers. Runs on a
-normal `x86_64` kernel. On Windows or macOS? This isn't for you — but honestly,
-props for reading a Linux README all the way down here. That's the spirit.
+**Linux and macOS.** rockbottom is built as a thin OS-agnostic core (the
+verdict engine, the Elm loop, the strong-typed units) sitting on a **platform
+backend** — one directory per OS under `src/core/platform/`, and CMake compiles
+exactly one. Adding an OS is adding a directory; the verdict never changes.
+
+- **Linux** — reads `/proc` and `/sys` with its bare hands. Full fidelity: PSI
+  pressure, per-core clocks, iowait split, per-process disk I/O, the works.
+- **macOS** — talks to the kernel the native way: `host_processor_info` /
+  `host_statistics64` (CPU + memory), `sysctl` (swap, uptime, model), `libproc`
+  (processes + bound ports), IOKit (disk throughput, GPU, battery), `getifaddrs`
+  (network). A few Linux-only signals have no macOS analogue — PSI, the iowait
+  split, per-core clock — so those panes simply omit them, the same way the app
+  already hides a GPU field your card won't report. Everything else is there.
+
+No ncurses, no runtime dependencies, no phoning home to sell your fan speeds to
+advertisers. On Windows? This still isn't for you — but honestly, props for
+reading this far.
 
 ## License
 

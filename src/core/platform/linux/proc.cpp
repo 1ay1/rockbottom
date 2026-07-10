@@ -1,7 +1,7 @@
 // collectors/proc.cpp — walk /proc/<pid>/{stat,statm}, compute per-proc CPU%.
 
-#include "../sampler.hpp"
-#include "../procfs.hpp"
+#include "../../sampler.hpp"
+#include "procfs.hpp"
 
 #include <algorithm>
 #include <cstdlib>
