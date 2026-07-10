@@ -75,11 +75,32 @@ public:
         start = std::clamp(start, 0, std::max(0, n - body_rows));
 
         std::vector<Element> body;
+        // NAME cell width, computed analytically from the same tier flags the
+        // row uses — a flex cell whose content is wide (cmd trail) bullies the
+        // fixed columns out of alignment, so nothing here is left to flex.
+        const int row_w = view_.width - (scrolling ? 2 : 0);
+        const int name_w = [&] {
+            const int w = view_.width;
+            const bool show_port = w >= 92;
+            const bool show_thr  = w >= 70;
+            const bool show_memp = w >= 62;
+            const bool show_mem  = w >= 54;
+            const bool show_io   = w >= 84;
+            int ncols = 6;                       // pid, user, name, meter, cpu, mem
+            int fixed = 8 + 8 + (show_mem ? 14 : 8) + 6 + 8 + 2;  // + S dot
+            ncols += 1;                          // S
+            if (show_port) { fixed += 9; ++ncols; }
+            if (show_memp) { fixed += 5; ++ncols; }
+            if (show_io)   { fixed += 8; ++ncols; }
+            if (show_thr)  { fixed += 4; ++ncols; }
+            return std::max(8, row_w - fixed - (ncols - 1));
+        }();
         for (int i = start; i < n && i < start + body_rows; ++i)
             body.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                     i == view_.selected,
                                     loud && i == hi,
-                                    ((i - start) & 1) != 0));
+                                    ((i - start) & 1) != 0,
+                                    name_w));
 
         if (n == 0)
             body.push_back((text(view_.filter.empty()
@@ -199,7 +220,7 @@ private:
     }
 
     [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit,
-                                         bool alt) const {
+                                         bool alt, int name_w) const {
         using namespace maya;
         using namespace maya::dsl;
 
@@ -232,6 +253,20 @@ private:
         std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", p.cpu);
         char memp_txt[16];
         std::snprintf(memp_txt, sizeof memp_txt, "%4.1f", p.mem_share.percent());
+        // Zero reads as silence: idle figures drop to faint ink so the
+        // columns aren't a wall of identical 0.0s and live rows pop.
+        const bool cpu_zero  = p.cpu < 0.05;
+        const bool memp_zero = p.mem_share.percent() < 0.05;
+        if (cpu_zero) cpu_st = Style{}.with_fg(pal::faint);
+
+        // The NAME column owns all the slack; instead of a void, trail the
+        // command line in barely-there ink — genuinely useful (which python?
+        // whose agentty?) and it fills the table's dead middle.
+        std::string cmd_trail;
+        if (!p.cmd.empty() && p.cmd != p.name) {
+            cmd_trail = p.cmd;
+            if (cmd_trail.size() > 96) cmd_trail.resize(96);
+        }
 
         // Ports: ":80" / ":80 +2" — lowest port plus how many more. Sky color
         // makes network-facing processes pop out of the table.
@@ -258,7 +293,35 @@ private:
             cols.push_back((text(gutter + std::to_string(p.pid)) | nowrap
                             | fgc(sk == SortKey::Pid && !selected ? pal::text : gutter_c) | w_<8>).build());
             cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(user_c) | w_<8>).build());
-            cols.push_back((text(fmt::clip(p.name, 32), name_st) | nowrap | grow(1)).build());
+            {
+                // name (styled) + dim command trail, hard-clipped to the
+                // analytically computed cell width so fixed columns to the
+                // right never shift.
+                auto clip_bytes = [](std::string& s, std::size_t nb) {
+                    if (s.size() <= nb) return false;
+                    s.resize(nb);
+                    while (!s.empty() &&
+                           (static_cast<unsigned char>(s.back()) & 0xC0) == 0x80)
+                        s.pop_back();
+                    return true;
+                };
+                std::string content = std::string(fmt::clip(p.name, 32));
+                std::vector<StyledRun> runs;
+                const std::size_t budget = static_cast<std::size_t>(name_w);
+                clip_bytes(content, budget);
+                runs.push_back({0, content.size(), name_st});
+                if (!cmd_trail.empty() && content.size() + 4 < budget) {
+                    std::size_t off = content.size();
+                    std::string t = "  " + cmd_trail;
+                    if (clip_bytes(t, budget - off - 3)) t += "…";
+                    content += t;
+                    runs.push_back({off, content.size() - off,
+                                    Style{}.with_fg(mix(pal::dim, pal::bg_panel, 0.35))});
+                }
+                cols.push_back(Element{TextElement{.content = std::move(content), .style = {},
+                                                   .wrap = TextWrap::NoWrap,
+                                                   .runs = std::move(runs)}} | width(name_w));
+            }
             if (show_port)
                 cols.push_back((text(port_txt, sk == SortKey::Port ? Style{}.with_fg(pal::sky).with_bold() : Style{}.with_fg(pal::sky))
                                 | nowrap | w_<9> | justify(Justify::End)).build());
@@ -269,7 +332,9 @@ private:
                                                     : Style{}.with_fg(pal::text))
                             | nowrap | w_<8> | justify(Justify::End)).build());
             if (show_memp)
-                cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5> | justify(Justify::End)).build());
+                cols.push_back((text(memp_txt) | nowrap
+                                | fgc(mem_frac > 0.1 ? pal::hot : memp_zero ? pal::faint : pal::dim)
+                                | w_<5> | justify(Justify::End)).build());
             if (show_io)
                 cols.push_back((text(io_txt,
                                      sk == SortKey::Io && iorate > 512
