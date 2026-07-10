@@ -227,14 +227,27 @@ private:
         const double cpu_frac = std::clamp(p.cpu / 100.0, 0.0, 1.0);
         const double mem_frac = p.mem_share.v;
 
+        // The cursor row is "lit" purely with ink — NO background paint —
+        // every cell's hue lifts toward white and goes bold, so the whole
+        // line visibly glows against its dim peers while colors keep their
+        // meaning (a hot cpu figure stays warm, just brighter).
+        auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.4) : c; };
+        auto cell_st = [&](Color c) {
+            Style st = Style{}.with_fg(lift(c));
+            if (selected) st = st.with_bold();
+            return st;
+        };
+        const Color quiet  = selected ? pal::text  : pal::dim;    // dim ink, lifted
+        const Color hushed = selected ? pal::label : pal::faint;  // faint ink, lifted
+
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();
-        Style cpu_st = Style{}.with_fg(load_color(cpu_frac));
+        Style cpu_st = cell_st(load_color(cpu_frac));
         if (p.cpu > 50) cpu_st = cpu_st.with_bold();
 
         const char* dot = p.state == 'R' ? "●" : p.state == 'D' ? "◆" : "·";
-        Color dot_c = p.state == 'R' ? pal::good
-                    : p.state == 'D' ? pal::crit : pal::faint;
+        Color dot_c = lift(p.state == 'R' ? pal::good
+                     : p.state == 'D' ? pal::crit : pal::faint);
 
         // The active sort column's values get brighter ink so the column the
         // table is ranked by reads as the "spine" of the list.
@@ -243,18 +256,11 @@ private:
         // root-owned rows get a quiet warm tint on the user column — enough
         // to pick out privileged processes without shouting.
         Color user_c = p.user == "root" ? mix(pal::hot, pal::label, 0.55) : pal::label;
-        if (selected) user_c = mix(user_c, pal::white, 0.45);
 
         // Selection cursor beats culprit marker in the gutter; culprit keeps
         // its red name so it stays identifiable while selected.
         std::string gutter = selected ? "▶" : culprit ? "»" : " ";
         Color gutter_c = selected ? pal::proc_ac : culprit ? pal::crit : pal::dim;
-
-        // The cursor row is "lit" purely with ink — no background strip
-        // (paint behind text looks muddy) — every quiet cell steps up one
-        // brightness notch so the whole line glows against its dim peers.
-        const Color quiet  = selected ? pal::label : pal::dim;    // dim ink, lifted
-        const Color hushed = selected ? pal::dim   : pal::faint;  // faint ink, lifted
 
         char cpu_txt[16];
         std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", p.cpu);
@@ -264,7 +270,7 @@ private:
         // columns aren't a wall of identical 0.0s and live rows pop.
         const bool cpu_zero  = p.cpu < 0.05;
         const bool memp_zero = p.mem_share.percent() < 0.05;
-        if (cpu_zero) cpu_st = Style{}.with_fg(hushed);
+        if (cpu_zero) cpu_st = cell_st(hushed);
 
         // The NAME column owns all the slack; instead of a void, trail the
         // command line in barely-there ink — genuinely useful (which python?
@@ -301,7 +307,7 @@ private:
                                           : sk == SortKey::Pid ? pal::text : gutter_c);
             if (selected) pid_st = pid_st.with_bold();
             cols.push_back((text(gutter + std::to_string(p.pid), pid_st) | nowrap | w_<8>).build());
-            cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(user_c) | w_<8>).build());
+            cols.push_back((text(fmt::clip(p.user, 7), cell_st(user_c)) | nowrap | w_<8>).build());
             {
                 // name (styled) + dim command trail, hard-clipped to the
                 // analytically computed cell width so fixed columns to the
@@ -325,7 +331,7 @@ private:
                     if (clip_bytes(t, budget - off - 3)) t += "…";
                     content += t;
                     runs.push_back({off, content.size() - off,
-                                    Style{}.with_fg(selected ? pal::dim
+                                    Style{}.with_fg(selected ? pal::label
                                                              : mix(pal::dim, pal::bg_panel, 0.35))});
                 }
                 cols.push_back(Element{TextElement{.content = std::move(content), .style = {},
@@ -333,27 +339,29 @@ private:
                                                    .runs = std::move(runs)}} | width(name_w));
             }
             if (show_port)
-                cols.push_back((text(port_txt, sk == SortKey::Port ? Style{}.with_fg(pal::sky).with_bold() : Style{}.with_fg(pal::sky))
+                cols.push_back((text(port_txt, sk == SortKey::Port ? cell_st(pal::sky).with_bold()
+                                                                   : cell_st(pal::sky))
                                 | nowrap | w_<9> | justify(Justify::End)).build());
             cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
             cols.push_back((text(humanize_bytes(p.rss),
-                                 sk == SortKey::Mem ? Style{}.with_fg(pal::white).with_bold()
-                                                    : Style{}.with_fg(pal::text))
+                                 sk == SortKey::Mem ? cell_st(pal::white).with_bold()
+                                                    : cell_st(pal::text))
                             | nowrap | w_<8> | justify(Justify::End)).build());
             if (show_memp)
-                cols.push_back((text(memp_txt) | nowrap
-                                | fgc(mem_frac > 0.1 ? pal::hot : memp_zero ? hushed : quiet)
-                                | w_<5> | justify(Justify::End)).build());
+                cols.push_back((text(memp_txt,
+                                     cell_st(mem_frac > 0.1 ? pal::hot : memp_zero ? hushed : quiet))
+                                | nowrap | w_<5> | justify(Justify::End)).build());
             if (show_io)
                 cols.push_back((text(io_txt,
                                      sk == SortKey::Io && iorate > 512
-                                         ? Style{}.with_fg(pal::sky).with_bold()
-                                         : Style{}.with_fg(io_c))
+                                         ? cell_st(pal::sky).with_bold()
+                                         : cell_st(io_c))
                                 | nowrap | w_<8> | justify(Justify::End)).build());
             cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
             if (show_thr)
-                cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(quiet) | w_<4> | justify(Justify::End)).build());
+                cols.push_back((text(std::to_string(p.threads), cell_st(quiet))
+                                | nowrap | w_<4> | justify(Justify::End)).build());
             return h(std::move(cols)) | gap(1);
         }();
 

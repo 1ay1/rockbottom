@@ -47,6 +47,7 @@ struct App {
         bool     show_help = false;
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
         int      detail_scroll = 0;              // scroll offset within a pane
+        int      detail_pid = 0;                 // PID the Proc pane is pinned to
         int      width = 100, height = 40;
         int      ticks = 0;
 
@@ -505,27 +506,36 @@ struct App {
             return {std::move(m), C{}};
         }
 
-        // 3b. Detail pane (full-screen drill-down): Esc/q/Enter close it, the
+        // 3b. Detail pane (full-screen drill-down): Esc/q close it, the
         // number keys switch domain, and in the process view x/K still work.
         if (m.detail != ui::Detail::None) {
-            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q') ||
-                key(ev, maya::SpecialKey::Enter)) {
-                m.detail = ui::Detail::None; m.detail_scroll = 0; return {std::move(m), C{}};
+            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
+                return {std::move(m), C{}};
             }
             if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m); return {std::move(m), C{}}; }
             if (m.detail == ui::Detail::Proc) {
-                // In the process pane ↑↓ walk the selection (and the app keeps
-                // it visible); other keys still work.
-                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); return {std::move(m), C{}}; }
+                // ↑↓ walk the table selection AND re-pin the pane to the new
+                // row, so the pane follows deliberate navigation but never
+                // drifts on its own when the table resorts under it.
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Enter)) {
+                    m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
+                    return {std::move(m), C{}};
+                }
                 if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
             } else {
+                if (key(ev, maya::SpecialKey::Enter)) {
+                    m.detail = ui::Detail::None; m.detail_scroll = 0;
+                    return {std::move(m), C{}};
+                }
                 // Every other pane is scrollable with the usual keys.
                 if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { m.detail_scroll += 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { m.detail_scroll -= 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
@@ -553,7 +563,10 @@ struct App {
         if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
         if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
         if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '6') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '6') || key(ev, maya::SpecialKey::Enter)) {
+            m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m);
+            return {std::move(m), C{}};
+        }
 
         if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m)); }
         if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
@@ -595,15 +608,26 @@ struct App {
         m.sel = std::clamp(m.sel, 0, std::max(0, n - 1));
     }
 
+    // Remember WHICH process the Proc detail pane is showing. The table
+    // resorts on every tick (cpu% moves), so an index would silently swap the
+    // pane to a different process — the PID pins it to the one you chose.
+    static void pin_detail_pid(Model& m) {
+        auto view = filtered(m);
+        m.detail_pid = (!view.empty() && m.sel < static_cast<int>(view.size()))
+                           ? view[static_cast<std::size_t>(m.sel)]->pid : 0;
+    }
+
+    // Resolve the pinned PID to a live row; nullptr when it exited.
+    static const ProcInfo* pinned_proc(const Model& m) {
+        for (const auto& p : m.snap.procs)
+            if (p.pid == m.detail_pid) return &p;
+        return nullptr;
+    }
+
     // Clamp the detail-pane scroll offset to [0, content - viewport]. Builds a
     // throwaway DetailPane to ask it how tall its body is at the current size.
     static void clamp_detail_scroll(Model& m) {
-        const ProcInfo* p = nullptr;
-        if (m.detail == ui::Detail::Proc) {
-            auto view = filtered(m);
-            if (!view.empty() && m.sel < static_cast<int>(view.size()))
-                p = view[static_cast<std::size_t>(m.sel)];
-        }
+        const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
         ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, 0};
         int max_scroll = std::max(0, pane.content_rows() - pane.viewport_rows());
         m.detail_scroll = std::clamp(m.detail_scroll, 0, max_scroll);
@@ -658,12 +682,7 @@ struct App {
         if (m.show_help) return HelpOverlay{};
 
         if (m.detail != ui::Detail::None) {
-            const ProcInfo* p = nullptr;
-            if (m.detail == ui::Detail::Proc) {
-                auto view = filtered(m);
-                if (!view.empty() && m.sel < static_cast<int>(view.size()))
-                    p = view[static_cast<std::size_t>(m.sel)];
-            }
+            const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
             return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
         }
 
