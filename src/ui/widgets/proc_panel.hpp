@@ -12,6 +12,7 @@
 #pragma once
 
 #include <maya/maya.hpp>
+#include <maya/widget/scrollbar.hpp>
 
 #include "../../core/metrics.hpp"
 #include "../state.hpp"
@@ -68,16 +69,35 @@ public:
         if (view_.selected >= body_rows) start = view_.selected - body_rows + 1;
         start = std::clamp(start, 0, std::max(0, n - body_rows));
 
+        std::vector<Element> body;
         for (int i = start; i < n && i < start + body_rows; ++i)
-            rows.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
+            body.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                     i == view_.selected,
                                     loud && i == hi));
 
         if (n == 0)
-            rows.push_back((text(view_.filter.empty()
+            body.push_back((text(view_.filter.empty()
                                      ? "no processes"
                                      : "nothing matches \"" + view_.filter + "\"")
                             | fgc(pal::dim)).build());
+
+        // Scrollbar: maya's scrollbar_y renders from plain ScrollState fields,
+        // so we drive it straight from our selection window — no scroll
+        // plumbing, just where-am-I feedback for 380-row lists.
+        if (n > body_rows) {
+            ScrollState sb;
+            sb.y = start;
+            sb.max_y = n - body_rows;
+            ScrollbarStyle st;
+            st.track_color = pal::faint;
+            st.thumb_color = pal::proc_ac;
+            rows.push_back((h(
+                (v(body) | grow(1)),
+                scrollbar_y(sb, static_cast<int>(body.size()), st)
+            )).build());
+        } else {
+            for (auto& r : body) rows.push_back(std::move(r));
+        }
 
         // Chip: filter beats sort in relevance when active.
         std::string chip = view_.filtering ? "/" + view_.filter + "▌"
