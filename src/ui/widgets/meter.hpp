@@ -32,6 +32,7 @@ class Meter {
     int    width_ = 16;
     std::optional<maya::Color> color_;       // nullopt → load gradient
     maya::Color track_ = pal::track;
+    bool groove_ = true;                     // paint the empty remainder slab
 
 public:
     constexpr explicit Meter(double value) : value_(std::clamp(value, 0.0, 1.0)) {}
@@ -40,6 +41,7 @@ public:
     Meter& color(maya::Color c)      { color_ = c; return *this; }
     Meter& track(maya::Color c)      { track_ = c; return *this; }
     Meter& fill()                    { width_ = 0; return *this; }
+    Meter& groove(bool on)           { groove_ = on; return *this; }   // off = no bg slab
 
     operator maya::Element() const { return build(); }
 
@@ -89,16 +91,20 @@ public:
             maya::Color c = color_ ? *color_ : load_color((full + 0.5) / width_);
             std::size_t off = content.size();
             content += kEighths[frac8];
-            runs.push_back({off, content.size() - off,
-                            maya::Style{}.with_fg(c).with_bg(track_)});
+            auto st = maya::Style{}.with_fg(c);
+            if (groove_) st = st.with_bg(track_);
+            runs.push_back({off, content.size() - off, st});
             ++used;
         }
 
         // Groove remainder: one run of bg-painted spaces — a quiet solid slab.
+        // With the groove off the empty cells are plain blanks, so an idle row
+        // shows nothing but its fill (no dark rectangle to read as noise).
         if (used < width_) {
             std::size_t off = content.size();
             for (int i = used; i < width_; ++i) content += ' ';
-            runs.push_back({off, content.size() - off, maya::Style{}.with_bg(track_)});
+            if (groove_)
+                runs.push_back({off, content.size() - off, maya::Style{}.with_bg(track_)});
         }
 
         return maya::Element{maya::TextElement{

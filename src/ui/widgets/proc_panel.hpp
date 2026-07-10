@@ -155,15 +155,29 @@ private:
             Color c = view_.sort == self ? pal::proc_ac : pal::dim;
             return text(s) | nowrap | Bold | fgc(c);
         };
+        // A numeric header sits RIGHT-aligned over the number it labels, so it
+        // lines up with the right-aligned values in the rows below (the meter
+        // to its left is spanned by a blank).
+        auto num_hdr = [&](const char* name, SortKey self, int meter_w, int num_w) {
+            return (h(
+                blank() | width(meter_w),
+                hdr(name, self) | width(num_w) | justify(Justify::End)
+            ) | gap(1)).build();
+        };
+        auto plain_num = [&](const char* name, int num_w) {
+            return ((text(name) | nowrap | Bold | fgc(pal::dim)) | width(num_w)
+                    | justify(Justify::End)).build();
+        };
         std::vector<Element> cols;
         cols.push_back(((text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
         cols.push_back(((text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
         cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<11>).build());
-        cols.push_back((hdr("CPU", SortKey::Cpu) | width(show_mem ? 21 : 14)).build());
-        cols.push_back((hdr("MEM", SortKey::Mem) | width(show_mem ? 20 : 8)).build());
-        if (show_memp) cols.push_back(((text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>).build());
-        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<10>).build());
+        cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
+        if (show_mem) cols.push_back(num_hdr("MEM", SortKey::Mem, 12, 7));
+        else          cols.push_back(plain_num("MEM", 7));
+        if (show_memp) cols.push_back(plain_num("MEM%", 5));
+        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<10> | justify(Justify::End)).build());
         cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>).build());
         if (show_thr) cols.push_back((text("THR") | nowrap | Bold | fgc(pal::dim)).build());
         return (h(std::move(cols)) | gap(1)).build();
@@ -222,15 +236,15 @@ private:
             cols.push_back((text(fmt::clip(p.name, 32), name_st) | nowrap | grow(1)).build());
             if (show_port)
                 cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<11>).build());
-            cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).build_fixed());
+            cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6>).build());
             if (show_mem)
-                cols.push_back(Meter{mem_frac}.width(12).color(pal::mem_ac).build_fixed());
-            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7>).build());
+                cols.push_back(Meter{mem_frac}.width(12).color(pal::mem_ac).groove(false).build_fixed());
+            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7> | justify(Justify::End)).build());
             if (show_memp)
                 cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
             if (show_io)
-                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<10>).build());
+                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<10> | justify(Justify::End)).build());
             cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2>).build());
             if (show_thr)
                 cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)).build());

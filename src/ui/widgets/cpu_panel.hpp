@@ -43,17 +43,21 @@ public:
         // bold % stacked to its left. ──
         const double tf = cpu_.total.v;
         if (graph_h_ >= 2) {
+            // Header line: ALL + live %.
             rows.push_back((h(
-                v(
-                    h(text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
-                      text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
-                    ) | gap(1),
-                    blank(),
-                    Meter{tf}.width(10),
-                    blank()
-                ),
+                text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
+                text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
+            ) | gap(1)).build());
+            // Graph with a tiny left y-axis: 100 at top, 0 at the floor.
+            std::vector<Element> axis;
+            for (int r = 0; r < graph_h_; ++r) {
+                const char* lbl = r == 0 ? "100" : r == graph_h_ - 1 ? "  0" : "   ";
+                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
+            }
+            rows.push_back((h(
+                v(std::move(axis)) | w_<3>,
                 Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(graph_w_).rows(graph_h_)
-            ) | gap(2) | height(graph_h_)).build());
+            ) | gap(1) | height(graph_h_)).build());
             rows.push_back(blank());
         } else {
             // No room for the mountain — keep the live ALL meter as one row.
@@ -78,7 +82,7 @@ public:
             return (h(
                 text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
-                Element{Meter{f}.fill().track(pal::bg_panel)} | grow(1)
+                Element{Meter{f}.fill().groove(false)} | grow(1)
             ) | gap(1)).build();
         };
         for (int r = 0; r < per_col; ++r) {

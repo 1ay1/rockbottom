@@ -273,7 +273,7 @@ struct App {
         const int left_w  = inner - gap_w - right_w;
         // Inner content width of a panel = box width - 2 border - 2 padding.
         const int cpu_inner = (narrow ? inner : left_w) - 4;
-        const int graph_w = std::max(8, cpu_inner - 20 - 2);   // minus stub + gap
+        const int graph_w = std::max(8, cpu_inner - 4);   // minus y-axis (3) + gap (1)
         Element top = narrow
             ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}, MemPanel{s.mem}, NetPanel{s.nets},
                  DiskPanel{s.disks, s.disk_io, false})).build()
