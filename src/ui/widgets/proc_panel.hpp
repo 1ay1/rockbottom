@@ -116,6 +116,7 @@ private:
             case SortKey::Mem:  return "mem";
             case SortKey::Pid:  return "pid";
             case SortKey::Name: return "name";
+            case SortKey::Port: return "port";
         }
         return "cpu";
     }
@@ -148,7 +149,8 @@ private:
         return (h(
             (text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
             (text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
-            hdr("NAME", SortKey::Name) | w_<34>,
+            hdr("NAME", SortKey::Name) | w_<26>,
+            hdr("PORT", SortKey::Port) | w_<11>,
             hdr("CPU", SortKey::Cpu) | w_<21>,
             hdr("MEM", SortKey::Mem) | w_<20>,
             (text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>,
@@ -183,10 +185,20 @@ private:
         char memp_txt[16];
         std::snprintf(memp_txt, sizeof memp_txt, "%4.1f", p.mem_share.percent());
 
+        // Ports: ":80" / ":80 +2" — lowest port plus how many more. Sky color
+        // makes network-facing processes pop out of the table.
+        std::string port_txt;
+        if (!p.ports.empty()) {
+            port_txt = ":" + std::to_string(p.ports.front());
+            if (p.ports.size() > 1)
+                port_txt += " +" + std::to_string(p.ports.size() - 1);
+        }
+
         auto row = h(
             text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>,
             text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>,
-            text(fmt::clip(p.name, 33), name_st) | nowrap | w_<34>,
+            text(fmt::clip(p.name, 25), name_st) | nowrap | w_<26>,
+            text(port_txt) | nowrap | fgc(pal::sky) | w_<11>,
             Meter{cpu_frac}.width(14),
             text(cpu_txt, cpu_st) | nowrap | w_<6>,
             Meter{mem_frac}.width(12).color(pal::mem_ac),

@@ -33,6 +33,7 @@ add_executable(bottom
     src/core/collectors/diskio.cpp
     src/core/collectors/net.cpp
     src/core/collectors/proc.cpp
+    src/core/collectors/ports.cpp
     src/core/collectors/psi.cpp
     src/core/collectors/battery.cpp
 )

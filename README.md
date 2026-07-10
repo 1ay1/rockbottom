@@ -40,6 +40,9 @@ The panels underneath are there when you want the detail — not before.
 - **Network** — per-interface ▼rx / ▲tx rates with peak-normalised sparklines.
 - **Processes** — interactive: select, filter, sort, and kill — with the
   loudest process flagged » and running/disk-sleep state dots.
+- **Ports** — every process's bound TCP/UDP ports (`:8080 +2`), joined from
+  `/proc/net/*` socket inodes to `/proc/<pid>/fd` — the `ss -p` trick, live
+  in the table, sortable with `o`.
 - **Battery** — charge chip in the header when hardware exists.
 
 ## Design: type-theoretic core
@@ -103,7 +106,7 @@ git submodule update --init --recursive
 | `x` / `Del` | end selected process (SIGTERM, with confirm) |
 | `K` | force-kill selected (SIGKILL, with confirm) |
 | `y` / `n` | confirm / cancel a pending kill |
-| `s` | cycle sort · `c` cpu · `m` mem · `n` name · `P` pid |
+| `s` | cycle sort · `c` cpu · `m` mem · `n` name · `P` pid · `o` port |
 | `p` / `Space` | pause / resume sampling |
 | `?` / `h` | help overlay |
 | `q` / `Esc` | quit |

@@ -19,7 +19,7 @@
 
 namespace bottom {
 
-enum class SortKey { Cpu, Mem, Pid, Name };
+enum class SortKey { Cpu, Mem, Pid, Name, Port };
 
 // Send a signal to a pid. Returns empty string on success, error text on
 // failure (permission, vanished, …). Lives here because it's the only other
@@ -50,6 +50,7 @@ private:
     void    sample_disk_io(DiskIO&, double dt);
     void    sample_net(std::vector<NetIface>&, double dt);
     void    sample_procs(Snapshot&, SortKey, int top_n, double dt);
+    void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
     Verdict judge(const Snapshot&) const;
@@ -66,6 +67,7 @@ private:
     int                                   io_hist_len_ = 0;
     std::array<float, 120>                mem_hist_{};
     int                                   mem_hist_len_ = 0;
+    std::unordered_map<int, std::vector<std::uint16_t>> pid_ports_;  // per tick
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;

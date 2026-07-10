@@ -29,7 +29,7 @@ public:
         keys.add("K", "force-kill (SIGKILL)", "Processes");
         keys.add("y / n", "confirm / cancel kill", "Processes");
         keys.add("s", "cycle sort column", "Sorting");
-        keys.add("c m n P", "cpu · mem · name · pid", "Sorting");
+        keys.add("c m n P o", "cpu · mem · name · pid · port", "Sorting");
         keys.add("p / Space", "pause / resume", "General");
         keys.add("? / h", "toggle this help", "General");
         keys.add("q / Esc", "quit", "General");

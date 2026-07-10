@@ -79,6 +79,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         struct ::stat stbuf{};
         if (::stat(base.c_str(), &stbuf) == 0) p.user = user_of(stbuf.st_uid);
 
+        if (auto it = pid_ports_.find(pid); it != pid_ports_.end())
+            p.ports = it->second;
+
         out.push_back(std::move(p));
     }
     ::closedir(proc);
@@ -97,6 +100,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
             case SortKey::Mem:  return [](const ProcInfo& a, const ProcInfo& b){ return a.rss.value > b.rss.value; };
             case SortKey::Pid:  return [](const ProcInfo& a, const ProcInfo& b){ return a.pid < b.pid; };
             case SortKey::Name: return [](const ProcInfo& a, const ProcInfo& b){ return a.name < b.name; };
+            case SortKey::Port:
+                // Processes with bound ports first, ascending by lowest port;
+                // ties (and the portless tail) fall back to CPU.
+                return [](const ProcInfo& a, const ProcInfo& b){
+                    const bool ha = !a.ports.empty(), hb = !b.ports.empty();
+                    if (ha != hb) return ha;
+                    if (ha && a.ports.front() != b.ports.front())
+                        return a.ports.front() < b.ports.front();
+                    return a.cpu > b.cpu;
+                };
         }
         return [](const ProcInfo& a, const ProcInfo& b){ return a.cpu > b.cpu; };
     };

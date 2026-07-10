@@ -73,6 +73,7 @@ struct ProcInfo {
     Ratio       mem_share{};    // rss / total ram
     char        state = '?';    // R S D Z T …
     int         threads = 0;
+    std::vector<std::uint16_t> ports;   // bound TCP/UDP ports (sorted, deduped)
 };
 
 // Aggregate health verdict — the heart of the "what's going on?" answer.

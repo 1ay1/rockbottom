@@ -141,11 +141,12 @@ struct App {
         if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
 
-        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 4); return resample(std::move(m)); }
+        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 5); return resample(std::move(m)); }
         if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
         if (key(ev, 'm')) { m.sort = SortKey::Mem;  return resample(std::move(m)); }
         if (key(ev, 'P')) { m.sort = SortKey::Pid;  return resample(std::move(m)); }
         if (key(ev, 'n')) { m.sort = SortKey::Name; return resample(std::move(m)); }
+        if (key(ev, 'o')) { m.sort = SortKey::Port; return resample(std::move(m)); }
 
         // Selection.
         if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
