@@ -11,9 +11,7 @@
 
 namespace rockbottom::ui::detail {
 
-// Peak of a rolling float history buffer (the sparkline data is normalized
-// rate samples 0..1; we surface it as "% of window peak" isn't meaningful, so
-// we instead report the max *sample* to hint at burstiness).
+// Peak of a rolling history buffer — raw B/s samples.
 inline double hist_peak(const float* h, int len) {
     double mx = 0;
     for (int i = 0; i < len; ++i) mx = std::max(mx, static_cast<double>(h[i]));
@@ -50,27 +48,35 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         "", "", pal::dim));
     b.push_back(gap_row());
 
-    // Per-interface breakdown.
+    // Per-interface breakdown. Sparks are peak-normalized per interface —
+    // Spark clamps to [0,1], so raw B/s histories would render a solid wall.
     for (const NetIface& ni : s.nets) {
+        auto rxn = norm48(ni.rx_history.data(), ni.hist_len);
+        auto txn = norm48(ni.tx_history.data(), ni.hist_len);
+        const double rxpk = hist_peak(ni.rx_history.data(), ni.hist_len);
+        const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
         b.push_back((h(
             text(fmt::clip(ni.name, 14)) | nowrap | Bold | fgc(pal::net_ac) | width(15),
-            text(ni.up ? "● up" : "○ down") | nowrap | fgc(ni.up ? pal::good : pal::dim)
+            text(ni.up ? "● up" : "○ down") | nowrap | fgc(ni.up ? pal::good : pal::dim),
+            Element{blank()} | grow(1),
+            text("peak ▼ " + std::string(humanize_rate(ByteRate{rxpk}))
+                 + "  ▲ " + std::string(humanize_rate(ByteRate{txpk})))
+                | nowrap | fgc(pal::dim)
         ) | gap(1)).build());
         b.push_back((h(
             text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
-            Element{Spark{ni.rx_history.data(), ni.hist_len}.fill().color(pal::sky)} | grow(1),
+            Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
             text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(12) | justify(Justify::End)
         ) | gap(1)).build());
         b.push_back((h(
             text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
-            Element{Spark{ni.tx_history.data(), ni.hist_len}.fill().color(pal::good)} | grow(1),
+            Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
             text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(12) | justify(Justify::End)
         ) | gap(1)).build());
         b.push_back(kv3(
             "  ↓ total", humanize_bytes(ni.rx_total), pal::label,
             "↑ total", humanize_bytes(ni.tx_total), pal::label,
-            "burst ▼", (hist_peak(ni.rx_history.data(), ni.hist_len) > 0.8 ? "yes" : "steady"),
-            hist_peak(ni.rx_history.data(), ni.hist_len) > 0.8 ? pal::hot : pal::dim));
+            "", "", pal::dim));
         b.push_back(gap_row());
     }
 

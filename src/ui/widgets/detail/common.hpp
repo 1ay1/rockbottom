@@ -20,6 +20,7 @@
 #include "../meter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -124,9 +125,25 @@ inline Element section(const char* title, maya::Color ac) {
 }
 
 // A plain-language verdict line — bottom's signature "read it for you" touch.
+// A colored ▌ gutter bar marks it as the pane's editorial voice, distinct
+// from the data rows around it.
 inline Element verdict(const std::string& msg, maya::Color c) {
     using namespace maya; using namespace maya::dsl;
-    return (text("  " + msg) | nowrap | fgc(c)).build();
+    return (h(
+        text(" ▌") | nowrap | fgc(c),
+        text(msg) | nowrap | fgc(c)
+    ) | gap(1)).build();
+}
+
+// Peak-normalize a raw-rate history (B/s floats) into 0..1 for Spark, which
+// clamps samples to [0,1] — feeding it raw rates renders a solid wall.
+inline std::array<float, 48> norm48(const float* h, int len, float* peak_out = nullptr) {
+    float peak = 1.0f;
+    for (int i = 0; i < len && i < 48; ++i) peak = std::max(peak, h[i]);
+    std::array<float, 48> out{};
+    for (int i = 0; i < len && i < 48; ++i) out[static_cast<std::size_t>(i)] = h[i] / peak;
+    if (peak_out) *peak_out = peak;
+    return out;
 }
 
 // A blank spacer row.

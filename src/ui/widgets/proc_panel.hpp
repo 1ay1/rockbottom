@@ -349,12 +349,10 @@ private:
 
         // Selection glow: the whole row's bg carries a whisper of the
         // process accent, so the cursor reads as a highlighted strip rather
-        // than a lone ▶ in the gutter. Unselected rows zebra-stripe: every
-        // other screen row gets a barely-there lift so wide tables track.
+        // than a lone ▶ in the gutter.
+        (void)alt;
         if (selected)
             return (std::move(row) | bgc(mix(pal::bg_panel, pal::proc_ac, 0.16))).build();
-        if (alt)
-            return (std::move(row) | bgc(mix(pal::bg_panel, pal::white, 0.035))).build();
         return row.build();
     }
 };

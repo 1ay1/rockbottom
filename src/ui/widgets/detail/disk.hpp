@@ -16,16 +16,28 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
     std::vector<Element> b;
 
-    // ── system I/O ───────────────────────────────────────────────────────────
-    b.push_back(section("SYSTEM I/O", pal::disk_ac));
+    // ── system I/O ───────────────────────────────────────────────────────────────
+    // Sparks are peak-normalized — Spark clamps to [0,1]; raw B/s histories
+    // would render a solid wall. Peak figures ride the section rule.
+    float rpk = 1, wpk = 1;
+    auto rdn = norm48(s.disk_io.read_history.data(), s.disk_io.hist_len, &rpk);
+    auto wrn = norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
+    {
+        std::vector<Element> hdr;
+        hdr.push_back(Element{section("SYSTEM I/O", pal::disk_ac)} | grow(1));
+        hdr.push_back((text("peak ▼ " + std::string(humanize_rate(ByteRate{rpk}))
+                            + "  ▲ " + std::string(humanize_rate(ByteRate{wpk})))
+                       | nowrap | fgc(pal::dim)).build());
+        b.push_back((h(std::move(hdr)) | gap(1)).build());
+    }
     b.push_back((h(
         text("  ▼ read ") | nowrap | fgc(pal::teal) | width(9),
-        Element{Spark{s.disk_io.read_history.data(), s.disk_io.hist_len}.fill().color(pal::teal)} | grow(1),
+        Element{Spark{rdn.data(), s.disk_io.hist_len}.fill().color(pal::teal).baseline(true)} | grow(1),
         text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     b.push_back((h(
         text("  ▲ write") | nowrap | fgc(pal::hot) | width(9),
-        Element{Spark{s.disk_io.write_history.data(), s.disk_io.hist_len}.fill().color(pal::hot)} | grow(1),
+        Element{Spark{wrn.data(), s.disk_io.hist_len}.fill().color(pal::hot).baseline(true)} | grow(1),
         text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     if (s.psi.io.available) {
@@ -55,7 +67,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             text(fmt::pct_pad(f)) | nowrap | Bold | fgc(load_color(f)) | width(5) | justify(Justify::End),
             text(humanize_bytes(freeb)) | nowrap | fgc(f > 0.9 ? pal::crit : pal::good) | width(9) | justify(Justify::End),
             text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total)) | nowrap | fgc(pal::label) | width(16) | justify(Justify::End),
-            text("  " + d.fstype) | nowrap | fgc(pal::dim) | width(8)
+            text("  " + d.fstype) | nowrap | fgc(mix(pal::disk_ac, pal::dim, 0.4)) | width(8)
         ) | gap(1)).build());
         // On wide terminals, show the backing device under the mount.
         if (cx.wide && !d.device.empty())
