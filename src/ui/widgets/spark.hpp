@@ -7,7 +7,9 @@
 // DESIGN RULE: silence is blank. Near-zero history renders as SPACE, not
 // baseline dots — a flat-lined spark should disappear entirely so the eye
 // is drawn only to actual activity. If the whole window is quiet the widget
-// paints nothing but empty cells.
+// paints nothing but empty cells. Panels that want a persistent track (the
+// network rows, where a vanished graph looks like a missing feature) opt
+// into .baseline(true): quiet samples then ink a faint ▁ floor line.
 //
 //   Spark{hist.data(), len}.cells(14)                 → load-gradient columns
 //   Spark{rx.data(), len}.cells(14).color(pal::net_ac) → flat accent columns
@@ -31,6 +33,7 @@ class Spark {
     int cells_ = 12;
     std::optional<maya::Color> color_;   // nullopt → per-value load gradient
     bool dim_low_ = true;                // fade near-zero columns into the bg
+    bool baseline_ = false;              // quiet samples ink a faint floor ▁
 
 public:
     Spark(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
@@ -38,6 +41,7 @@ public:
     Spark& cells(int n)             { cells_ = n; return *this; }   // <=0 → fill
     Spark& color(maya::Color c)     { color_ = c; return *this; }
     Spark& dim_low(bool b)          { dim_low_ = b; return *this; }
+    Spark& baseline(bool b)         { baseline_ = b; return *this; }
     Spark& fill()                   { cells_ = 0; return *this; }
 
     operator maya::Element() const { return build(); }
@@ -83,8 +87,17 @@ public:
 
         for (int i = start; i < len_; ++i) {
             float v = std::clamp(data_[i], 0.0f, 1.0f);
-            // Silence rule: a near-zero sample is a SPACE. Only activity inks.
-            if (dim_low_ && v < 0.03f) { push_blank(); continue; }
+            // Silence rule: a near-zero sample is a SPACE — unless the panel
+            // asked for a persistent baseline, then it's a faint floor tick.
+            if (dim_low_ && v < 0.03f) {
+                if (baseline_) {
+                    maya::Color base = color_ ? *color_ : pal::dim;
+                    push(kBars[0], mix(base, pal::bg_panel, 0.7));
+                } else {
+                    push_blank();
+                }
+                continue;
+            }
             int idx = std::clamp(static_cast<int>(v * 7.0f + 0.5f), 0, 7);
             maya::Color c = color_ ? *color_ : load_color(v);
             push(kBars[idx], c);

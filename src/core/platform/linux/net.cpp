@@ -57,9 +57,10 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
         nets.push_back(v);
     }
     std::sort(nets.begin(), nets.end(), [](const NetIface& a, const NetIface& b) {
-        return (a.rx.per_sec + a.tx.per_sec) > (b.rx.per_sec + b.tx.per_sec);
+        const double ra = a.rx.per_sec + a.tx.per_sec, rb = b.rx.per_sec + b.tx.per_sec;
+        if (ra != rb) return ra > rb;
+        return a.name < b.name;   // stable order when rates tie
     });
-    if (nets.size() > 4) nets.resize(4);
 }
 
 }  // namespace rockbottom
