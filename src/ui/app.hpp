@@ -280,7 +280,7 @@ struct App {
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}} | width(left_w),
                   v(MemPanel{s.mem}, NetPanel{s.nets},
-                    DiskPanel{s.disks, s.disk_io, false} | grow(1)) | width(right_w)
+                    DiskPanel{s.disks, s.disk_io, false}) | width(right_w)
               ) | gap(gap_w)).build();
 
         return (v(
