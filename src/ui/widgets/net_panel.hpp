@@ -24,6 +24,33 @@ class NetPanel {
 public:
     explicit NetPanel(const std::vector<NetIface>& n) : nets_(n) {}
 
+    // An iface is "quiet" only if it moved zero bytes across the whole
+    // history window. Anything with a pulse — even currently at 0B/s —
+    // keeps its full row (baseline sparks keep its graph visible).
+    [[nodiscard]] static bool quiet(const NetIface& n) {
+        if (n.rx.per_sec + n.tx.per_sec >= 1.0) return false;
+        for (int i = 0; i < n.hist_len; ++i)
+            if (n.rx_history[static_cast<std::size_t>(i)] >= 1.0f ||
+                n.tx_history[static_cast<std::size_t>(i)] >= 1.0f)
+                return false;
+        return true;
+    }
+
+    // Rows the card body occupies: live ifaces + one collapsed "N idle" line.
+    // Layout math in app.hpp must use this, not nets.size().
+    [[nodiscard]] static int rows(const std::vector<NetIface>& nets) {
+        if (nets.empty()) return 1;
+        int live = 0;
+        for (const auto& n : nets)
+            if (!quiet(n)) ++live;
+        int idle = static_cast<int>(nets.size()) - live;
+        if (live == 0) {
+            live = std::min(3, static_cast<int>(nets.size()));
+            idle = static_cast<int>(nets.size()) - live;
+        }
+        return live + (idle > 0 ? 1 : 0);
+    }
+
     operator maya::Element() const { return build(); }
 
     [[nodiscard]] maya::Element build() const {
@@ -34,7 +61,23 @@ public:
         if (nets_.empty())
             rows.push_back((text("no active interfaces") | fgc(pal::dim)).build());
 
-        for (const auto& n : nets_) {
+        std::vector<const NetIface*> live;
+        std::vector<std::string> idle_names;
+        for (const auto& n : nets_)
+            (quiet(n) ? (void)idle_names.push_back(n.name) : (void)live.push_back(&n));
+
+        // If literally everything is silent, promote the first few so the
+        // panel never reads empty.
+        if (live.empty() && !nets_.empty()) {
+            idle_names.clear();
+            for (const auto& n : nets_) {
+                if (live.size() < 3) live.push_back(&n);
+                else idle_names.push_back(n.name);
+            }
+        }
+
+        for (const auto* np : live) {
+            const auto& n = *np;
             // Normalize each iface against its own recent peak so the shape
             // is visible whether it's B/s or MB/s traffic.
             float peak = 1.0f;
@@ -74,6 +117,40 @@ public:
                         cols.push_back(Spark{txa.data(), hl}.cells(each).color(pal::hot)
                                            .baseline(true).build_fixed());
                     return (h(std::move(cols)) | gap(1)).build();
+                },
+            }});
+        }
+
+        if (!idle_names.empty()) {
+            std::size_t count = idle_names.size();
+            std::vector<std::string> names = idle_names;
+            rows.push_back(Element{ComponentElement{
+                .render = [count, names](int w, int) -> Element {
+                    std::string label = std::to_string(count) + " idle";
+                    std::string list;
+                    std::size_t shown = 0;
+                    int budget = std::max(0, w - static_cast<int>(label.size()) - 4);
+                    for (const auto& nm : names) {
+                        int need = static_cast<int>(nm.size()) + (list.empty() ? 0 : 1);
+                        if (static_cast<int>(list.size()) + need > budget) break;
+                        if (!list.empty()) list += ' ';
+                        list += nm;
+                        ++shown;
+                    }
+                    if (shown < names.size()) {
+                        std::string more = " +" + std::to_string(names.size() - shown);
+                        while (!list.empty() &&
+                               static_cast<int>(list.size() + more.size()) > budget) {
+                            std::size_t sp = list.find_last_of(' ');
+                            if (sp == std::string::npos) { list.clear(); break; }
+                            list.resize(sp);
+                        }
+                        list += more;
+                    }
+                    return (h(
+                        text(label) | nowrap | fgc(pal::dim) | w_<8>,
+                        text(list) | nowrap | fgc(mix(pal::dim, pal::bg_panel, 0.35))
+                    ) | gap(1)).build();
                 },
             }});
         }

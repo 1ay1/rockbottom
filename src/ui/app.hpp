@@ -113,7 +113,7 @@ struct App {
         // Narrow mode packs the cores into a single heat-strip row.
         const int cores_rows = L.narrow ? 1 : (ncores + L.cpu_cols - 1) / L.cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-        const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
+        const int net_h  = 2 + ui::NetPanel::rows(s.nets);
         const int disk_mounts = static_cast<int>(s.disks.size());
         const int disk_h = 2 + 1 + disk_mounts;
         const int right_stack_h = mem_h + net_h + disk_h;
@@ -355,7 +355,7 @@ struct App {
                 const int cores_rows = (ncores + L.cpu_cols - 1) / L.cpu_cols;
                 const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
                 const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-                const int net_h = 2 + std::max(1, static_cast<int>(s.nets.size()));
+                const int net_h = 2 + ui::NetPanel::rows(s.nets);
                 if (my < band_top + cpu_h)                 m.detail = ui::Detail::Cpu;
                 else if (my < band_top + cpu_h + mem_h)    m.detail = ui::Detail::Mem;
                 else if (my < band_top + cpu_h + mem_h + net_h) m.detail = ui::Detail::Net;
@@ -368,7 +368,7 @@ struct App {
                     // Right stack: MEM (top), NET (mid), DISK (bottom) by row.
                     const Snapshot& s = m.snap;
                     const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-                    const int net_h = 2 + std::max(1, static_cast<int>(s.nets.size()));
+                    const int net_h = 2 + ui::NetPanel::rows(s.nets);
                     const int ry = my - band_top;
                     if (ry < mem_h)              m.detail = ui::Detail::Mem;
                     else if (ry < mem_h + net_h) m.detail = ui::Detail::Net;
@@ -678,7 +678,7 @@ struct App {
         // Narrow mode packs the cores into a single heat-strip row.
         const int cores_rows = narrow ? 1 : (ncores + cpu_cols - 1) / cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-        const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
+        const int net_h  = 2 + ui::NetPanel::rows(s.nets);
         const int disk_mounts = static_cast<int>(s.disks.size());
         const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right
 
