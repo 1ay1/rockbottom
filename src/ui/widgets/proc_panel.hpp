@@ -127,11 +127,13 @@ private:
         };
         return (h(
             (text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
-            (text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<7>,
-            hdr("NAME", SortKey::Name) | w_<15>,
-            hdr("CPU", SortKey::Cpu) | w_<12>,
-            hdr("MEM", SortKey::Mem) | w_<6>,
-            (text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>
+            (text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>,
+            hdr("NAME", SortKey::Name) | w_<34>,
+            hdr("CPU", SortKey::Cpu) | w_<21>,
+            hdr("MEM", SortKey::Mem) | w_<20>,
+            (text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>,
+            (text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>,
+            (text("THR") | nowrap | Bold | fgc(pal::dim))
         ) | gap(1)).build();
     }
 
@@ -140,6 +142,7 @@ private:
         using namespace maya::dsl;
 
         const double cpu_frac = std::clamp(p.cpu / 100.0, 0.0, 1.0);
+        const double mem_frac = p.mem_share.v;
 
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();
@@ -157,15 +160,20 @@ private:
 
         char cpu_txt[16];
         std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", p.cpu);
+        char memp_txt[16];
+        std::snprintf(memp_txt, sizeof memp_txt, "%4.1f", p.mem_share.percent());
 
         auto row = h(
             text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>,
-            text(fmt::clip(p.user, 6)) | nowrap | fgc(pal::label) | w_<7>,
-            text(fmt::clip(p.name, 14), name_st) | nowrap | w_<15>,
-            Meter{cpu_frac}.width(5),
+            text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>,
+            text(fmt::clip(p.name, 33), name_st) | nowrap | w_<34>,
+            Meter{cpu_frac}.width(14),
             text(cpu_txt, cpu_st) | nowrap | w_<6>,
-            text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<6>,
-            text(dot) | nowrap | fgc(dot_c) | w_<2>
+            Meter{mem_frac}.width(12).color(pal::mem_ac),
+            text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7>,
+            text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>,
+            text(dot) | nowrap | fgc(dot_c) | w_<2>,
+            text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)
         ) | gap(1);
 
         if (selected) return (std::move(row) | bgc(pal::bg_panel)).build();
