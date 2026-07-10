@@ -118,9 +118,12 @@ struct App {
         const int right_stack_h = mem_h + net_h + disk_h;
         if (L.narrow) {
             const int fixed = 2 + 3 + 1 + 2 + 1 + cores_rows + right_stack_h + (2 + 5) + 2;
-            L.graph_h = std::clamp(m.height - fixed, 0, 4);
+            L.graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
-            L.graph_h = std::clamp(right_stack_h - 3 - cores_rows, 2, 8);
+            // The graph absorbs ALL the height the right stack forces on the
+            // CPU column — no artificial cap, so a tall NETWORK panel means a
+            // taller mountain, never dead space under the cores.
+            L.graph_h = std::max(2, right_stack_h - 3 - cores_rows);
         }
         const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
         L.top_h = L.narrow ? cpu_h + mem_h + net_h + disk_h
@@ -688,11 +691,12 @@ struct App {
                             + right_stack_h
                             + (2 + 5)                   // proc border + 5 rows
                             + 2;                        // outer padding slack
-            graph_h = std::clamp(m.height - fixed, 0, 4);
+            graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
             // cpu_h = 2(border) + 1(ALL header) + graph_h + cores_rows. Solve
-            // for the graph_h that makes cpu_h == right_stack_h, clamped sane.
-            graph_h = std::clamp(right_stack_h - 3 - cores_rows, 2, 8);
+            // for the graph_h that makes cpu_h == right_stack_h — uncapped,
+            // so the graph soaks up ALL the height the right stack forces.
+            graph_h = std::max(2, right_stack_h - 3 - cores_rows);
         }
         const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
