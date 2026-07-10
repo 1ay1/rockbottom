@@ -59,32 +59,49 @@ struct Ctx {
 // ── content primitives ───────────────────────────────────────────────────
 
 // A label : value row — label dim + fixed width, value bold + colored.
+// Same 14-col label rail + 2-col gutter as bar() and kv3, so single rows
+// and stat strips share their left edge.
 inline Element kv(const std::string& k, const std::string& v, maya::Color vc,
-                  int kw = 16) {
+                  int kw = 14) {
     using namespace maya; using namespace maya::dsl;
     return (h(
         text(k) | nowrap | fgc(pal::dim) | width(kw),
         text(v) | nowrap | Bold | fgc(vc)
-    )).build();
+    ) | gap(2)).build();
 }
 
 // Up to three label:value pairs on one line — dense stat strips. Empty key =
-// blank spacer cell (lets callers show 1 or 2 pairs too). Labels get a fixed
-// column so the VALUES align vertically across successive kv3 rows — aligned
-// figures read as a table, ragged ones read as prose.
-inline Element kv3(const std::string& k1, const std::string& v1, maya::Color c1,
-                   const std::string& k2 = "", const std::string& v2 = "", maya::Color c2 = pal::dim,
-                   const std::string& k3 = "", const std::string& v3 = "", maya::Color c3 = pal::dim) {
-    using namespace maya; using namespace maya::dsl;
-    auto cell = [](const std::string& k, const std::string& v, maya::Color c) -> Element {
-        using namespace maya; using namespace maya::dsl;
-        if (k.empty()) return (Element{blank()} | grow(1)).build();
-        return (h(
-            text(k) | nowrap | fgc(pal::dim) | width(13),
-            text(v) | nowrap | Bold | fgc(c)
-        ) | gap(1) | grow(1)).build();
-    };
-    return (h(cell(k1, v1, c1), cell(k2, v2, c2), cell(k3, v3, c3)) | gap(2)).build();
+// blank spacer cell (lets callers show 1 or 2 pairs too). The row is split
+// into three EQUAL FIXED columns (not grow(1) — maya flex distributes by
+// content size, so a long value in one row would shove its column out of
+// line with the rows above). Labels get the same 14-col width as bar()/kv(),
+// so every label and every value in a pane sits on the same two rails.
+inline Element kv3(std::string k1, std::string v1, maya::Color c1,
+                   std::string k2 = "", std::string v2 = "", maya::Color c2 = pal::dim,
+                   std::string k3 = "", std::string v3 = "", maya::Color c3 = pal::dim) {
+    using namespace maya;
+    struct Cell { std::string k, v; maya::Color c; };
+    std::array<Cell, 3> cells{Cell{std::move(k1), std::move(v1), c1},
+                              Cell{std::move(k2), std::move(v2), c2},
+                              Cell{std::move(k3), std::move(v3), c3}};
+    return Element{ComponentElement{
+        .render = [cells](int w, int) -> Element {
+            using namespace maya::dsl;
+            const int cw = std::max(20, w / 3);
+            std::vector<Element> row;
+            for (const auto& cell : cells) {
+                if (cell.k.empty()) {
+                    row.push_back((Element{blank()} | width(cw)).build());
+                    continue;
+                }
+                row.push_back((h(
+                    text(cell.k) | nowrap | fgc(pal::dim) | width(14),
+                    text(cell.v) | nowrap | Bold | fgc(cell.c)
+                ) | gap(2) | width(cw)).build());
+            }
+            return (h(std::move(row))).build();
+        },
+    }};
 }
 
 // A full-width labelled meter row: "label  ██████░░  42%  <tail>".
