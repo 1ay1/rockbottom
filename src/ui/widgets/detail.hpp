@@ -112,11 +112,21 @@ private:
     // the process census, so you always know which machine you're looking at.
     Element sysbar() const {
         using namespace maya; using namespace maya::dsl;
-        std::string census = std::to_string(s_.proc_count) + " procs · " +
-                             std::to_string(s_.thread_count) + " threads · " +
-                             std::to_string(s_.running) + " running";
-        if (s_.zombies) census += " · " + std::to_string(s_.zombies) + " zombie";
-        if (s_.dstate)  census += " · " + std::to_string(s_.dstate) + " blocked";
+        // Census with lit figures — a faint mush of text hides the one number
+        // you came for; ink the counts, keep the joinery quiet.
+        std::vector<Element> census;
+        auto fig = [&](const std::string& n, const char* unit, maya::Color c) {
+            census.push_back((text(n) | nowrap | Bold | fgc(c)).build());
+            census.push_back((text(unit) | nowrap | fgc(pal::faint)).build());
+        };
+        auto dot = [&] { census.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build()); };
+        fig(std::to_string(s_.proc_count), " procs", pal::label);
+        dot();
+        fig(std::to_string(s_.thread_count), " threads", pal::label);
+        dot();
+        fig(std::to_string(s_.running), " running", pal::good);
+        if (s_.zombies) { dot(); fig(std::to_string(s_.zombies), " zombie", pal::hot); }
+        if (s_.dstate)  { dot(); fig(std::to_string(s_.dstate), " blocked", pal::crit); }
         std::string batt;
         if (s_.battery.present)
             batt = "  🔋 " + std::to_string(s_.battery.percent) + "%" + (s_.battery.charging ? " ↑" : "");
@@ -128,29 +138,41 @@ private:
                 text("up " + humanize_duration(s_.uptime_sec)) | nowrap | fgc(pal::label),
                 text(batt) | nowrap | fgc(pal::good)
             ),
-            text(census) | nowrap | fgc(pal::faint),
+            h(std::move(census)),
             blank()
         )).build();
     }
 
     Element hint() const {
         using namespace maya; using namespace maya::dsl;
+        // The number keys switch domain, so render them as what they are: a
+        // TAB BAR. The pane you're in is lit in its own accent + underline;
+        // the rest sit quiet, so "where am I / where can I go" is one glance.
+        struct Tab { Detail d; const char* key; const char* glyph; const char* label; maya::Color ac; };
+        const Tab tabs[] = {
+            {Detail::Cpu,  "1", "◈", "cpu",  pal::cpu_ac},
+            {Detail::Mem,  "2", "▤", "mem",  pal::mem_ac},
+            {Detail::Net,  "3", "⇅", "net",  pal::net_ac},
+            {Detail::Gpu,  "4", "◆", "gpu",  pal::proc_ac},
+            {Detail::Disk, "5", "◇", "disk", pal::disk_ac},
+            {Detail::Proc, "6", "≡", "proc", pal::proc_ac},
+        };
         const bool scrollable = content_rows() > viewport_rows();
         std::vector<Element> row;
         row.push_back((text(" esc") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text("·back  ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("1") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" cpu ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("2") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" mem ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("3") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" net ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("4") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" gpu ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("5") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" disk ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("6") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" proc") | nowrap | fgc(pal::dim)).build());
+        row.push_back((text("·back") | nowrap | fgc(pal::dim)).build());
+        row.push_back((text("   ") | nowrap).build());
+        for (const Tab& t : tabs) {
+            const bool on = which_ == t.d;
+            if (on) {
+                row.push_back((text(std::string(t.glyph) + " " + t.key + " " + t.label)
+                               | nowrap | Bold | Underline | fgc(t.ac)).build());
+            } else {
+                row.push_back((text(t.key) | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)).build());
+            }
+            row.push_back((text("   ") | nowrap).build());
+        }
         if (scrollable) {
             row.push_back((Element{blank()} | grow(1)).build());
             row.push_back((text("↑↓") | nowrap | Bold | fgc(pal::sky)).build());

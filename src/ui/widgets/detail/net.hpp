@@ -48,35 +48,37 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         "", "", pal::dim));
     b.push_back(gap_row());
 
-    // Per-interface breakdown. Sparks are peak-normalized per interface —
-    // Spark clamps to [0,1], so raw B/s histories would render a solid wall.
+    // Per-interface breakdown. Each interface gets its own labelled section
+    // rule — the same structural grammar as every other pane — with link
+    // state riding the rule. Peak / lifetime figures live on the data rows
+    // so every column aligns. Sparks are peak-normalized per interface
+    // (Spark clamps to [0,1]; raw B/s renders a solid wall).
     for (const NetIface& ni : s.nets) {
         auto rxn = norm48(ni.rx_history.data(), ni.hist_len);
         auto txn = norm48(ni.tx_history.data(), ni.hist_len);
         const double rxpk = hist_peak(ni.rx_history.data(), ni.hist_len);
         const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
-        b.push_back((h(
-            text(fmt::clip(ni.name, 14)) | nowrap | Bold | fgc(pal::net_ac) | width(15),
-            text(ni.up ? "● up" : "○ down") | nowrap | fgc(ni.up ? pal::good : pal::dim),
-            Element{blank()} | grow(1),
-            text("peak ▼ " + std::string(humanize_rate(ByteRate{rxpk}))
-                 + "  ▲ " + std::string(humanize_rate(ByteRate{txpk})))
-                | nowrap | fgc(pal::dim)
-        ) | gap(1)).build());
+        {
+            std::vector<Element> hdr;
+            hdr.push_back(Element{section(std::string(fmt::clip(ni.name, 14)), pal::net_ac)} | grow(1));
+            hdr.push_back((text(ni.up ? "● up  " : "○ down") | nowrap | Bold
+                           | fgc(ni.up ? pal::good : pal::dim)).build());
+            b.push_back((h(std::move(hdr)) | gap(1)).build());
+        }
         b.push_back((h(
             text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
             Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
-            text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(12) | justify(Justify::End)
+            text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
+            text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+            text("↓ " + std::string(humanize_bytes(ni.rx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
         ) | gap(1)).build());
         b.push_back((h(
             text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
             Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
-            text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(12) | justify(Justify::End)
+            text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
+            text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+            text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
         ) | gap(1)).build());
-        b.push_back(kv3(
-            "  ↓ total", humanize_bytes(ni.rx_total), pal::label,
-            "↑ total", humanize_bytes(ni.tx_total), pal::label,
-            "", "", pal::dim));
         b.push_back(gap_row());
     }
 

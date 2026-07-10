@@ -103,13 +103,10 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
-            b.push_back((h(
-                text(std::to_string(p.pid)) | nowrap | fgc(pal::dim) | width(8),
-                text(fmt::clip(p.name, 22)) | nowrap | fgc(pal::text) | width(23),
-                Element{Meter{p.mem_share.v}.fill().groove(false).color(pal::mem_ac)} | grow(1),
-                text(fmt::pct_pad(p.mem_share.v)) | nowrap | Bold | fgc(pal::mem_ac) | width(6) | justify(Justify::End),
-                text(humanize_bytes(p.rss)) | nowrap | fgc(pal::label) | width(10) | justify(Justify::End)
-            ) | gap(1)).build());
+            b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                                 p.mem_share.v, pal::mem_ac,
+                                 fmt::pct_pad(p.mem_share.v), pal::mem_ac, 6,
+                                 humanize_bytes(p.rss), pal::label, 10));
         }
     }
 

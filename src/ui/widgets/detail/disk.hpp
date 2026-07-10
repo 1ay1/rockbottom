@@ -22,23 +22,18 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     float rpk = 1, wpk = 1;
     auto rdn = norm48(s.disk_io.read_history.data(), s.disk_io.hist_len, &rpk);
     auto wrn = norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
-    {
-        std::vector<Element> hdr;
-        hdr.push_back(Element{section("SYSTEM I/O", pal::disk_ac)} | grow(1));
-        hdr.push_back((text("peak ▼ " + std::string(humanize_rate(ByteRate{rpk}))
-                            + "  ▲ " + std::string(humanize_rate(ByteRate{wpk})))
-                       | nowrap | fgc(pal::dim)).build());
-        b.push_back((h(std::move(hdr)) | gap(1)).build());
-    }
+    b.push_back(section("SYSTEM I/O", pal::disk_ac));
     b.push_back((h(
-        text("  ▼ read ") | nowrap | fgc(pal::teal) | width(9),
+        text("  ▼ read") | nowrap | fgc(pal::teal) | width(10),
         Element{Spark{rdn.data(), s.disk_io.hist_len}.fill().color(pal::teal).baseline(true)} | grow(1),
-        text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(12) | justify(Justify::End)
+        text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(10) | justify(Justify::End),
+        text("pk " + std::string(humanize_rate(ByteRate{rpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     b.push_back((h(
-        text("  ▲ write") | nowrap | fgc(pal::hot) | width(9),
+        text("  ▲ write") | nowrap | fgc(pal::hot) | width(10),
         Element{Spark{wrn.data(), s.disk_io.hist_len}.fill().color(pal::hot).baseline(true)} | grow(1),
-        text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(12) | justify(Justify::End)
+        text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(10) | justify(Justify::End),
+        text("pk " + std::string(humanize_rate(ByteRate{wpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     if (s.psi.io.available) {
         b.push_back(bar("io pressure", s.psi.io.some_avg10 / 100.0, "of last 10s stalled on I/O", pal::hot, cx.wide ? 34 : 0));
@@ -50,11 +45,11 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     // ── filesystems ──────────────────────────────────────────────────────────
     b.push_back(section("FILESYSTEMS", pal::disk_ac));
     b.push_back((h(
-        text("mount") | nowrap | Bold | fgc(pal::dim) | width(16),
-        text("usage") | nowrap | Bold | fgc(pal::dim) | grow(1),
-        text("free") | nowrap | Bold | fgc(pal::dim) | width(9) | justify(Justify::End),
-        text("used / size") | nowrap | Bold | fgc(pal::dim) | width(16) | justify(Justify::End),
-        text("  fs") | nowrap | Bold | fgc(pal::dim) | width(8)
+        text("mount") | nowrap | Bold | Underline | fgc(pal::dim) | width(16),
+        text("usage") | nowrap | Bold | Underline | fgc(pal::dim) | grow(1),
+        text("free") | nowrap | Bold | Underline | fgc(pal::dim) | width(9) | justify(Justify::End),
+        text("used / size") | nowrap | Bold | Underline | fgc(pal::dim) | width(16) | justify(Justify::End),
+        text("  fs") | nowrap | Bold | Underline | fgc(pal::dim) | width(8)
     ) | gap(1)).build());
     const DiskInfo* worst = nullptr;
     for (const DiskInfo& d : s.disks) {
@@ -62,7 +57,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         const std::uint64_t freeb = d.total.value > d.used.value ? d.total.value - d.used.value : 0;
         if (!worst || f > worst->usage().v) worst = &d;
         b.push_back((h(
-            text(fmt::clip(d.mount, 15)) | nowrap | fgc(pal::text) | width(16),
+            text(fmt::clip(d.mount, 15)) | nowrap | Bold | fgc(pal::text) | width(16),
             Element{Meter{f}.fill().color(pal::disk_ac)} | grow(1),
             text(fmt::pct_pad(f)) | nowrap | Bold | fgc(load_color(f)) | width(5) | justify(Justify::End),
             text(humanize_bytes(freeb)) | nowrap | fgc(f > 0.9 ? pal::crit : pal::good) | width(9) | justify(Justify::End),
@@ -96,15 +91,15 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         if (top.empty()) {
             b.push_back(verdict("nothing is touching the disk right now", pal::dim));
         } else {
+            const double top_rate = top[0]->io_read.per_sec + top[0]->io_write.per_sec;
             const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
             for (int i = 0; i < show; ++i) {
                 const ProcInfo& p = *top[static_cast<std::size_t>(i)];
-                b.push_back((h(
-                    text(std::to_string(p.pid)) | nowrap | fgc(pal::dim) | width(8),
-                    text(fmt::clip(p.name, 22)) | nowrap | fgc(pal::text) | grow(1),
-                    text("▼ " + humanize_rate(p.io_read)) | nowrap | fgc(pal::teal) | width(14) | justify(Justify::End),
-                    text("▲ " + humanize_rate(p.io_write)) | nowrap | fgc(pal::hot) | width(14) | justify(Justify::End)
-                ) | gap(1)).build());
+                const double rate = p.io_read.per_sec + p.io_write.per_sec;
+                b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                                     top_rate > 0 ? rate / top_rate : 0, pal::disk_ac,
+                                     "▼ " + std::string(humanize_rate(p.io_read)), pal::teal, 12,
+                                     "▲ " + std::string(humanize_rate(p.io_write)), pal::hot, 12));
             }
         }
     }

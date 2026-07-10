@@ -37,14 +37,17 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         b.push_back(gap_row());
 
         // ── hero graph ───────────────────────────────────────────────────
-        b.push_back((h(
-            text("UTILISATION OVER TIME") | nowrap | Bold | fgc(pal::proc_ac),
-            Element{blank()} | grow(1),
-            text("── core ") | nowrap | Bold | fgc(pal::proc_ac),
-            text(fmt::pct_pad(g.usage.v)) | nowrap | fgc(pal::proc_ac),
-            text("  ── vram ") | nowrap | Bold | fgc(pal::mem_ac),
-            text(fmt::pct_pad(g.mem_usage.v)) | nowrap | fgc(pal::mem_ac)
-        )).build());
+        {
+            std::vector<Element> hdr;
+            hdr.push_back(Element{section("UTILISATION OVER TIME", pal::proc_ac)} | grow(1));
+            hdr.push_back((text("── core ") | nowrap | Bold | fgc(pal::proc_ac)).build());
+            hdr.push_back((text(" " + fmt::pct(g.usage.v) + " ") | nowrap | Bold
+                           | fgc(pal::bg) | bgc(load_color(g.usage.v))).build());
+            hdr.push_back((text(" ── vram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
+            hdr.push_back((text(" " + fmt::pct(g.mem_usage.v) + " ") | nowrap | Bold
+                           | fgc(pal::bg) | bgc(load_color(g.mem_usage.v))).build());
+            b.push_back((h(std::move(hdr)) | gap(1)).build());
+        }
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
             std::vector<Element> axis;
@@ -113,12 +116,9 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
                 const double frac = g.mem_total.value ? Ratio::of(p.mem, g.mem_total).v : 0;
-                b.push_back((h(
-                    text(std::to_string(p.pid)) | nowrap | fgc(pal::dim) | width(8),
-                    text(fmt::clip(p.name, 24)) | nowrap | fgc(pal::text) | width(25),
-                    Element{Meter{frac}.fill().groove(false).color(pal::proc_ac)} | grow(1),
-                    text(humanize_bytes(p.mem)) | nowrap | Bold | fgc(pal::proc_ac) | width(10) | justify(Justify::End)
-                ) | gap(1)).build());
+                b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                                     frac, pal::proc_ac,
+                                     humanize_bytes(p.mem), pal::proc_ac, 10));
             }
         }
 

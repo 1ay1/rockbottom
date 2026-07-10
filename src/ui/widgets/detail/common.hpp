@@ -67,7 +67,9 @@ inline Element kv(const std::string& k, const std::string& v, maya::Color vc,
 }
 
 // Up to three label:value pairs on one line — dense stat strips. Empty key =
-// blank spacer cell (lets callers show 1 or 2 pairs too).
+// blank spacer cell (lets callers show 1 or 2 pairs too). Labels get a fixed
+// column so the VALUES align vertically across successive kv3 rows — aligned
+// figures read as a table, ragged ones read as prose.
 inline Element kv3(const std::string& k1, const std::string& v1, maya::Color c1,
                    const std::string& k2 = "", const std::string& v2 = "", maya::Color c2 = pal::dim,
                    const std::string& k3 = "", const std::string& v3 = "", maya::Color c3 = pal::dim) {
@@ -76,10 +78,9 @@ inline Element kv3(const std::string& k1, const std::string& v1, maya::Color c1,
         using namespace maya; using namespace maya::dsl;
         if (k.empty()) return (Element{blank()} | grow(1)).build();
         return (h(
-            text(k) | nowrap | fgc(pal::dim),
-            text(" ") | nowrap,
+            text(k) | nowrap | fgc(pal::dim) | width(13),
             text(v) | nowrap | Bold | fgc(c)
-        ) | grow(1)).build();
+        ) | gap(1) | grow(1)).build();
     };
     return (h(cell(k1, v1, c1), cell(k2, v2, c2), cell(k3, v3, c3)) | gap(2)).build();
 }
@@ -101,9 +102,9 @@ inline Element bar(const std::string& label, double frac,
 // A section heading in the domain accent color: "── TITLE ─────…" — a
 // labelled rule (maya Divider idiom) that structures a dense pane far better
 // than a bare bold word floating in space.
-inline Element section(const char* title, maya::Color ac) {
+inline Element section(std::string title, maya::Color ac) {
     using namespace maya; using namespace maya::dsl;
-    std::string t = title;
+    std::string t = std::move(title);
     return Element{ComponentElement{
         .render = [t, ac](int w, int) -> Element {
             std::string content = "── ";
@@ -135,10 +136,36 @@ inline Element verdict(const std::string& msg, maya::Color c) {
     ) | gap(1)).build();
 }
 
+// A ranked top-N list row: " N  name  ████░░  value". The rank digit is a
+// quiet ordinal — #1 gets the accent so the biggest consumer pops — and the
+// grid (rank 3 / name / meter / figures) is identical across panes, so once
+// you've read one "top" list you've read them all.
+inline Element rank_row(int rank, const std::string& pid, const std::string& name,
+                        double frac, maya::Color ac,
+                        const std::string& v1, maya::Color c1, int v1w,
+                        const std::string& v2 = "", maya::Color c2 = pal::label, int v2w = 0) {
+    using namespace maya; using namespace maya::dsl;
+    std::vector<Element> row;
+    row.push_back((text(std::to_string(rank)) | nowrap
+                   | fgc(rank == 1 ? ac : pal::faint) | width(2) | justify(Justify::End)).build());
+    row.push_back((text(pid) | nowrap | fgc(pal::dim) | width(7) | justify(Justify::End)).build());
+    Style nst = Style{}.with_fg(rank == 1 ? pal::white : pal::text);
+    if (rank == 1) nst = nst.with_bold();
+    row.push_back((text(name, nst) | nowrap | width(23)).build());
+    row.push_back((Element{Meter{frac}.fill().groove(false).color(ac)} | grow(1)).build());
+    row.push_back((text(v1) | nowrap | Bold | fgc(c1) | width(v1w) | justify(Justify::End)).build());
+    if (v2w > 0)
+        row.push_back((text(v2) | nowrap | fgc(c2) | width(v2w) | justify(Justify::End)).build());
+    return (h(std::move(row)) | gap(1)).build();
+}
+
 // Peak-normalize a raw-rate history (B/s floats) into 0..1 for Spark, which
 // clamps samples to [0,1] — feeding it raw rates renders a solid wall.
+// The peak has a 1 KiB/s floor: without it a 2 B/s noise blip on an idle
+// interface normalizes to a FULL-HEIGHT spike next to a "pk 0B/s" caption —
+// visually a lie. Under the floor, everything reads as the flatline it is.
 inline std::array<float, 48> norm48(const float* h, int len, float* peak_out = nullptr) {
-    float peak = 1.0f;
+    float peak = 1024.0f;
     for (int i = 0; i < len && i < 48; ++i) peak = std::max(peak, h[i]);
     std::array<float, 48> out{};
     for (int i = 0; i < len && i < 48; ++i) out[static_cast<std::size_t>(i)] = h[i] / peak;

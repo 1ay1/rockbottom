@@ -128,6 +128,27 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         }
         b.push_back((h(line) | gap(3)).build());
     }
+    b.push_back(gap_row());
+
+    // ── top CPU consumers ──────────────────────────────────────────────────
+    // The question a hot CPU pane exists to answer: WHO. Same ranked-list
+    // grid as the memory / disk panes.
+    {
+        std::vector<const ProcInfo*> top;
+        for (const auto& p : s.procs) top.push_back(&p);
+        std::sort(top.begin(), top.end(),
+                  [](const ProcInfo* a, const ProcInfo* b2) { return a->cpu > b2->cpu; });
+        b.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac));
+        const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
+        for (int i = 0; i < show; ++i) {
+            const ProcInfo& p = *top[static_cast<std::size_t>(i)];
+            const double f = std::clamp(p.cpu / 100.0, 0.0, 1.0);
+            char pct[16]; std::snprintf(pct, sizeof pct, "%5.1f%%", p.cpu);
+            b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                                 f, pal::cpu_ac,
+                                 pct, load_color(f), 7));
+        }
+    }
 
     return b;
 }

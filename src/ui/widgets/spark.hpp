@@ -28,7 +28,11 @@
 namespace rockbottom::ui {
 
 class Spark {
-    const float* data_ = nullptr;
+    // Spark OWNS a copy of its samples. The .fill() path defers rendering
+    // into a ComponentElement lambda that runs after build — a raw pointer
+    // (e.g. to a norm48() loop-local) would dangle by then and paint garbage
+    // full-height bars out of freed stack memory.
+    std::vector<float> data_;
     int len_ = 0;
     int cells_ = 12;
     std::optional<maya::Color> color_;   // nullopt → per-value load gradient
@@ -36,7 +40,9 @@ class Spark {
     bool baseline_ = false;              // quiet samples ink a faint floor ▁
 
 public:
-    Spark(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
+    Spark(const float* data, int len) : len_(std::max(0, len)) {
+        data_.assign(data, data + len_);
+    }
 
     Spark& cells(int n)             { cells_ = n; return *this; }   // <=0 → fill
     Spark& color(maya::Color c)     { color_ = c; return *this; }
