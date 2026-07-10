@@ -30,6 +30,9 @@ public:
         keys.add("y / n", "confirm / cancel kill", "Processes");
         keys.add("s", "cycle sort column", "Sorting");
         keys.add("c m i n P o", "cpu · mem · i/o · name · pid · port", "Sorting");
+        keys.add("1 2 3 4 5", "detail: cpu · mem · net · disk · proc", "Detail");
+        keys.add("Enter", "open selected process detail", "Detail");
+        keys.add("Esc", "close detail / help", "Detail");
         keys.add("p / Space", "pause / resume", "General");
         keys.add("? / h", "toggle this help", "General");
         keys.add("q / Esc", "quit", "General");

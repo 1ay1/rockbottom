@@ -26,6 +26,7 @@
 #include "widgets/proc_panel.hpp"
 #include "widgets/footer.hpp"
 #include "widgets/help.hpp"
+#include "widgets/detail.hpp"
 
 #include <algorithm>
 #include <csignal>
@@ -44,6 +45,7 @@ struct App {
         SortKey  sort = SortKey::Cpu;
         bool     paused = false;
         bool     show_help = false;
+        ui::Detail detail = ui::Detail::None;   // full-screen drill-down
         int      width = 100, height = 40;
         int      ticks = 0;
 
@@ -161,6 +163,7 @@ struct App {
             {"x", "end",    FooterAct::End},
             {"K", "kill",   FooterAct::Kill},
             {"s", "sort",   FooterAct::Sort},
+            {"1-5", "detail", FooterAct::End /*label only, no action*/},
             {"space", "pause", FooterAct::Pause},
             {"?", "help",   FooterAct::Help},
         };
@@ -170,8 +173,9 @@ struct App {
             const int dw = disp_width(hints[i].d);
             const int w  = 1 /*leading space*/ + kw + 1 /*·*/ + dw;
             if (mx >= col && mx < col + w) {
-                // ↑↓ select has no discrete action; treat as no-op.
-                if (std::string(hints[i].k) == "\u2191\u2193") return std::nullopt;
+                // ↑↓ select and 1-5 detail are labels with no click action.
+                if (std::string(hints[i].k) == "\u2191\u2193" ||
+                    std::string(hints[i].k) == "1-5") return std::nullopt;
                 return hints[i].a;
             }
             col += w + 1;   // + gap(1)
@@ -282,6 +286,13 @@ struct App {
 
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; return {std::move(m), C{}}; }
+        if (m.detail != ui::Detail::None) {
+            // In the detail overlay the wheel already scrolled the selection;
+            // a left click on the bottom hint row switches domain, anything
+            // else closes the pane.
+            m.detail = ui::Detail::None;
+            return {std::move(m), C{}};
+        }
         if (m.pending) {
             // Footer shows y·confirm / n·cancel; a click on the table row of the
             // pending process (or anywhere) just cancels for safety — killing is
@@ -301,6 +312,41 @@ struct App {
             if (auto sk = sort_header_hit(m, mx)) {
                 m.sort = *sk;
                 return resample(std::move(m));
+            }
+            return {std::move(m), C{}};
+        }
+
+        // ── Top-band panel clicks → open that domain's detail ──
+        // The band sits directly above the proc panel. Left column = CPU, right
+        // column (split at left_w) stacks MEM / NET / DISK. In narrow mode it's
+        // a single column CPU→MEM→NET→DISK.
+        const int band_top = L.proc_top_y - L.top_h;   // first band row
+        if (my >= band_top && my < L.proc_top_y && me.button == MouseButton::Left) {
+            if (L.narrow) {
+                const Snapshot& s = m.snap;
+                const int ncores = static_cast<int>(s.cpu.cores.size());
+                const int cores_rows = (ncores + L.cpu_cols - 1) / L.cpu_cols;
+                const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
+                const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
+                const int net_h = 2 + std::max(1, static_cast<int>(s.nets.size()));
+                if (my < band_top + cpu_h)                 m.detail = ui::Detail::Cpu;
+                else if (my < band_top + cpu_h + mem_h)    m.detail = ui::Detail::Mem;
+                else if (my < band_top + cpu_h + mem_h + net_h) m.detail = ui::Detail::Net;
+                else                                       m.detail = ui::Detail::Disk;
+            } else {
+                const int inner_left = 1 + L.left_w;   // outer pad + CPU column
+                if (mx <= inner_left) {
+                    m.detail = ui::Detail::Cpu;
+                } else {
+                    // Right stack: MEM (top), NET (mid), DISK (bottom) by row.
+                    const Snapshot& s = m.snap;
+                    const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
+                    const int net_h = 2 + std::max(1, static_cast<int>(s.nets.size()));
+                    const int ry = my - band_top;
+                    if (ry < mem_h)              m.detail = ui::Detail::Mem;
+                    else if (ry < mem_h + net_h) m.detail = ui::Detail::Net;
+                    else                         m.detail = ui::Detail::Disk;
+                }
             }
             return {std::move(m), C{}};
         }
@@ -394,6 +440,27 @@ struct App {
             return {std::move(m), C{}};
         }
 
+        // 3b. Detail pane (full-screen drill-down): Esc/q/Enter close it, the
+        // number keys switch domain, and in the process view x/K still work.
+        if (m.detail != ui::Detail::None) {
+            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q') ||
+                key(ev, maya::SpecialKey::Enter)) {
+                m.detail = ui::Detail::None; return {std::move(m), C{}};
+            }
+            if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  return {std::move(m), C{}}; }
+            if (key(ev, '2')) { m.detail = ui::Detail::Mem;  return {std::move(m), C{}}; }
+            if (key(ev, '3')) { m.detail = ui::Detail::Net;  return {std::move(m), C{}}; }
+            if (key(ev, '4')) { m.detail = ui::Detail::Disk; return {std::move(m), C{}}; }
+            if (key(ev, '5')) { m.detail = ui::Detail::Proc; return {std::move(m), C{}}; }
+            if (m.detail == ui::Detail::Proc) {
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); return {std::move(m), C{}}; }
+                if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
+                if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
+            }
+            return {std::move(m), C{}};
+        }
+
         // 4. Normal mode.
         if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
             if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
@@ -402,6 +469,14 @@ struct App {
         if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {std::move(m), C{}}; }
         if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+
+        // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
+        // the selected process's detail.
+        if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  return {std::move(m), C{}}; }
+        if (key(ev, '2')) { m.detail = ui::Detail::Mem;  return {std::move(m), C{}}; }
+        if (key(ev, '3')) { m.detail = ui::Detail::Net;  return {std::move(m), C{}}; }
+        if (key(ev, '4')) { m.detail = ui::Detail::Disk; return {std::move(m), C{}}; }
+        if (key(ev, '5') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; return {std::move(m), C{}}; }
 
         if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m)); }
         if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
@@ -485,6 +560,16 @@ struct App {
         using namespace bottom::ui;
 
         if (m.show_help) return HelpOverlay{};
+
+        if (m.detail != ui::Detail::None) {
+            const ProcInfo* p = nullptr;
+            if (m.detail == ui::Detail::Proc) {
+                auto view = filtered(m);
+                if (!view.empty() && m.sel < static_cast<int>(view.size()))
+                    p = view[static_cast<std::size_t>(m.sel)];
+            }
+            return DetailPane{m.snap, m.detail, p};
+        }
 
         const Snapshot& s = m.snap;
         const bool narrow = m.width < 96;

@@ -66,6 +66,33 @@ It is *always* Chrome. It was Chrome the whole time.
 **You read the one sentence. You know. That's it. That's the app.** Everything
 below exists for the two days a year you feel brave.
 
+## Press a number, get the whole story (the detail panes)
+
+Every panel has a **full-screen drill-down** that htop and btop simply do not
+have. Hit a number — or just *click the panel* — and bottom throws the doors open:
+
+- **`1` CPU** — a big load-over-time mountain with a real y-axis, live total +
+  iowait bars, the 1/5/15 load averages, package temp, and **every core** as its
+  own labelled meter with its current clock speed. htop shows you bars. This
+  shows you the *shape* of what your CPU has been doing.
+- **`2` MEMORY** — the usage trend graph (spot a leak before it OOMs you), a
+  proper physical breakdown (used / cache / buffers / available), the swap story
+  with a plain-English verdict (“swap is parked; nothing to worry about” vs.
+  “▲ actively thrashing — the machine wants more RAM”), and the kernel's own PSI
+  memory-pressure numbers.
+- **`3` NETWORK** — per-interface rx/tx sparklines, live rates, lifetime totals,
+  and up/down state. Watch the bytes fly.
+- **`4` DISK** — system-wide read/write sparklines, I/O pressure, and every
+  filesystem as a fill bar with used/size and fstype. “Am I out of space and
+  who's thrashing the platter” in one screen.
+- **`5` / `Enter` PROCESS** — drill into the selected process: full command line,
+  cpu + memory bars, disk read/write, thread count, a *plain-language* run-state
+  (“◆ uninterruptible — blocked on I/O”, not a cryptic `D`), owner, and its
+  listening ports. `x`/`K` still end it from right here.
+
+`Esc` (or a click) closes the pane; the number keys switch between them without
+going back. It's the “okay, tell me *everything*” button, and it's gorgeous.
+
 ## Everything else (for your brave days)
 
 - **Verdict banner** — Calm / Busy / Stressed / Critical, with the guilty party
@@ -173,6 +200,7 @@ There. We fixed it. You're welcome. We're not mad.
 | `K` | *aggressively* remove a process (SIGKILL — still asks first, we're not savages) |
 | `y` / `n` | yes commit the crime / no I panicked nevermind |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
+| `1`–`5` / `Enter` | open a detail pane (cpu · mem · net · disk · process) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it) |
 | `?` / `h` | help, for when all of this immediately leaves your brain |
 | `q` / `Esc` | leave, go outside, touch grass |
@@ -183,6 +211,7 @@ There. We fixed it. You're welcome. We're not mad.
 |---------|----------|
 | **click a process** | selects it (no more arrow-key marathons) |
 | **click a column header** | sorts by it (CPU, MEM, DISK, PORT, NAME) |
+| **click a panel** | opens its detail pane |
 | **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
 | **scroll wheel** | rolls the process list |

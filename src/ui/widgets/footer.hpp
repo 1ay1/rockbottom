@@ -57,6 +57,7 @@ public:
             parts.push_back(hint("x", "end"));
             parts.push_back(hint("K", "kill"));
             parts.push_back(hint("s", "sort"));
+            parts.push_back(hint("1-5", "detail"));
             parts.push_back(hint("space", "pause"));
             parts.push_back(hint("?", "help"));
         }
