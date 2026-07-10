@@ -208,9 +208,9 @@ struct App {
     // ── detail tab-bar hit-testing ──────────────────────────────────
     // Mirrors DetailPane::hint()'s exact cell layout: border(1) + panel
     // padding(1) = 2 leading cols; " esc"(4) + "·back"(5) + "   "(3); then
-    // each tab is [glyph+" "] (active only, 2) + key(1) + " "+label, followed
-    // by "   "(3). Every span is inclusive of its trailing gap so there are
-    // no dead columns between tabs.
+    // each tab is either the active CHIP " ◈ key label " (pad+glyph+pad = 4
+    // extra cells) or key(1) + " "+label, followed by "   "(3). Every span is
+    // inclusive of its trailing gap so there are no dead columns between tabs.
     static std::optional<ui::Detail> detail_tab_hit(const Model& m, int mx) {
         struct T { ui::Detail d; int label_w; };
         static constexpr T tabs[] = {
@@ -220,7 +220,7 @@ struct App {
         int col = 2 + 4 + 5 + 3;   // chrome + esc·back + spacer
         for (const T& t : tabs) {
             const bool on = m.detail == t.d;
-            const int w = (on ? 2 : 0) + 1 + 1 + t.label_w;   // [◈ ]key␣label
+            const int w = (on ? 4 : 0) + 1 + 1 + t.label_w;   // [␣◈␣]key␣label[␣]
             if (mx >= col && mx < col + w + 3) return t.d;    // + "   " gap
             col += w + 3;
         }

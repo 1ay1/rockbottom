@@ -165,8 +165,12 @@ private:
         for (const Tab& t : tabs) {
             const bool on = which_ == t.d;
             if (on) {
-                row.push_back((text(std::string(t.glyph) + " " + t.key + " " + t.label)
-                               | nowrap | Bold | Underline | fgc(t.ac)).build());
+                // The pane you're IN is a solid chip — dark ink on the tab's
+                // accent — the same idiom as the footer's status chips. One
+                // filled block among quiet labels is unmissable at a glance,
+                // where underline+color alone read as just another hint.
+                row.push_back((text(" " + std::string(t.glyph) + " " + t.key + " " + t.label + " ")
+                               | nowrap | Bold | fgc(pal::bg) | bgc(t.ac)).build());
             } else {
                 row.push_back((text(t.key) | nowrap | Bold | fgc(pal::sky)).build());
                 row.push_back((text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)).build());
