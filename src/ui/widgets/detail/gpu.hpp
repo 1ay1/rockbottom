@@ -40,9 +40,10 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         b.push_back((h(
             text("UTILISATION OVER TIME") | nowrap | Bold | fgc(pal::proc_ac),
             Element{blank()} | grow(1),
-            text("─ core") | nowrap | fgc(pal::proc_ac),
-            text("  ─ vram ") | nowrap | fgc(pal::mem_ac),
-            text(fmt::pct_pad(g.mem_usage.v)) | nowrap | Bold | fgc(pal::mem_ac)
+            text("── core ") | nowrap | Bold | fgc(pal::proc_ac),
+            text(fmt::pct_pad(g.usage.v)) | nowrap | fgc(pal::proc_ac),
+            text("  ── vram ") | nowrap | Bold | fgc(pal::mem_ac),
+            text(fmt::pct_pad(g.mem_usage.v)) | nowrap | fgc(pal::mem_ac)
         )).build());
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));

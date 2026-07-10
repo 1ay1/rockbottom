@@ -21,6 +21,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     {
         std::vector<Element> hdr;
         hdr.push_back(Element{section("USAGE TREND", pal::mem_ac)} | grow(1));
+        hdr.push_back((text("── ram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
         hdr.push_back((text(" " + fmt::pct(m.usage().v) + " ") | nowrap | Bold
                        | fgc(pal::bg) | bgc(load_color(m.usage().v))).build());
         b.push_back((h(std::move(hdr)) | gap(1)).build());

@@ -23,6 +23,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     {
         std::vector<Element> hdr;
         hdr.push_back(Element{section("LOAD OVER TIME", pal::cpu_ac)} | grow(1));
+        hdr.push_back((text("── cpu ") | nowrap | Bold | fgc(load_color(c.total.v))).build());
         hdr.push_back((text(" " + fmt::pct(c.total.v) + " ") | nowrap | Bold
                        | fgc(pal::bg) | bgc(load_color(c.total.v))).build());
         b.push_back((h(std::move(hdr)) | gap(1)).build());

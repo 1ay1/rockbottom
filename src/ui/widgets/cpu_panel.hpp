@@ -52,10 +52,14 @@ public:
             hdr.push_back((text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>).build());
             hdr.push_back((text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>).build());
             if (mem_) {
+                // Legend swatches must be the EXACT colors the traces are
+                // inked with: the cpu trace follows the load gradient (green
+                // → amber → red), the ram overlay is always mauve.
                 hdr.push_back((Element{blank()} | grow(1)).build());
-                hdr.push_back((text("─ cpu") | nowrap | fgc(pal::cpu_ac)).build());
-                hdr.push_back((text("  ─ ram ") | nowrap | fgc(pal::mem_ac)).build());
-                hdr.push_back((text(fmt::pct_pad(mem_->usage().v)) | nowrap | Bold | fgc(pal::mem_ac)).build());
+                hdr.push_back((text("── cpu ") | nowrap | Bold | fgc(load_color(tf))).build());
+                hdr.push_back((text(fmt::pct_pad(tf)) | nowrap | fgc(load_color(tf))).build());
+                hdr.push_back((text("  ── ram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
+                hdr.push_back((text(fmt::pct_pad(mem_->usage().v)) | nowrap | fgc(pal::mem_ac)).build());
             }
             rows.push_back((h(std::move(hdr)) | gap(1)).build());
             // Graph with a tiny left y-axis: 100 at top, 0 at the floor.
