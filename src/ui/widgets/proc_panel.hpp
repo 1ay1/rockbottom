@@ -78,7 +78,8 @@ public:
         for (int i = start; i < n && i < start + body_rows; ++i)
             body.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                     i == view_.selected,
-                                    loud && i == hi));
+                                    loud && i == hi,
+                                    ((i - start) & 1) != 0));
 
         if (n == 0)
             body.push_back((text(view_.filter.empty()
@@ -167,7 +168,7 @@ private:
         auto hdr = [&](const char* name, SortKey self) {
             std::string s = view_.sort == self ? std::string(name) + "▾" : std::string(name);
             Color c = view_.sort == self ? pal::proc_ac : pal::dim;
-            return text(s) | nowrap | Bold | fgc(c);
+            return text(s) | nowrap | Bold | Underline | fgc(c);
         };
         // A numeric header sits RIGHT-aligned over the number it labels, so it
         // lines up with the right-aligned values in the rows below (the meter
@@ -179,25 +180,26 @@ private:
             ) | gap(1)).build();
         };
         auto plain_num = [&](const char* name, int num_w) {
-            return ((text(name) | nowrap | Bold | fgc(pal::dim)) | width(num_w)
+            return ((text(name) | nowrap | Bold | Underline | fgc(pal::dim)) | width(num_w)
                     | justify(Justify::End)).build();
         };
         std::vector<Element> cols;
-        cols.push_back(((text("  PID") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
-        cols.push_back(((text("USER") | nowrap | Bold | fgc(pal::dim)) | w_<8>).build());
+        cols.push_back(((text("  PID") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<8>).build());
+        cols.push_back(((text("USER") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<8>).build());
         cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
         if (show_memp) cols.push_back(plain_num("MEM%", 5));
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
-        cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2> | justify(Justify::Center)).build());
-        if (show_thr) cols.push_back(((text("THR") | nowrap | Bold | fgc(pal::dim)) | w_<4> | justify(Justify::End)).build());
+        cols.push_back(((text("S") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<2> | justify(Justify::Center)).build());
+        if (show_thr) cols.push_back(((text("THR") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<4> | justify(Justify::End)).build());
         if (rgutter > 0) cols.push_back((Element{blank()} | width(rgutter)).build());
         return (h(std::move(cols)) | gap(1)).build();
     }
 
-    [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit) const {
+    [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit,
+                                         bool alt) const {
         using namespace maya;
         using namespace maya::dsl;
 
@@ -212,6 +214,14 @@ private:
         const char* dot = p.state == 'R' ? "●" : p.state == 'D' ? "◆" : "·";
         Color dot_c = p.state == 'R' ? pal::good
                     : p.state == 'D' ? pal::crit : pal::faint;
+
+        // The active sort column's values get brighter ink so the column the
+        // table is ranked by reads as the "spine" of the list.
+        const SortKey sk = view_.sort;
+
+        // root-owned rows get a quiet warm tint on the user column — enough
+        // to pick out privileged processes without shouting.
+        const Color user_c = p.user == "root" ? mix(pal::hot, pal::label, 0.55) : pal::label;
 
         // Selection cursor beats culprit marker in the gutter; culprit keeps
         // its red name so it stays identifiable while selected.
@@ -245,18 +255,27 @@ private:
             std::string io_txt = iorate > 512 ? humanize_rate(ByteRate{iorate}) : "·";
             Color io_c = iorate > 512 ? pal::sky : pal::faint;
             std::vector<Element> cols;
-            cols.push_back((text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>).build());
-            cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>).build());
+            cols.push_back((text(gutter + std::to_string(p.pid)) | nowrap
+                            | fgc(sk == SortKey::Pid && !selected ? pal::text : gutter_c) | w_<8>).build());
+            cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(user_c) | w_<8>).build());
             cols.push_back((text(fmt::clip(p.name, 32), name_st) | nowrap | grow(1)).build());
             if (show_port)
-                cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<9> | justify(Justify::End)).build());
+                cols.push_back((text(port_txt, sk == SortKey::Port ? Style{}.with_fg(pal::sky).with_bold() : Style{}.with_fg(pal::sky))
+                                | nowrap | w_<9> | justify(Justify::End)).build());
             cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
-            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<8> | justify(Justify::End)).build());
+            cols.push_back((text(humanize_bytes(p.rss),
+                                 sk == SortKey::Mem ? Style{}.with_fg(pal::white).with_bold()
+                                                    : Style{}.with_fg(pal::text))
+                            | nowrap | w_<8> | justify(Justify::End)).build());
             if (show_memp)
                 cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5> | justify(Justify::End)).build());
             if (show_io)
-                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<8> | justify(Justify::End)).build());
+                cols.push_back((text(io_txt,
+                                     sk == SortKey::Io && iorate > 512
+                                         ? Style{}.with_fg(pal::sky).with_bold()
+                                         : Style{}.with_fg(io_c))
+                                | nowrap | w_<8> | justify(Justify::End)).build());
             cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
             if (show_thr)
                 cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim) | w_<4> | justify(Justify::End)).build());
@@ -265,9 +284,12 @@ private:
 
         // Selection glow: the whole row's bg carries a whisper of the
         // process accent, so the cursor reads as a highlighted strip rather
-        // than a lone ▶ in the gutter.
+        // than a lone ▶ in the gutter. Unselected rows zebra-stripe: every
+        // other screen row gets a barely-there lift so wide tables track.
         if (selected)
             return (std::move(row) | bgc(mix(pal::bg_panel, pal::proc_ac, 0.16))).build();
+        if (alt)
+            return (std::move(row) | bgc(mix(pal::bg_panel, pal::white, 0.035))).build();
         return row.build();
     }
 };
