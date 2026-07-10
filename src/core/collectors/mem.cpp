@@ -29,6 +29,30 @@ void Sampler::sample_mem(MemInfo& m) {
     m.used       = Bytes{m.total.value > m.available.value ? m.total.value - m.available.value : 0};
     m.swap_total = Bytes{kv["SwapTotal"]};
     m.swap_used  = Bytes{kv["SwapTotal"] > kv["SwapFree"] ? kv["SwapTotal"] - kv["SwapFree"] : 0};
+
+    procfs::push_hist(mem_hist_, mem_hist_len_, static_cast<float>(m.usage().v));
+    m.usage_history = mem_hist_;
+    m.hist_len = mem_hist_len_;
+}
+
+void Sampler::sample_mem_rates(MemInfo& m, double dt) {
+    // /proc/vmstat pswpin/pswpout are cumulative PAGE counts. Their delta is
+    // live paging traffic — the true "thrashing" signal. A machine can sit at
+    // 60% swap harmlessly for weeks; it cannot page 50MB/s harmlessly.
+    std::ifstream vs("/proc/vmstat");
+    std::string key;
+    std::uint64_t val, in = 0, out = 0;
+    while (vs >> key >> val) {
+        if (key == "pswpin") in = val;
+        else if (key == "pswpout") out = val;
+    }
+    const std::uint64_t page = 4096;   // vmstat counts are in pages
+    std::uint64_t di = in > prev_pswpin_ ? in - prev_pswpin_ : 0;
+    std::uint64_t dout = out > prev_pswpout_ ? out - prev_pswpout_ : 0;
+    m.swap_in  = first_ ? ByteRate{0} : rate(Bytes{di * page}, dt);
+    m.swap_out = first_ ? ByteRate{0} : rate(Bytes{dout * page}, dt);
+    prev_pswpin_ = in;
+    prev_pswpout_ = out;
 }
 
 }  // namespace bottom

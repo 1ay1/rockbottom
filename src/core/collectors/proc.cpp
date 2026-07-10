@@ -22,7 +22,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
     std::vector<ProcInfo> out;
     std::unordered_map<int, ProcPrev> cur;
-    int total_procs = 0, total_threads = 0, running = 0;
+    int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
     double dt_ticks = dt * static_cast<double>(clk_tck_) * static_cast<double>(ncpu_);
 
     dirent* e;
@@ -51,6 +51,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         ++total_procs;
         total_threads += std::max(1, threads);
         if (state == 'R') ++running;
+        if (state == 'Z') ++zombies;
+        if (state == 'D') ++dstate;
 
         std::uint64_t cpu_ticks = utime + stime;
         cur[pid] = {cpu_ticks};
@@ -85,6 +87,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     snap.proc_count = total_procs;
     snap.thread_count = total_threads;
     snap.running = running;
+    snap.zombies = zombies;
+    snap.dstate = dstate;
 
     using Cmp = bool (*)(const ProcInfo&, const ProcInfo&);
     auto by = [](SortKey k) -> Cmp {

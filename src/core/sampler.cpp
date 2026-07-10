@@ -67,6 +67,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
 
     sample_cpu(s.cpu);
     sample_mem(s.mem);
+    sample_mem_rates(s.mem, dt);
     sample_disks(s.disks);
     sample_disk_io(s.disk_io, dt);
     sample_net(s.nets, dt);

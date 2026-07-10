@@ -28,6 +28,7 @@ struct CpuInfo {
     std::string          model = "CPU";
     int                  logical = 0;
     Ratio                total{};      // aggregate busy fraction
+    Ratio                iowait{};     // fraction of time cores sat in iowait
     std::array<double, 3> loadavg{};   // 1 / 5 / 15 minute load averages
     std::vector<CpuCore> cores;
     std::array<float, 96> total_history{};
@@ -38,6 +39,11 @@ struct CpuInfo {
 struct MemInfo {
     Bytes total{}, used{}, available{}, cached{}, buffers{};
     Bytes swap_total{}, swap_used{};
+    ByteRate swap_in{}, swap_out{};    // live paging activity (vmstat) — the
+                                       // difference between "swap is parked"
+                                       // and "the machine is thrashing"
+    std::array<float, 120> usage_history{};   // usage fraction ring (leak trend)
+    int hist_len = 0;
     Ratio usage() const { return Ratio::of(used, total); }
     Ratio swap_usage() const { return Ratio::of(swap_used, swap_total); }
 };
@@ -107,6 +113,7 @@ struct Snapshot {
     std::string           hostname, kernel;
     std::uint64_t         uptime_sec = 0;
     int                   proc_count = 0, thread_count = 0, running = 0;
+    int                   zombies = 0, dstate = 0;   // Z and D state counts
     CpuInfo               cpu;
     MemInfo               mem;
     std::vector<DiskInfo> disks;

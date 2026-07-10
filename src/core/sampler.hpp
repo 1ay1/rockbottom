@@ -45,6 +45,7 @@ private:
     void    read_static();
     void    sample_cpu(CpuInfo&);
     void    sample_mem(MemInfo&);
+    void    sample_mem_rates(MemInfo&, double dt);   // vmstat swap in/out
     void    sample_disks(std::vector<DiskInfo>&);
     void    sample_disk_io(DiskIO&, double dt);
     void    sample_net(std::vector<NetIface>&, double dt);
@@ -55,12 +56,16 @@ private:
 
     // ── Cross-tick delta state ──
     CpuTimes                              prev_total_{};
+    std::uint64_t                         prev_iowait_ = 0;
     std::vector<CpuTimes>                 prev_cores_;
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_;  // rx,tx
     std::unordered_map<int, ProcPrev>     prev_proc_;
     std::uint64_t                         prev_io_read_ = 0, prev_io_write_ = 0;  // sectors
+    std::uint64_t                         prev_pswpin_ = 0, prev_pswpout_ = 0;    // pages
     std::array<float, 48>                 io_read_hist_{}, io_write_hist_{};
     int                                   io_hist_len_ = 0;
+    std::array<float, 120>                mem_hist_{};
+    int                                   mem_hist_len_ = 0;
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;

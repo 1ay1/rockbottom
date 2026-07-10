@@ -22,6 +22,7 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     std::string line;
     std::vector<CpuTimes> cores;
     CpuTimes agg{};
+    std::uint64_t agg_iowait = 0;
     while (std::getline(st, line)) {
         if (line.rfind("cpu", 0) != 0) break;
         std::istringstream ss(line);
@@ -34,7 +35,7 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         std::uint64_t total = 0;
         for (int i = 0; i < n; ++i) total += v[static_cast<std::size_t>(i)];
         CpuTimes t{idle, total};
-        if (tag == "cpu") agg = t;
+        if (tag == "cpu") { agg = t; agg_iowait = v[4]; }
         else cores.push_back(t);
     }
 
@@ -46,8 +47,16 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         return Ratio{1.0 - static_cast<double>(di) / static_cast<double>(dt)};
     };
 
-    if (!first_) cpu.total = busy(agg, prev_total_);
+    if (!first_) {
+        cpu.total = busy(agg, prev_total_);
+        // iowait fraction of the interval — how long cores twiddled thumbs
+        // waiting for block devices while runnable work existed.
+        std::uint64_t dt = agg.total - prev_total_.total;
+        std::uint64_t dw = agg_iowait > prev_iowait_ ? agg_iowait - prev_iowait_ : 0;
+        if (dt > 0) cpu.iowait = Ratio{static_cast<double>(dw) / static_cast<double>(dt)};
+    }
     prev_total_ = agg;
+    prev_iowait_ = agg_iowait;
 
     cpu.cores.resize(cores.size());
     if (prev_cores_.size() != cores.size()) prev_cores_.assign(cores.size(), CpuTimes{});

@@ -54,14 +54,28 @@ public:
          .border_text_end(" " + chip + " ", BorderTextPos::Top)
          .padding(0, 1, 0, 1);
 
+        // One TextElement + StyledRuns: flex can never shrink the headline —
+        // overflow truncates the tail of the detail instead (TruncateEnd).
+        std::string content;
+        std::vector<StyledRun> runs;
+        auto add = [&](const std::string& txt, Style st) {
+            if (txt.empty()) return;
+            std::size_t off = content.size();
+            content += txt;
+            runs.push_back({off, txt.size(), st});
+        };
+        add(std::string(health_glyph(v.level)) + " ", Style{}.with_bold().with_fg(c));
+        add(v.headline, Style{}.with_bold().with_fg(c));
+        add("  ·  ", Style{}.with_fg(pal::faint));
+        add(v.detail, Style{}.with_fg(pal::label));
+
         std::vector<Element> line;
-        line.push_back((h(
-            text(std::string(health_glyph(v.level)) + " ") | nowrap | Bold | fgc(c),
-            text(v.headline) | nowrap | Bold | fgc(c),
-            text("  ·  ") | nowrap | fgc(pal::faint),
-            text(v.detail) | nowrap | fgc(pal::label),
-            space
-        )).build());
+        line.push_back(Element{TextElement{
+            .content = std::move(content),
+            .style   = {},
+            .wrap    = TextWrap::TruncateEnd,
+            .runs    = std::move(runs),
+        }});
         return b(std::move(line));
     }
 };
