@@ -10,6 +10,7 @@
 #include "../fmt.hpp"
 #include "meter.hpp"
 #include "spark.hpp"
+#include "graph.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
@@ -33,16 +34,22 @@ public:
 
         std::vector<Element> rows;
 
-        // ── Summary row: ALL meter + wide total history ──
-        // (load averages live on the verdict banner's chip — not repeated here)
+        // ── Big picture first: 4-row filled area graph of total CPU — the
+        // "what has the machine been doing" mountain — with the live meter
+        // and bold % beside it. ──
         const double tf = cpu_.total.v;
         rows.push_back((h(
-            text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
-            text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>,
-            Meter{tf}.width(16),
-            text(" ") | w_<1>,
-            Spark{cpu_.total_history.data(), cpu_.total_hist_len}.cells(28)
-        ) | gap(1)).build());
+            v(
+                h(text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
+                  text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
+                ) | gap(1),
+                blank(),
+                blank(),
+                Meter{tf}.width(10)
+            ),
+            Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(46).rows(4)
+        ) | gap(2)).build());
+        rows.push_back(blank());
 
         // ── Per-core grid: cols_ columns, one line each ──
         const int n = static_cast<int>(cpu_.cores.size());

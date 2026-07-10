@@ -225,18 +225,18 @@ struct App {
 
         // ── Height budget ──
         // Fixed rows: header(1) + verdict(3) + footer(1) + outer padding.
-        // Top band: CPU panel vs MEM+NET stack — whichever is taller.
-        // Disk strip: I/O row + mounts packed two per row.
+        // Top band: CPU panel (graph 4 + blank + cores) vs MEM+NET+DISK stack.
         const int ncores = static_cast<int>(s.cpu.cores.size());
         const int cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;   // stay ~8 rows tall
         const int cores_rows = (ncores + cpu_cols - 1) / cpu_cols;
-        const int cpu_h  = 2 + 1 + cores_rows;                              // border + ALL + cores
+        const int cpu_h  = 2 + 4 + 1 + cores_rows;                    // border + graph + blank + cores
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 3 : 2);
         const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
-        const int top_h  = narrow ? cpu_h + mem_h + net_h : std::max(cpu_h, mem_h + net_h);
         const int disk_mounts = static_cast<int>(s.disks.size());
-        const int disk_h = 2 + 1 + (narrow ? disk_mounts : (disk_mounts + 1) / 2);
-        const int proc_rows = std::max(5, m.height - 5 - top_h - disk_h - 2);
+        const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right
+        const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
+                                  : std::max(cpu_h, mem_h + net_h + disk_h);
+        const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
 
         ProcView pv{
             .procs     = filtered(m),
@@ -248,19 +248,20 @@ struct App {
             .pending   = m.pending ? &*m.pending : nullptr,
         };
 
-        // ── Top band: CPU | (MEM over NET), bottoms aligned ──
+        // ── Top band: CPU alone on the left · MEM / NET / DISK stacked right ──
         Element top = narrow
-            ? (v(CpuPanel{s.cpu, cpu_cols}, MemPanel{s.mem}, NetPanel{s.nets})).build()
+            ? (v(CpuPanel{s.cpu, cpu_cols}, MemPanel{s.mem}, NetPanel{s.nets},
+                 DiskPanel{s.disks, s.disk_io, false})).build()
             : (h(
                   CpuPanel{s.cpu, cpu_cols} | grow(1),
-                  v(MemPanel{s.mem}, NetPanel{s.nets} | grow(1)) | grow(1)
+                  v(MemPanel{s.mem}, NetPanel{s.nets},
+                    DiskPanel{s.disks, s.disk_io, false} | grow(1)) | grow(1)
               ) | gap(1)).build();
 
         return (v(
             Header{s, m.paused},
             VerdictBanner{s},
             std::move(top),
-            DiskPanel{s.disks, s.disk_io, !narrow},
             ProcPanel{s, pv},
             Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                    m.pending ? &*m.pending : nullptr, m.filtering, m.filter}

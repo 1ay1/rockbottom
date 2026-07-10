@@ -62,12 +62,12 @@ public:
             }
             rows.push_back((h(
                 text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<5>,
-                text("read ▼") | nowrap | fgc(pal::sky),
+                text("▼") | nowrap | fgc(pal::sky),
                 text(humanize_rate(io_.read)) | nowrap | Bold | fgc(pal::text) | w_<8>,
-                Spark{rn.data(), io_.hist_len}.cells(16).color(pal::sky),
-                text("   write ▲") | nowrap | fgc(pal::pink),
+                Spark{rn.data(), io_.hist_len}.cells(8).color(pal::sky),
+                text(" ▲") | nowrap | fgc(pal::pink),
                 text(humanize_rate(io_.write)) | nowrap | Bold | fgc(pal::text) | w_<8>,
-                Spark{wn.data(), io_.hist_len}.cells(16).color(pal::pink)
+                Spark{wn.data(), io_.hist_len}.cells(8).color(pal::pink)
             ) | gap(1)).build());
         }
 
@@ -80,12 +80,12 @@ public:
                 std::string mnt = d.mount.size() > 12
                     ? "…" + d.mount.substr(d.mount.size() - 11) : d.mount;
                 return (h(
-                    text(mnt) | nowrap | fgc(pal::disk_ac) | w_<13>,
+                    text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>,
                     text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>,
-                    Meter{f}.width(14),
+                    Meter{f}.width(10),
                     text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total))
                         | nowrap | fgc(pal::text) | w_<12>,
-                    text(d.fstype) | nowrap | fgc(pal::dim) | w_<6>
+                    text(d.fstype) | nowrap | fgc(pal::dim)
                 ) | gap(1)).build();
             };
             const int n = static_cast<int>(disks_.size());
