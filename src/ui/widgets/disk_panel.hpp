@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class DiskPanel {
     const std::vector<DiskInfo>& disks_;
@@ -142,4 +142,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

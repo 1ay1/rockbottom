@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class Header {
     const Snapshot& snap_;
@@ -26,7 +26,9 @@ public:
         using namespace maya;
         using namespace maya::dsl;
 
-        Element word = gradient("▁▂▃ bottom", pal::mauve, pal::blue, /*bold=*/true);
+        Element word = gradient("▁▂▃ rockbottom", pal::mauve, pal::blue, /*bold=*/true);
+
+        Element tag = (text(" rb") | Bold | fgc(pal::faint)).build();
 
         auto pause_chip = paused_
             ? (text(" ⏸ PAUSED ") | Bold | fgc(pal::bg) | bgc(pal::warn)).build()
@@ -45,6 +47,7 @@ public:
 
         return (h(
             std::move(word),
+            std::move(tag),
             text("  " + snap_.hostname) | Bold | fgc(pal::sky),
             text("  " + snap_.kernel) | fgc(pal::dim),
             text("  ") , std::move(pause_chip),
@@ -60,4 +63,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

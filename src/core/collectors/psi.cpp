@@ -3,7 +3,7 @@
 // PSI (pressure stall information) is the kernel's own measurement of how
 // much time tasks spent *waiting* for a resource — the exact question a
 // human asks when the machine feels slow. Neither htop nor btop surfaces
-// this; for bottom it feeds the verdict directly.
+// this; for rockbottom it feeds the verdict directly.
 
 #include "../sampler.hpp"
 #include "../procfs.hpp"
@@ -11,7 +11,7 @@
 #include <cstdio>
 #include <string>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -48,4 +48,4 @@ void Sampler::sample_psi(Psi& p) {
     p.io  = parse_psi("/proc/pressure/io");
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

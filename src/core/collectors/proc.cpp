@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unordered_map>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -146,4 +146,4 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     snap.procs = std::move(out);
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class NetPanel {
     const std::vector<NetIface>& nets_;
@@ -80,4 +80,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

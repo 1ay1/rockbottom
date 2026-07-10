@@ -18,7 +18,7 @@
 #include <array>
 #include <algorithm>
 
-namespace bottom {
+namespace rockbottom {
 
 // ── Strong<Tag, Rep> ────────────────────────────────────────────────────────
 // A quantity is a representation `Rep` labelled with a phantom `Tag`. Two
@@ -146,4 +146,4 @@ inline std::string humanize_duration(std::uint64_t sec) {
     return buf;
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

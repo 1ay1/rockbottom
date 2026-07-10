@@ -1,15 +1,45 @@
-<h1 align="center">bottom</h1>
+<h1 align="center">rockbottom</h1>
 
 <p align="center">
-  A system monitor for people who open <code>htop</code>, whisper <b>"what in god's name,"</b> and close it forever.<br>
-  It reads the scary numbers <i>for</i> you and says, slowly and kindly: <b>"your computer is fine, buddy."</b>
+  <b>rb</b> — a system monitor for people who open <code>htop</code>, whisper <b>"what in god's name,"</b> and close it forever.<br>
+  Your computer hit rock bottom. So did we. Now we watch it hit rock bottom <i>together</i>, and rockbottom reads the scary numbers <i>for</i> you and says, slowly and kindly: <b>"your computer is fine, buddy."</b>
 </p>
 
 <p align="center">
-  <i>Built in modern, type-theoretic C++26 on the <a href="https://github.com/1ay1/maya">maya</a> TUI framework — the code did a PhD so you could keep eating crayons.</i>
+  <i>Built in type-theoretic C++26 on the <a href="https://github.com/1ay1/maya">maya</a> TUI framework — the code did a PhD so you could keep eating crayons.</i>
 </p>
 
 ---
+
+## The competition (a loving roast)
+
+Let's go around the room.
+
+- **`top`** — released the year *Ghostbusters* came out, and it looks it. A wall
+  of beige numbers that refreshes with the grace of a slideshow at a funeral. It
+  answers "is my computer okay?" by simply refusing to. `top` is not a tool, it's
+  a hazing ritual for people who peaked in 1984.
+- **`htop`** — `top` but in *color*, congratulations. Now the wall of numbers is
+  a **rainbow** wall of numbers. You still have no idea what any of it means, but
+  now it's festive. You will press `F5`, be delighted by the tree view for eight
+  seconds, and then close it forever, exactly like last time.
+- **`btop`** — okay, `btop` is *gorgeous*. Genuinely. It's also forty gauges, six
+  graphs, braille art, and a theme engine, and it answers "**is something
+  wrong?**" with "here are 900 data points, one of them is the answer, xoxo." It's
+  a Ferrari dashboard bolted to a tricycle you don't know how to ride. Stunning.
+  Useless at 2am when the fan sounds like a jet.
+- **`nvtop`** — great! For the four minutes a year you remember it exists and it's
+  installed and your GPU driver is in the mood. Otherwise it's a `command not
+  found` with excellent intentions. (We just... put the GPU in the main app. Press
+  `4`. You're welcome.)
+- **`bottom`** (the Rust one, `btm`) — respectfully, they took the good name and
+  built `htop` with rounded corners. It's fine! It's *fine.* It's a very polite
+  restatement of the problem. We took the name back, added a **rock**, and
+  actually answered the question. Rewrite it in Rust; we'll be over here telling
+  people what's wrong with their computer.
+
+Every one of them shows you the numbers. **None of them read the numbers.** That's
+the whole bit. That's the entire gap in the market, and we drove a truck through it.
 
 ## Are you the target audience? A quiz
 
@@ -18,12 +48,12 @@
 2. Is "have you tried turning it off and on again" not a joke to you but your
    entire IT strategy?
 3. Have you ever killed the wrong process with such confidence, and then such
-   regret?
+   immediate, profound regret?
 4. Do you think "the cloud" is a place with weather?
 
-If you answered anything other than a stunned silence: **welcome home.** You are
-exactly who we built this for. We are not mad. We are proud of you for getting
-this far into a README.
+If you answered anything other than a stunned, guilty silence: **welcome home.**
+You are exactly who we built this for. We are not mad. We are *proud* of you for
+getting this far into a README.
 
 ## The problem
 
@@ -39,8 +69,8 @@ monitor. This is a hostage situation with graphs.
 
 ## The fix: we read it for you
 
-bottom hires a guy whose entire job is to look at all that garbage and turn to
-you and say one (1) sentence:
+rockbottom employs a guy whose entire job is to stare at all that garbage, turn
+to you, and say one (1) sentence:
 
 ```
 ╭──────────────────────────────────────────────────────────────╮
@@ -48,104 +78,111 @@ you and say one (1) sentence:
 ╰──────────────────────────────────────────────────────────────╯
 ```
 
-That's the **verdict**. It is colour-coded so that even if you cannot read —
-and hey, no judgment, you got this far by looking at the shapes — the *colour*
-tells you everything:
+That's the **verdict**. It's colour-coded, so even if you cannot read — no
+judgment, you got this far by looking at the shapes — the *colour* tells you
+everything:
 
 - 🟢 **Calm** — everything's fine. Put the fire extinguisher down.
 - 🟡 **Busy** — something's working. It's allowed. Breathe.
-- 🟠 **Stressed** — okay *now* you may look at the thing we highlighted in red.
+- 🟠 **Stressed** — okay, *now* you may look at the thing we highlighted in red.
 - 🔴 **Critical** — this is a "close the tabs" situation. You have too many tabs.
-  You always have too many tabs.
+  You always have too many tabs. It's a lifestyle at this point.
 
 And the process actually causing the mess? We slap a big `»` on it and paint it
-red so you don't have to go down the list pointing at each row whispering "is it
-you?? is it YOU???" like a detective who peaked in kindergarten. **It's Chrome.**
-It is *always* Chrome. It was Chrome the whole time.
+red so you don't have to walk down the list pointing at each row whispering
+"is it you?? is it YOU???" like a detective who peaked in kindergarten. **It's
+Chrome.** It is *always* Chrome. It was Chrome the whole time. `htop` knew and
+said nothing. We're better than `htop`.
 
-**You read the one sentence. You know. That's it. That's the app.** Everything
-below exists for the two days a year you feel brave.
+**You read the one sentence. You know. That's the app.** Everything below exists
+for the two days a year you feel brave.
 
 ## Press a number, get the whole story (the detail panes)
 
 Every panel has a **full-screen drill-down** that carries *more detail than htop,
-btop, or anything else on the market* — and then reads it for you. Hit a number —
-or just *click the panel* — and bottom throws the doors open. Every pane has a
-system strip up top (host / kernel / uptime / process census) and ends in a
-plain-language verdict, so you never leave staring at digits wondering *so what?*
+btop, nvtop, or that polite Rust fellow* — and then, unlike all of them, reads it
+for you. Hit a number — or just *click the panel* — and rockbottom throws the
+doors open. Every pane has a system strip up top (host / kernel / uptime /
+process census) and ends in a plain-language verdict, so you never leave staring
+at digits wondering *so what?*
 
 - **`1` CPU** — a big load-over-time mountain with a real y-axis, live total +
-  iowait bars, the 1/5/15 load averages **interpreted against your core count**
-  (“oversubscribed — tasks are waiting for a free core”), package temp, a
-  **distribution strip** (busiest / quietest / median / average / spread / active
-  cores — it'll even call out a single-threaded hog pinning one core), and **every
-  core** as its own labelled meter with its live clock speed.
+  iowait bars, and the 1/5/15 load averages **interpreted against your core
+  count** ("oversubscribed — tasks are waiting for a free core"), because `htop`
+  will show you `load average: 12.4` and let you *feel* about it. Plus package
+  temp, a **distribution strip** (busiest / quietest / median / average / spread /
+  active cores — it'll even rat out a single-threaded hog pinning one core), and
+  **every core** as its own labelled meter with its live clock speed.
 - **`2` MEMORY** — the usage trend graph (spot a leak before it OOMs you), a real
   physical breakdown (used / cache / buffers / available) with the *available*
   verdict that actually matters, the full swap story with a thrash detector, the
   kernel's PSI memory-pressure numbers, **and the top memory-hungry processes
-  right in the pane** so you don't go hunting.
+  right in the pane** so you don't go hunting through a table like it's 1997.
 - **`3` NETWORK** — an all-interfaces aggregate line (total down/up, lifetime
   bytes, links up), then **every interface** with live rx/tx sparklines, lifetime
   totals, a burst detector, and up/down state.
-- **`4` GPU** — **it replaces nvtop entirely.** Utilisation-over-time graph, core
-  + VRAM meters, a full telemetry strip (temperature, power draw vs limit, core
-  & memory clocks, fan, perf-state, NVENC/NVDEC encoder/decoder load), the
-  processes actually holding VRAM, and a verdict (“▲ VRAM is nearly full” /
-  “pinned at full load — this is your bottleneck”). Works with NVIDIA (via
-  `nvidia-smi`), AMD (`amdgpu` sysfs) and Intel; whatever your card can't report
-  is simply left out. Multiple GPUs stack.
+- **`4` GPU** — **it replaces `nvtop` entirely, and it's already installed,
+  because it's just here.** Utilisation-over-time graph, core + VRAM meters, a
+  full telemetry strip (temperature, power draw vs limit, core & memory clocks,
+  fan, perf-state, NVENC/NVDEC encode/decode load), the processes actually holding
+  VRAM, and a verdict ("▲ VRAM is nearly full" / "pinned at full load — this is
+  your bottleneck"). Works with NVIDIA (`nvidia-smi`), AMD (`amdgpu` sysfs), and
+  Intel; whatever your card won't cough up is simply left out. Multiple GPUs stack.
 - **`5` DISK** — system-wide read/write sparklines, I/O pressure with a
   bottleneck verdict, **every filesystem** with its backing device, free space,
-  used/size, fstype and a fullness meter, the fullest-mount callout, and the
+  used/size, fstype, and a fullness meter, the fullest-mount callout, and the
   **processes actually driving disk traffic** right now.
 - **`6` / `Enter` PROCESS** — drill into the selected process: full command line,
   cpu + memory bars, **its rank against every other process** (so you instantly
-  know if it's *the* hog: “#1 CPU consumer on the machine right now”), disk
-  read/write, thread count, a *plain-language* run-state (“◆ uninterruptible —
-  wedged on I/O, can't even be killed”, not a cryptic `D`), owner, and its
-  listening ports. `x`/`K` still end it from right here; `↑↓` walks the list.
+  know if it's *the* hog: "#1 CPU consumer on the machine right now"), disk
+  read/write, thread count, a *plain-language* run-state ("◆ uninterruptible —
+  wedged on I/O, can't even be killed", not a cryptic `D` that you'll Google and
+  forget), owner, and its listening ports. `x`/`K` still end it from right here;
+  `↑↓` walks the list.
 
 Every pane is **responsive** (it reflows for your terminal — more core columns on
 a wide screen, tighter layout on a small one) and **scrollable** (`↑↓` / `PgUp` /
 `PgDn` / `g` / `G` / the wheel, with a live scrollbar), so no matter how dense the
-data or how small the window, nothing ever clips off the edge. `Esc` (or a click)
-closes; the number keys switch panes without going back. It's the “okay, tell me
-*everything*” button — and it's gorgeous.
+data or how small the window, nothing ever clips off the edge like it does in you-
+know-what. `Esc` (or a click) closes; the number keys switch panes without going
+back. It's the "okay, tell me *everything*" button — and it's gorgeous, and it
+still tells you what it *means*.
 
 ## Everything else (for your brave days)
 
 - **Verdict banner** — Calm / Busy / Stressed / Critical, with the guilty party
-  named out loud in front of everyone.
+  named out loud in front of everyone. Public shaming as a service.
 - **PSI pressure chips** — the Linux kernel keeps a little diary of how much your
   stuff is stuck waiting around (`/proc/pressure`). "tasks stalled on I/O 40% of
-  the last 10s" is the kernel tattling on your disk. htop and btop are too polite
-  to ask. We are not polite. We read the diary.
+  the last 10s" is the kernel tattling on your disk. `htop` and `btop` are too
+  polite to ask. We are not polite. We read the diary out loud.
 - **CPU** — one big number ("am I busy?"), a bunch of little numbers ("which of
-  my brains is busy?"), and a graph shaped like a mountain range that goes up
-  when you do things and down when you don't. It's basically a mood ring.
+  my brains is busy?"), and a graph shaped like a mountain range that goes up when
+  you do things and down when you don't. It's basically a mood ring.
 - **Memory** — RAM + swap meters, plus the cache/available breakdown, so you can
   finally learn the sacred truth: **"used" memory is a filthy lie.** Linux hoards
-  RAM like a dragon on a pile of gold. It is *supposed* to be almost full. Stop
-  buying more RAM. Put the credit card down.
-- **Disk** — read/write speeds and your actual drives, fullest one first
-  (btrfs subvolumes deduped, so you don't see the same disk nine times and think
-  you own nine computers). Answers "why slow" and "am I out of room" in one look.
+  RAM like a dragon on a pile of gold. It is *supposed* to be almost full. Every
+  other monitor lets you panic about this. We don't. Put the credit card down;
+  you don't need more RAM.
+- **Disk** — read/write speeds and your actual drives, fullest one first (btrfs
+  subvolumes deduped, so you don't see the same disk nine times and think you own
+  nine computers). Answers "why slow" and "am I out of room" in one look.
 - **Network** — download ▼ and upload ▲ per interface, with cute little graphs.
   Watch the number go up. Feel like a hacker in a movie. You've earned it.
-- **Processes** — pick things, filter things, and **kill** things. The loudest
-  one comes pre-highlighted so you kill the *right* thing for once in your life.
-  Dots tell you who's actually working (●) vs. who's just stuck waiting on the
-  disk (◆), so you stop murdering sleeping programs on a hunch.
+- **Processes** — pick things, filter things, and **kill** things. The loudest one
+  comes pre-highlighted so you kill the *right* thing for once in your life. Dots
+  tell you who's actually working (●) vs. who's just stuck waiting on the disk (◆),
+  so you stop murdering sleeping programs on a hunch like some kind of process
+  serial killer.
 - **Per-process disk I/O** — the real, honest "who is sanding my SSD down to a
   nub" number, straight from `/proc/<pid>/io`. Sort by it with `i`. The verdict
-  will even hand you the culprit's name when the disk is the problem. It's a
-  backup you set up in 2019 and forgot. It's fine. It loves you. It just wanted
-  attention.
-- **Ports** — which program is sitting on `:8080` like a smug little goblin
-  (`:8080 +2`), so the next time you get "address already in use" you can find
-  the goblin instead of restarting your entire machine like a caveman.
-  Sortable with `o`.
+  even hands you the culprit's name when the disk is the problem. (It's a backup
+  you set up in 2019 and forgot. It's fine. It loves you. It just wanted
+  attention.)
+- **Ports** — which program is squatting on `:8080` like a smug little goblin
+  (`:8080 +2`), so next time you get "address already in use" you can find the
+  goblin instead of restarting your entire machine like a caveman. Sortable with
+  `o`.
 - **Battery** — a charge chip in the corner, because sometimes "why is it slow"
   has the deeply humbling answer "it's on 3% and screaming for a charger."
 
@@ -155,12 +192,12 @@ You get to be casual because the code is a paranoid genius. Every number has a
 **type that knows what it is**, so the program *physically cannot* mix up bytes
 and hertz and tell you your hard drive runs at 3.6 gigabytes-per-second of clock
 speed. It won't compile. The compiler stands at the door like a bouncer and goes
-"nah."
+"nah." Try that in a bash one-liner.
 
 ```cpp
-using Bytes = Strong<BytesTag, std::uint64_t>;   // storage / memory
-using Hertz = Strong<HertzTag, std::uint64_t>;    // clock speed
-struct Ratio { double v; };                        // a proportion, clamped [0,1]
+using Bytes = Strong<BytesTag, std::uint64_t>;      // storage / memory
+using Hertz = Strong<HertzTag, std::uint64_t>;      // clock speed
+struct Ratio { double v; };                         // a proportion, clamped [0,1]
 template <class Q> struct Rate { double per_sec; }; // Q, but per second
 
 // The ONE legal way to turn Bytes into Bytes-per-second has a name and a
@@ -174,32 +211,33 @@ forever, so nobody has to. You are safe here. The nerds have handled it.
 
 ## Architecture (you may skip this; you were going to anyway)
 
-bottom is a maya **Elm-style `Program`** — pure functions, no sneaky mutations,
-the kind of clean code that would make your therapist proud:
+rockbottom is a maya **Elm-style `Program`** — pure functions, no sneaky
+mutations, the kind of clean code that would make your therapist proud:
 
-| Layer | File | Role |
-|-------|------|------|
-| Units | `src/units.hpp` | Strong dimensional types + the humanizers that turn scary numbers into `4.2G` |
-| Data | `src/metrics.hpp` | Pure `Snapshot` value types + the almighty `Verdict` |
-| Sampler | `src/sampler.{hpp,cpp}` | The one grubby place that touches the real world (`/proc`, `/sys`) |
-| App | `src/app.cpp` | `Model` + `Msg` + `update` + a pure `view` |
+| Layer | Where | Role |
+|-------|-------|------|
+| Units | `src/core/units.hpp` | Strong dimensional types + the humanizers that turn scary numbers into `4.2G` |
+| Data | `src/core/metrics.hpp` | Pure `Snapshot` value types + the almighty `Verdict` |
+| Sampler | `src/core/sampler.*` + `collectors/` | The one grubby place that touches the real world (`/proc`, `/sys`, `nvidia-smi`) |
+| App | `src/ui/app.hpp` | `Model` + `Msg` + `update` + a pure `view` |
+| Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
 
 `update()` ticks once a second like a very calm heartbeat. `view()` is a pure
-function of the state. The sampler remembers the last sample so every rate is a
+function of the state. The sampler remembers the last sample, so every rate is a
 real delta and not a wild guess. It's genuinely tidy in here. Please take your
 shoes off.
 
 ## Building
 
-Needs a C++26 compiler (GCC 15+; built on GCC 16) and CMake 3.28+. Yes it's a
+Needs a C++26 compiler (GCC 15+; built on GCC 16) and CMake 3.28+. Yes, it's a
 fancy compiler. The type theory has *demands.* It's an artist.
 
 ```bash
-git clone --recurse-submodules <this repo>
-cd bottom
+git clone --recurse-submodules https://github.com/1ay1/rockbottom
+cd rockbottom
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
-./build/bottom
+cmake --build build -j
+./build/rockbottom
 ```
 
 Cloned it and forgot `--recurse-submodules`, you beautiful disaster?
@@ -210,7 +248,7 @@ git submodule update --init --recursive
 
 There. We fixed it. You're welcome. We're not mad.
 
-## Keys (mostly one hand, we know your other hand is holding a snack)
+## Keys (mostly one hand — we know the other one's holding a snack)
 
 | Key | Action |
 |-----|--------|
@@ -218,10 +256,10 @@ There. We fixed it. You're welcome. We're not mad.
 | `/` | filter by name or pid (`Esc` un-does it when you inevitably typo) |
 | `x` / `Del` | politely ask a process to leave (SIGTERM — it asks you first) |
 | `K` | *aggressively* remove a process (SIGKILL — still asks first, we're not savages) |
-| `y` / `n` | yes commit the crime / no I panicked nevermind |
+| `y` / `n` | yes, commit the crime / no, I panicked, nevermind |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
 | `1`–`6` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process) |
-| `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (wheel works too) |
+| `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it) |
 | `?` / `h` | help, for when all of this immediately leaves your brain |
 | `q` / `Esc` | leave, go outside, touch grass |
@@ -235,25 +273,26 @@ There. We fixed it. You're welcome. We're not mad.
 | **click a panel** | opens its detail pane |
 | **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
-| **scroll wheel** | rolls the process list |
+| **scroll wheel** | rolls the process list (or the detail pane, if one's open) |
 
-The click-to-row math is anchored to the layout so a click lands on *exactly* the
-row you clicked, at every terminal size. No "close enough." We checked.
+The click-to-row math is anchored to the layout, so a click lands on *exactly*
+the row you clicked, at every terminal size. No "close enough." We checked. `btop`
+did not check.
 
 ## Platform
 
 Linux only. It reads `/proc` and `/sys` with its bare hands — no ncurses, no
 dependencies, no phoning home to sell your fan speeds to advertisers. Runs on a
-normal `x86_64` kernel. On Windows or macOS? This isn't for you, but honestly,
-props for reading a Linux README top to bottom. That's the spirit.
+normal `x86_64` kernel. On Windows or macOS? This isn't for you — but honestly,
+props for reading a Linux README all the way down here. That's the spirit.
 
 ## License
 
-MIT. Do whatever you want, we're not your dad. Vendored maya is MIT too.
+MIT. Do whatever you want; we're not your dad. Vendored maya is MIT too.
 Everybody's chill. Go be free.
 
 ---
 
 <p align="center">
-  <i>bottom: for when "is my computer okay?" deserved an actual answer, and you deserved to not have to think about it.</i>
+  <i>rockbottom: for when "is my computer okay?" deserved an actual answer, and you deserved to not have to think about it.</i>
 </p>

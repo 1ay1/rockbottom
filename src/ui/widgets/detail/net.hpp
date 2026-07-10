@@ -9,7 +9,7 @@
 
 #include "common.hpp"
 
-namespace bottom::ui::detail {
+namespace rockbottom::ui::detail {
 
 // Peak of a rolling float history buffer (the sparkline data is normalized
 // rate samples 0..1; we surface it as "% of window peak" isn't meaningful, so
@@ -77,4 +77,4 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     return b;
 }
 
-}  // namespace bottom::ui::detail
+}  // namespace rockbottom::ui::detail

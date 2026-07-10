@@ -9,7 +9,7 @@
 #include <sstream>
 #include <string>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -62,4 +62,4 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
     if (nets.size() > 4) nets.resize(4);
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

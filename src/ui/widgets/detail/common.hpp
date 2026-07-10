@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui::detail {
+namespace rockbottom::ui::detail {
 
 using maya::Element;
 
@@ -158,4 +158,4 @@ inline Element scroller(std::vector<Element> body, int scroll, int view_h,
 // Total content rows for a body — used by the app to clamp scroll offsets.
 // (Panes expose their body length via the DetailPane::content_rows API.)
 
-}  // namespace bottom::ui::detail
+}  // namespace rockbottom::ui::detail

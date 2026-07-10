@@ -8,7 +8,7 @@
 #include <string>
 #include <sys/statvfs.h>
 
-namespace bottom {
+namespace rockbottom {
 
 void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
     std::ifstream mounts("/proc/mounts");
@@ -53,4 +53,4 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
     if (disks.size() > 5) disks.resize(5);
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

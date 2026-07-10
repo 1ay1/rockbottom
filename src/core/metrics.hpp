@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 
 // A single logical CPU with a small ring of recent load samples for the graph.
 struct CpuCore {
@@ -162,4 +162,4 @@ struct Snapshot {
     Verdict               verdict;
 };
 
-}  // namespace bottom
+}  // namespace rockbottom

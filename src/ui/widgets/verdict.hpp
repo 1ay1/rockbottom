@@ -14,7 +14,7 @@
 
 #include <string>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class VerdictBanner {
     const Snapshot& snap_;
@@ -84,4 +84,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

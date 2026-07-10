@@ -10,7 +10,7 @@
 #include <sstream>
 #include <string>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -95,4 +95,4 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     }
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

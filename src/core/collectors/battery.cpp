@@ -8,7 +8,7 @@
 #include <cstdlib>
 #include <string>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -35,4 +35,4 @@ std::string signal_process(int pid, int sig) {
     }
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

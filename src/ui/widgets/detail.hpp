@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 enum class Detail { None, Cpu, Mem, Net, Gpu, Disk, Proc };
 
@@ -160,4 +160,4 @@ private:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

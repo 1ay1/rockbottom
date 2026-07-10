@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class MemPanel {
     const MemInfo& mem_;
@@ -86,4 +86,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

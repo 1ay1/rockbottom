@@ -10,7 +10,7 @@
 
 #include "common.hpp"
 
-namespace bottom::ui::detail {
+namespace rockbottom::ui::detail {
 
 inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
@@ -109,4 +109,4 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     return b;
 }
 
-}  // namespace bottom::ui::detail
+}  // namespace rockbottom::ui::detail

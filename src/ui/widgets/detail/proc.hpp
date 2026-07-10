@@ -11,7 +11,7 @@
 
 #include "common.hpp"
 
-namespace bottom::ui::detail {
+namespace rockbottom::ui::detail {
 
 inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const ProcInfo* proc) {
     using namespace maya; using namespace maya::dsl;
@@ -100,4 +100,4 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     return b;
 }
 
-}  // namespace bottom::ui::detail
+}  // namespace rockbottom::ui::detail

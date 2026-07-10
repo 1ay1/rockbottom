@@ -9,7 +9,7 @@
 
 #include "common.hpp"
 
-namespace bottom::ui::detail {
+namespace rockbottom::ui::detail {
 
 // Returns the body rows for the CPU pane (unframed, unscrolled).
 inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
@@ -123,4 +123,4 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     return b;
 }
 
-}  // namespace bottom::ui::detail
+}  // namespace rockbottom::ui::detail

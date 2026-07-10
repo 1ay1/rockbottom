@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
-project(bottom VERSION 1.0.0 LANGUAGES CXX)
+project(rockbottom VERSION 1.0.0 LANGUAGES CXX)
 
-# bottom targets the same modern standard maya uses.
+# rockbottom targets the same modern standard maya uses.
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -22,8 +22,8 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
 endif()
 add_subdirectory(third_party/maya)
 
-# ── bottom ─────────────────────────────────────────────────────────────────────────────
-add_executable(bottom
+# ── rockbottom ──────────────────────────────────────────────────────────────
+add_executable(rockbottom
     src/main.cpp
     src/core/sampler.cpp
     src/core/verdict.cpp
@@ -38,7 +38,7 @@ add_executable(bottom
     src/core/collectors/psi.cpp
     src/core/collectors/battery.cpp
 )
-target_link_libraries(bottom PRIVATE maya)
-target_compile_features(bottom PRIVATE cxx_std_26)
+target_link_libraries(rockbottom PRIVATE maya)
+target_compile_features(rockbottom PRIVATE cxx_std_26)
 
-install(TARGETS bottom RUNTIME DESTINATION bin)
+install(TARGETS rockbottom RUNTIME DESTINATION bin)

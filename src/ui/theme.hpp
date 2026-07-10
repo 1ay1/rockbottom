@@ -10,7 +10,7 @@
 
 #include <algorithm>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 namespace pal {
 inline constexpr auto bg       = maya::Color::hex(0x11111b);
@@ -89,4 +89,4 @@ inline constexpr auto proc_ac = hot;
     return "CALM";
 }
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

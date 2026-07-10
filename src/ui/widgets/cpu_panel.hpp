@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class CpuPanel {
     const CpuInfo& cpu_;
@@ -102,4 +102,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

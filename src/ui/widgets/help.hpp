@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class HelpOverlay {
 public:
@@ -63,4 +63,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

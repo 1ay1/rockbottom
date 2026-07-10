@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 namespace {
 
 struct Finding {
@@ -244,4 +244,4 @@ Verdict Sampler::judge(const Snapshot& s) const {
     return v;
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

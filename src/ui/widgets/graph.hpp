@@ -1,4 +1,4 @@
-// widgets/graph.hpp — bottom::ui::Graph, a braille line + filled-area chart.
+// widgets/graph.hpp — rockbottom::ui::Graph, a braille line + filled-area chart.
 //
 // Renders a history ring on a fixed 0..1 (0-100%) scale using braille dots
 // (U+2800, 2x4 sub-cell resolution) for a crisp continuous trace, backed by
@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class Graph {
     const float* data_ = nullptr;
@@ -140,4 +140,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

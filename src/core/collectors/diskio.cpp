@@ -11,7 +11,7 @@
 #include <sstream>
 #include <string>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -63,4 +63,4 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
     io.hist_len = io_hist_len_;
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

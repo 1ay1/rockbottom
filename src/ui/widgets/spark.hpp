@@ -1,4 +1,4 @@
-// widgets/spark.hpp — bottom::ui::Spark, a value-colored history sparkline.
+// widgets/spark.hpp — rockbottom::ui::Spark, a value-colored history sparkline.
 //
 // Same idiom as maya::Sparkline (one TextElement + StyledRun spans) but each
 // column is colored by its own value through the load gradient, so a spike
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class Spark {
     const float* data_ = nullptr;
@@ -99,4 +99,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

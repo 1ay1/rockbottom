@@ -7,7 +7,7 @@
 #include <cstring>
 #include <string>
 
-namespace bottom::ui::fmt {
+namespace rockbottom::ui::fmt {
 
 [[nodiscard]] inline std::string pct(double frac) {
     char b[8];
@@ -55,4 +55,4 @@ namespace bottom::ui::fmt {
     return s.empty() ? "CPU" : s;
 }
 
-}  // namespace bottom::ui::fmt
+}  // namespace rockbottom::ui::fmt

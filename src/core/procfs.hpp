@@ -11,7 +11,7 @@
 #include <pwd.h>
 #include <unistd.h>
 
-namespace bottom::procfs {
+namespace rockbottom::procfs {
 
 // Read an entire file into a string. Empty string on failure (procfs files are
 // small and virtual, so a full slurp is cheap and simplest).
@@ -49,4 +49,4 @@ inline std::string user_of(uid_t uid) {
     return std::to_string(uid);
 }
 
-}  // namespace bottom::procfs
+}  // namespace rockbottom::procfs

@@ -1,4 +1,4 @@
-// widgets/meter.hpp — bottom::ui::Meter, a maya-idiomatic gradient bar meter.
+// widgets/meter.hpp — rockbottom::ui::Meter, a maya-idiomatic gradient bar meter.
 //
 // The maya way: a widget is a small class satisfying the Node concept
 // (build() -> Element, operator Element), configured by value, styled with
@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class Meter {
     double value_ = 0;                       // 0..1
@@ -116,4 +116,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

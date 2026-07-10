@@ -5,8 +5,8 @@
 #include "ui/app.hpp"
 
 int main() {
-    maya::run<bottom::App>({
-        .title = "bottom",
+    maya::run<rockbottom::App>({
+        .title = "rockbottom",
         .mouse = true,
         .mode  = maya::Mode::Fullscreen,
     });

@@ -26,7 +26,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace bottom {
+namespace rockbottom {
 
 namespace {
 
@@ -107,4 +107,4 @@ void Sampler::sample_ports() {
     ::closedir(proc);
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

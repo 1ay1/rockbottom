@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 namespace fs = std::filesystem;
@@ -260,4 +260,4 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
     }
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

@@ -9,7 +9,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace bottom {
+namespace rockbottom {
 
 void Sampler::sample_mem(MemInfo& m) {
     std::ifstream mi("/proc/meminfo");
@@ -55,4 +55,4 @@ void Sampler::sample_mem_rates(MemInfo& m, double dt) {
     prev_pswpout_ = out;
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

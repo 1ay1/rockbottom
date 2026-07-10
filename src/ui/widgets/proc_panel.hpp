@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class ProcPanel {
     const Snapshot& snap_;
@@ -260,4 +260,4 @@ private:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

@@ -17,7 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 
 enum class SortKey { Cpu, Mem, Io, Pid, Name, Port };
 
@@ -89,4 +89,4 @@ private:
     std::unordered_map<int, int>              gpu_hist_len_; // valid samples by gpu index
 };
 
-}  // namespace bottom
+}  // namespace rockbottom

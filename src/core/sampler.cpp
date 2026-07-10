@@ -10,7 +10,7 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 
-namespace bottom {
+namespace rockbottom {
 
 using namespace procfs;
 
@@ -82,4 +82,4 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     return s;
 }
 
-}  // namespace bottom
+}  // namespace rockbottom

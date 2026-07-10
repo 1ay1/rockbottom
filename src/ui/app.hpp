@@ -1,4 +1,4 @@
-// app.hpp — the bottom Program: Elm-style Model/Msg/update/view wiring.
+// app.hpp — the rockbottom Program: Elm-style Model/Msg/update/view wiring.
 // All rendering is delegated to the ui::* widgets; all data collection to
 // core::Sampler. This file is just the state machine and layout composition.
 //
@@ -37,7 +37,7 @@
 #include <variant>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 
 struct App {
     struct Model {
@@ -591,7 +591,7 @@ struct App {
     static maya::Element view(const Model& m) {
         using namespace maya;
         using namespace maya::dsl;
-        using namespace bottom::ui;
+        using namespace rockbottom::ui;
 
         if (m.show_help) return HelpOverlay{};
 
@@ -684,4 +684,4 @@ struct App {
     }
 };
 
-}  // namespace bottom
+}  // namespace rockbottom

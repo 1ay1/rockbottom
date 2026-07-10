@@ -1,4 +1,4 @@
-// widgets/panel.hpp — bottom::ui::Panel, the house panel chrome.
+// widgets/panel.hpp — rockbottom::ui::Panel, the house panel chrome.
 //
 // Every section is a "card": rounded border tinted with the domain's accent
 // hue, a glyph-tagged title on the top edge, and an optional right-aligned
@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace bottom::ui {
+namespace rockbottom::ui {
 
 class Panel {
     std::string glyph_, title_, chip_;
@@ -73,4 +73,4 @@ public:
     }
 };
 
-}  // namespace bottom::ui
+}  // namespace rockbottom::ui

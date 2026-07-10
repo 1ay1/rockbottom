@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace bottom {
+namespace rockbottom {
 
 // A kill awaiting confirmation.
 struct PendingKill {
@@ -41,4 +41,4 @@ struct ProcView {
 };
 
 }  // namespace ui
-}  // namespace bottom
+}  // namespace rockbottom
