@@ -143,10 +143,11 @@ struct App {
         // Anchor the proc-table rows from the BOTTOM, not the top. The 1-row
         // Header widget gets squeezed out of the v-stack when height is tight,
         // which would shift a top-anchored table by one row and mis-route every
-        // click. The v-stack is top-aligned and leaves ONE trailing blank row,
-        // so the footer lands at height-2 and the proc panel directly above it.
-        // Counting up from the panel bottom border is exact at any height.
-        L.footer_y    = m.height - 2;
+        // click. The v-stack is top-aligned with NO trailing blank: the footer
+        // paints on the LAST terminal row and the proc panel's bottom border
+        // sits directly above it. Counting up from there is exact at any
+        // height. (Verified against a live frame dump — footer row 44 of 45.)
+        L.footer_y    = m.height - 1;
         const int proc_bot_border = L.footer_y - 1;     // panel bottom border
         const int proc_body_last  = proc_bot_border - 1;// last visible row
         L.proc_body_y = proc_body_last - (L.body_rows - 1);
@@ -204,6 +205,28 @@ struct App {
         return std::nullopt;
     }
 
+    // ── detail tab-bar hit-testing ──────────────────────────────────
+    // Mirrors DetailPane::hint()'s exact cell layout: border(1) + panel
+    // padding(1) = 2 leading cols; " esc"(4) + "·back"(5) + "   "(3); then
+    // each tab is [glyph+" "] (active only, 2) + key(1) + " "+label, followed
+    // by "   "(3). Every span is inclusive of its trailing gap so there are
+    // no dead columns between tabs.
+    static std::optional<ui::Detail> detail_tab_hit(const Model& m, int mx) {
+        struct T { ui::Detail d; int label_w; };
+        static constexpr T tabs[] = {
+            {ui::Detail::Cpu, 3}, {ui::Detail::Mem, 3}, {ui::Detail::Net, 3},
+            {ui::Detail::Gpu, 3}, {ui::Detail::Disk, 4}, {ui::Detail::Proc, 4},
+        };
+        int col = 2 + 4 + 5 + 3;   // chrome + esc·back + spacer
+        for (const T& t : tabs) {
+            const bool on = m.detail == t.d;
+            const int w = (on ? 2 : 0) + 1 + 1 + t.label_w;   // [◈ ]key␣label
+            if (mx >= col && mx < col + w + 3) return t.d;    // + "   " gap
+            col += w + 3;
+        }
+        return std::nullopt;
+    }
+
     static std::pair<Model, maya::Cmd<Msg>> dispatch_footer(Model m, FooterAct a) {
         using C = maya::Cmd<Msg>;
         switch (a) {
@@ -240,8 +263,8 @@ struct App {
         // header row resolves to exactly one column.
         int c = 2;
         auto zone = [&](int width) { int s = c; c += width + 1; return std::pair{s, c}; };
-        zone(8);   // PID  (no sort)
-        zone(8);   // USER (no sort)
+        { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Pid; }   // PID
+        zone(8);   // USER (not a sort key)
         int fixed = 8 + 8;                                  // PID + USER
         if (show_port) fixed += 9 + 1;
         fixed += (show_mem ? 14 : 8) + 1 + 6;               // CPU meter + gap + value
@@ -299,13 +322,17 @@ struct App {
             if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
                 m.detail_scroll += 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
-            m.sel += 3; clamp_sel(m); return {std::move(m), C{}};
+            m.sel += 3; clamp_sel(m);
+            if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
+            return {std::move(m), C{}};
         }
         if (me.button == MouseButton::ScrollUp) {
             if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
                 m.detail_scroll -= 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
-            m.sel -= 3; clamp_sel(m); return {std::move(m), C{}};
+            m.sel -= 3; clamp_sel(m);
+            if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
+            return {std::move(m), C{}};
         }
 
         // Only act on button presses for the rest (ignore Move/Release so we
@@ -315,10 +342,18 @@ struct App {
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; return {std::move(m), C{}}; }
         if (m.detail != ui::Detail::None) {
-            // In the detail overlay the wheel already scrolled the selection;
-            // a left click on the bottom hint row switches domain, anything
-            // else closes the pane.
+            // The bottom tab bar is a real click target: a left click on a
+            // tab switches to that domain (hit-test mirrors DetailPane::hint's
+            // exact glyph widths). Anywhere else closes the pane.
+            if (me.button == MouseButton::Left && my == m.height - 2) {
+                if (auto d = detail_tab_hit(m, mx)) {
+                    m.detail = *d; m.detail_scroll = 0;
+                    if (*d == ui::Detail::Proc) pin_detail_pid(m);
+                    return {std::move(m), C{}};
+                }
+            }
             m.detail = ui::Detail::None;
+            m.detail_pid = 0;
             return {std::move(m), C{}};
         }
         if (m.pending) {
@@ -352,8 +387,10 @@ struct App {
         if (my >= band_top && my < L.proc_top_y && me.button == MouseButton::Left) {
             if (L.narrow) {
                 const Snapshot& s = m.snap;
-                const int ncores = static_cast<int>(s.cpu.cores.size());
-                const int cores_rows = (ncores + L.cpu_cols - 1) / L.cpu_cols;
+                // Narrow mode renders the cores as a ONE-ROW heat strip — the
+                // multi-row meter formula here would shift every boundary
+                // below it and mis-route MEM/NET/DISK clicks.
+                const int cores_rows = 1;
                 const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
                 const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
                 const int net_h = 2 + ui::NetPanel::rows(s.nets);
