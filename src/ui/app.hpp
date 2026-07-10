@@ -57,6 +57,11 @@ struct App {
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
 
+        // Verdict pulse: when health DEGRADES the banner border flares and
+        // fades over the next few ticks so the state change catches the eye.
+        Health last_health = Health::Calm;
+        int    verdict_pulse = 0;   // ticks of flare remaining
+
         // True while a background sample is in flight. The Sampler holds
         // cross-tick delta state (CPU busy fractions, net/proc rates), so only
         // ONE sample may run at a time — this guard drops Ticks that arrive
@@ -420,6 +425,7 @@ struct App {
         return std::visit(maya::overload{
             [&](Tick) -> std::pair<Model, C> {
                 if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
+                if (m.verdict_pulse > 0) --m.verdict_pulse;
                 // Kick a background sample unless paused or one's already running.
                 if (!m.paused && !m.sampling) {
                     ++m.ticks;
@@ -430,7 +436,11 @@ struct App {
             },
             [&](Sampled sm) -> std::pair<Model, C> {
                 // Pure fold: the effect already did the I/O off-thread.
+                const Health prev = m.last_health;
                 m.snap = std::move(sm.snap);
+                m.last_health = m.snap.verdict.level;
+                if (static_cast<int>(m.last_health) > static_cast<int>(prev))
+                    m.verdict_pulse = 3;   // degrade → flare for 3 ticks
                 m.sampling = false;
                 clamp_sel(m);
                 return {std::move(m), C{}};
@@ -721,7 +731,7 @@ struct App {
 
         return (v(
             Header{s, m.paused},
-            VerdictBanner{s},
+            VerdictBanner{s, m.verdict_pulse},
             std::move(top),
             ProcPanel{s, pv},
             Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,

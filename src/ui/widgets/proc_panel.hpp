@@ -263,7 +263,11 @@ private:
             return h(std::move(cols)) | gap(1);
         }();
 
-        if (selected) return (std::move(row) | bgc(pal::bg_panel)).build();
+        // Selection glow: the whole row's bg carries a whisper of the
+        // process accent, so the cursor reads as a highlighted strip rather
+        // than a lone ▶ in the gutter.
+        if (selected)
+            return (std::move(row) | bgc(mix(pal::bg_panel, pal::proc_ac, 0.16))).build();
         return row.build();
     }
 };

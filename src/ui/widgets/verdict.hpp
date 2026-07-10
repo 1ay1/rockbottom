@@ -12,15 +12,18 @@
 #include "../theme.hpp"
 #include "../fmt.hpp"
 
+#include <algorithm>
 #include <string>
 
 namespace rockbottom::ui {
 
 class VerdictBanner {
     const Snapshot& snap_;
+    int pulse_ = 0;   // >0 → health just degraded; flare the frame
 
 public:
-    explicit VerdictBanner(const Snapshot& s) : snap_(s) {}
+    explicit VerdictBanner(const Snapshot& s, int pulse = 0)
+        : snap_(s), pulse_(std::clamp(pulse, 0, 3)) {}
 
     operator maya::Element() const { return build(); }
 
@@ -30,6 +33,9 @@ public:
 
         const Verdict& v = snap_.verdict;
         Color c = health_color(v.level);
+        // Pulse: on a health degrade the border flares toward white, then
+        // fades back over the next ticks (3→2→1→0).
+        Color frame = pulse_ > 0 ? mix(c, pal::white, 0.25 * pulse_) : c;
 
         // load trend: comparing 1m to 15m tells you if things are heating up.
         const auto& la = snap_.cpu.loadavg;
@@ -50,7 +56,7 @@ public:
 
         auto b = vstack();
         b.border(BorderStyle::Round)
-         .border_color(c)
+         .border_color(frame)
          .border_text_end(" " + chip + " ", BorderTextPos::Top)
          .padding(0, 1, 0, 1);
 

@@ -70,13 +70,19 @@ public:
 
         if (mem_.swap_total.value > 0) {
             const double sf = mem_.swap_usage().v;
-            const Color sc = sf > 0.3 ? pal::crit : pal::mauve;
+            // Occupied swap is not distress — ACTIVE PAGING is. Color the bar
+            // by the live swap traffic: quiet mauve when idle, escalating
+            // through warn/hot/crit as pages start moving.
             const double traffic = mem_.swap_in.per_sec + mem_.swap_out.per_sec;
+            Color sc  = pal::mauve;   // bar
+            Color pc  = pal::dim;     // % figure
+            if      (traffic > 8.0 * 1024 * 1024) { sc = pal::crit; pc = sc; }  // thrashing
+            else if (traffic > 1.0 * 1024 * 1024) { sc = pal::hot;  pc = sc; }  // straining
+            else if (traffic > 64.0 * 1024)       { sc = pal::warn; pc = sc; }  // trickle
             std::string tail = traffic > 1024
                 ? "paging " + humanize_rate(ByteRate{traffic})
                 : humanize_bytes(mem_.swap_used) + " / " + humanize_bytes(mem_.swap_total);
-            rows.push_back(row("SWP", sf, tail, pal::mem_ac,
-                               sf > 0.3 ? pal::crit : pal::dim, sc));
+            rows.push_back(row("SWP", sf, tail, pal::mem_ac, pc, sc));
         }
 
         return Panel("▤", "MEMORY", pal::mem_ac)

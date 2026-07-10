@@ -141,6 +141,7 @@ public:
                 uint8_t line_bits = 0;
                 uint8_t fill_bits = 0;
                 uint8_t over_bits = 0;
+                uint8_t ofill_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
                     int ly = line[static_cast<std::size_t>(gx)];
@@ -149,18 +150,21 @@ public:
                         int gy = r * 4 + dr;
                         if (gy == ly)      line_bits |= kDot[dr][dc];
                         else if (gy > ly)  fill_bits |= kDot[dr][dc];
-                        if (gy == oy)      over_bits |= kDot[dr][dc];
+                        if (has_overlay) {
+                            if (gy == oy)     over_bits  |= kDot[dr][dc];
+                            else if (gy > oy) ofill_bits |= kDot[dr][dc];
+                        }
                     }
                 }
                 // Combine everything into one braille glyph. A glyph carries
-                // ONE color, so pick by priority: overlay line (must pop) >
-                // bright trace crest > dim area fill. The fill fades toward
-                // the floor so the mountain has depth instead of reading as
-                // a solid slab.
-                const uint8_t bits = line_bits | fill_bits | over_bits;
+                // ONE color, so pick by priority: overlay crest (must pop) >
+                // primary crest > primary fill > overlay-only fill. Fills
+                // fade toward the floor so both mountains have depth.
+                const uint8_t bits = line_bits | fill_bits | over_bits | ofill_bits;
                 if (bits) {
                     std::size_t off = content.size();
                     utf8(U'\u2800' + bits, content);
+                    const double depth = rows_ > 1 ? static_cast<double>(r) / (rows_ - 1) : 1.0;
                     const Color bright = color_ ? *color_
                         : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
                     Color cc;
@@ -168,10 +172,13 @@ public:
                         cc = overlay_color_;
                     } else if (line_bits) {
                         cc = bright;
-                    } else {
+                    } else if (fill_bits) {
                         // Depth fade: rows further from the top are dimmer.
-                        const double depth = rows_ > 1 ? static_cast<double>(r) / (rows_ - 1) : 1.0;
                         cc = mix(bright, pal::bg_panel, 0.55 + 0.25 * depth);
+                    } else {
+                        // Overlay-only fill: even fainter, so the second
+                        // mountain reads as a translucent layer behind.
+                        cc = mix(overlay_color_, pal::bg_panel, 0.72 + 0.18 * depth);
                     }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {
