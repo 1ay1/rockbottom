@@ -230,7 +230,7 @@ struct App {
         const int cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;   // stay ~8 rows tall
         const int cores_rows = (ncores + cpu_cols - 1) / cpu_cols;
         const int cpu_h  = 2 + 4 + 1 + cores_rows;                    // border + graph + blank + cores
-        const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 3 : 2);
+        const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
         const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
         const int disk_mounts = static_cast<int>(s.disks.size());
         const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right

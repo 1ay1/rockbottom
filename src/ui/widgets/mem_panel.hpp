@@ -39,14 +39,6 @@ public:
                 | nowrap | fgc(pal::text)
         ) | gap(1)).build());
 
-        rows.push_back((h(
-            text("") | w_<10>,
-            text("cache ") | nowrap | fgc(pal::dim),
-            text(humanize_bytes(mem_.cached)) | nowrap | fgc(pal::teal),
-            text("   free ") | nowrap | fgc(pal::dim),
-            text(humanize_bytes(mem_.available)) | nowrap | fgc(pal::good)
-        )).build());
-
         if (mem_.swap_total.value > 0) {
             const double sf = mem_.swap_usage().v;
             const Color sc = sf > 0.3 ? pal::crit : pal::mauve;
@@ -66,7 +58,9 @@ public:
         }
 
         return Panel("▤", "MEMORY", pal::mem_ac)
-            .chip(fmt::pct(mf) + " used")(std::move(rows));
+            .chip("cache " + humanize_bytes(mem_.cached)
+                  + "  free " + humanize_bytes(mem_.available)
+                  + "  ·  " + fmt::pct(mf) + " used")(std::move(rows));
     }
 };
 

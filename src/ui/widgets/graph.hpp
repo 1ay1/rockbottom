@@ -1,13 +1,15 @@
-// widgets/graph.hpp — bottom::ui::Graph, a multi-row filled area chart.
+// widgets/graph.hpp — bottom::ui::Graph, a braille line + filled-area chart.
 //
-// The big brother of Spark: renders a history ring as an N-row filled
-// mountain using vertical eighth-blocks (▁▂▃▄▅▆▇█) for sub-row resolution,
-// one StyledRun per column per row. Columns are load-gradient colored by
-// their own value, so peaks glow amber/red while calm stretches stay green.
+// Renders a history ring on a fixed 0..1 (0-100%) scale using braille dots
+// (U+2800, 2x4 sub-cell resolution) for a crisp continuous trace, backed by
+// a dim filled area so the "mountain" reads at a glance while the bright
+// leading line shows the exact shape. The line color follows the load
+// gradient of the *latest* sample, so a spiking graph glows amber/red.
 //
-//   Graph{hist.data(), len}.cells(40).rows(4)
+//   Graph{hist.data(), len}.cells(46).rows(4)
 //
-// Same silence rule as Spark: near-zero columns paint nothing.
+// Unlike a block chart there is no silence rule: a flat-idle series draws a
+// clean line hugging the floor, not a field of gaps.
 
 #pragma once
 
@@ -16,6 +18,8 @@
 #include "../theme.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,7 +31,7 @@ class Graph {
     int len_ = 0;
     int cells_ = 40;
     int rows_ = 4;
-    std::optional<maya::Color> color_;   // nullopt → per-value load gradient
+    std::optional<maya::Color> color_;   // nullopt → gradient by latest value
 
 public:
     Graph(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
@@ -40,43 +44,78 @@ public:
 
     [[nodiscard]] maya::Element build() const {
         using namespace maya;
-        static constexpr const char* kBlocks[] =
-            {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
 
-        const int start = len_ > cells_ ? len_ - cells_ : 0;
-        const int pad = cells_ - (len_ - start);
+        // Braille dot bit for (dot_row 0..3, dot_col 0..1).
+        static constexpr uint8_t kDot[4][2] = {
+            {0x01, 0x08}, {0x02, 0x10}, {0x04, 0x20}, {0x40, 0x80},
+        };
+        auto utf8 = [](char32_t cp, std::string& out) {
+            out += static_cast<char>(0xE0 | (cp >> 12));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        };
 
-        std::vector<Element> lines;
-        lines.reserve(static_cast<std::size_t>(rows_));
+        const int gw = cells_ * 2;          // dot columns
+        const int gh = rows_ * 4;           // dot rows
+        const int start = len_ > cells_ * 2 ? len_ - cells_ * 2 : 0;
 
-        // Rows render top-down. A column with value v fills v*rows_ rows from
-        // the bottom; the boundary row gets an eighth-block partial.
+        auto sample = [&](int gx) -> double {     // value at dot-column gx
+            if (len_ - start <= 0) return 0.0;
+            double t = static_cast<double>(gx) / std::max(1, gw - 1);
+            double fi = t * (len_ - start - 1);
+            int lo = static_cast<int>(fi);
+            int hi = std::min(lo + 1, len_ - start - 1);
+            double fr = fi - lo;
+            double a = data_[start + lo], b = data_[start + hi];
+            return std::clamp(a * (1 - fr) + b * fr, 0.0, 1.0);
+        };
+
+        // line[gx] = dot-row (0=top) of the trace; fill everything below.
+        std::vector<int> line(static_cast<std::size_t>(gw));
+        double latest = len_ > 0 ? std::clamp<double>(data_[len_ - 1], 0.0, 1.0) : 0.0;
+        for (int gx = 0; gx < gw; ++gx) {
+            double v = sample(gx);
+            int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
+            line[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
+        }
+
+        const Color lc = color_ ? *color_ : load_color(latest);
+        const Color fc = mix(pal::track, lc, 0.55);   // dim area under the line
+
+        std::vector<Element> out;
+        out.reserve(static_cast<std::size_t>(rows_));
+
         for (int r = 0; r < rows_; ++r) {
-            const double row_top    = static_cast<double>(rows_ - r) / rows_;
-            const double row_bottom = static_cast<double>(rows_ - r - 1) / rows_;
-
             std::string content;
             std::vector<StyledRun> runs;
             content.reserve(static_cast<std::size_t>(cells_) * 3);
 
-            auto put = [&](const std::string& glyph, Style st) {
-                std::size_t off = content.size();
-                content += glyph;
-                runs.push_back({off, content.size() - off, st});
-            };
-
-            for (int i = 0; i < pad; ++i) put(" ", Style{});
-            for (int i = start; i < len_; ++i) {
-                const double v = std::clamp(static_cast<double>(data_[i]), 0.0, 1.0);
-                if (v <= row_bottom + 0.002) { put(" ", Style{}); continue; }
-                Color c = color_ ? *color_ : load_color(v);
-                if (v >= row_top) { put("█", Style{}.with_fg(c)); continue; }
-                int idx = std::clamp(
-                    static_cast<int>((v - row_bottom) * rows_ * 8.0), 1, 8);
-                put(kBlocks[idx - 1], Style{}.with_fg(c));
+            for (int c = 0; c < cells_; ++c) {
+                uint8_t line_bits = 0, fill_bits = 0;
+                for (int dc = 0; dc < 2; ++dc) {
+                    int gx = c * 2 + dc;
+                    int ly = line[static_cast<std::size_t>(gx)];
+                    for (int dr = 0; dr < 4; ++dr) {
+                        int gy = r * 4 + dr;
+                        if (gy == ly)      line_bits |= kDot[dr][dc];
+                        else if (gy > ly)  fill_bits |= kDot[dr][dc];
+                    }
+                }
+                // The trace glyph wins its cell; the pure-fill glyph is dim.
+                if (line_bits) {
+                    std::size_t off = content.size();
+                    utf8(U'\u2800' + (line_bits | fill_bits), content);
+                    runs.push_back({off, content.size() - off, Style{}.with_fg(lc)});
+                } else if (fill_bits) {
+                    std::size_t off = content.size();
+                    utf8(U'\u2800' + fill_bits, content);
+                    runs.push_back({off, content.size() - off, Style{}.with_fg(fc)});
+                } else {
+                    content += ' ';
+                }
             }
 
-            lines.push_back(Element{TextElement{
+            out.push_back(Element{TextElement{
                 .content = std::move(content),
                 .style   = {},
                 .wrap    = TextWrap::NoWrap,
@@ -84,7 +123,7 @@ public:
             }});
         }
 
-        return maya::dsl::v(lines).build();
+        return maya::dsl::v(out).build();
     }
 };
 

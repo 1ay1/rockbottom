@@ -34,9 +34,9 @@ public:
 
         std::vector<Element> rows;
 
-        // ── Big picture first: 4-row filled area graph of total CPU — the
-        // "what has the machine been doing" mountain — with the live meter
-        // and bold % beside it. ──
+        // ── Big picture first: braille area+line graph of total CPU — the
+        // "what has the machine been doing" trace — with the live meter and
+        // bold % stacked to its left. ──
         const double tf = cpu_.total.v;
         rows.push_back((h(
             v(
@@ -44,14 +44,16 @@ public:
                   text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
                 ) | gap(1),
                 blank(),
-                blank(),
-                Meter{tf}.width(10)
+                Meter{tf}.width(10),
+                blank()
             ),
             Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(46).rows(4)
         ) | gap(2)).build());
         rows.push_back(blank());
 
-        // ── Per-core grid: cols_ columns, one line each ──
+        // ── Per-core grid: cols_ columns, one line each. Every core gets a
+        // number, a right-aligned %, a compact meter and (when roomy) a
+        // value-colored spark — no floating fragments. ──
         const int n = static_cast<int>(cpu_.cores.size());
         const int per_col = (n + cols_ - 1) / cols_;
         const bool compact = cols_ > 2;
@@ -69,7 +71,7 @@ public:
             return (h(
                 text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
-                Meter{f}.width(8),
+                Meter{f}.width(10),
                 Spark{c.history.data(), c.hist_len}.cells(8)
             ) | gap(1)).build();
         };
