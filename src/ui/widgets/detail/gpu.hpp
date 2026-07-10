@@ -36,8 +36,14 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         )).build());
         b.push_back(gap_row());
 
-        // ── hero graph ─────────────────────────────────────────────────────────
-        b.push_back(section("UTILISATION OVER TIME", pal::proc_ac));
+        // ── hero graph ───────────────────────────────────────────────────
+        b.push_back((h(
+            text("UTILISATION OVER TIME") | nowrap | Bold | fgc(pal::proc_ac),
+            Element{blank()} | grow(1),
+            text("─ core") | nowrap | fgc(pal::proc_ac),
+            text("  ─ vram ") | nowrap | fgc(pal::mem_ac),
+            text(fmt::pct_pad(g.mem_usage.v)) | nowrap | Bold | fgc(pal::mem_ac)
+        )).build());
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
             std::vector<Element> axis;
@@ -45,9 +51,12 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
                 std::string lbl = r == 0 ? "100" : r == gh - 1 ? "  0" : r == gh / 2 ? " 50" : "   ";
                 axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
             }
+            Graph gr{g.util_history.data(), g.hist_len};
+            gr.fill().rows(gh).color(pal::proc_ac)
+              .overlay(g.mem_history.data(), g.mem_hist_len, pal::mem_ac);
             b.push_back((h(
                 v(std::move(axis)) | width(3),
-                Element{Graph{g.util_history.data(), g.hist_len}.fill().rows(gh).color(pal::proc_ac)} | grow(1)
+                Element{std::move(gr)} | grow(1)
             ) | gap(1) | height(gh)).build());
         }
         b.push_back(gap_row());

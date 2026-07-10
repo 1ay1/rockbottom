@@ -32,6 +32,11 @@ class Graph {
     int cells_ = 40;
     int rows_ = 4;
     std::optional<maya::Color> color_;   // nullopt → gradient by latest value
+    // Optional second series drawn as a plain line (no fill glow) on the same
+    // grid — e.g. RAM over the CPU graph, VRAM over the GPU graph.
+    const float* overlay_ = nullptr;
+    int overlay_len_ = 0;
+    maya::Color overlay_color_ = pal::mem_ac;
 
 public:
     Graph(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
@@ -40,6 +45,10 @@ public:
     Graph& rows(int n)          { rows_ = std::max(1, n); return *this; }
     Graph& color(maya::Color c) { color_ = c; return *this; }
     Graph& fill()               { cells_ = 0; return *this; }
+    // Overlay a second history series (drawn as a thin line in `c`).
+    Graph& overlay(const float* data, int len, maya::Color c) {
+        overlay_ = data; overlay_len_ = std::max(0, len); overlay_color_ = c; return *this;
+    }
 
     operator maya::Element() const { return build(); }
 
@@ -95,6 +104,29 @@ public:
             line[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
         }
 
+        // Optional overlay series: its own dot-row line on the same grid.
+        const bool has_overlay = overlay_ && overlay_len_ > 0;
+        std::vector<int> oline;
+        if (has_overlay) {
+            const int ostart = overlay_len_ > cells_ * 2 ? overlay_len_ - cells_ * 2 : 0;
+            auto osample = [&](int gx) -> double {
+                if (overlay_len_ - ostart <= 0) return 0.0;
+                double t = static_cast<double>(gx) / std::max(1, gw - 1);
+                double fi = t * (overlay_len_ - ostart - 1);
+                int lo = static_cast<int>(fi);
+                int hi = std::min(lo + 1, overlay_len_ - ostart - 1);
+                double fr = fi - lo;
+                double a = overlay_[ostart + lo], b = overlay_[ostart + hi];
+                return std::clamp(a * (1 - fr) + b * fr, 0.0, 1.0);
+            };
+            oline.resize(static_cast<std::size_t>(gw));
+            for (int gx = 0; gx < gw; ++gx) {
+                double v = osample(gx);
+                int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
+                oline[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
+            }
+        }
+
         const Color lc = color_ ? *color_ : load_color(latest);
 
         std::vector<Element> out;
@@ -107,20 +139,32 @@ public:
 
             for (int c = 0; c < cells_; ++c) {
                 uint8_t line_bits = 0;
+                uint8_t over_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
                     int ly = line[static_cast<std::size_t>(gx)];
+                    int oy = has_overlay ? oline[static_cast<std::size_t>(gx)] : -1;
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
                         if (gy == ly) line_bits |= kDot[dr][dc];
+                        if (gy == oy) over_bits |= kDot[dr][dc];
                     }
                 }
-                if (line_bits) {
+                // Combine both traces into one braille glyph. A single glyph
+                // can only carry one color, so we colour the cell by the
+                // OVERLAY hue whenever it holds an overlay dot (the RAM/VRAM
+                // line should pop over the primary trace); otherwise the
+                // primary hue.
+                const uint8_t bits = line_bits | over_bits;
+                if (bits) {
                     std::size_t off = content.size();
-                    utf8(U'\u2800' + line_bits, content);
-                    // The current column glows by the LATEST value; the rest of
-                    // the trace is the calmer historical hue at that point.
-                    Color cc = color_ ? *color_ : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
+                    utf8(U'\u2800' + bits, content);
+                    Color cc;
+                    if (over_bits) {
+                        cc = overlay_color_;
+                    } else {
+                        cc = color_ ? *color_ : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
+                    }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {
                     content += ' ';

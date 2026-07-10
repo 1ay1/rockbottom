@@ -21,13 +21,15 @@ namespace rockbottom::ui {
 
 class CpuPanel {
     const CpuInfo& cpu_;
+    const MemInfo* mem_ = nullptr;   // optional: overlay RAM on the ALL graph
     int cols_;      // 2 = roomy (meter+spark), 3 = compact (meter only)
     int graph_w_;   // width of the ALL history graph (cells)
     int graph_h_;   // height of the ALL graph (rows); 0 = skip it
 
 public:
-    explicit CpuPanel(const CpuInfo& c, int cols = 2, int graph_w = 46, int graph_h = 4)
-        : cpu_(c), cols_(std::max(2, cols)),
+    explicit CpuPanel(const CpuInfo& c, int cols = 2, int graph_w = 46, int graph_h = 4,
+                      const MemInfo* mem = nullptr)
+        : cpu_(c), mem_(mem), cols_(std::max(2, cols)),
           graph_w_(std::max(8, graph_w)), graph_h_(std::max(0, graph_h)) {}
 
     operator maya::Element() const { return build(); }
@@ -43,20 +45,30 @@ public:
         // bold % stacked to its left. ──
         const double tf = cpu_.total.v;
         if (graph_h_ >= 2) {
-            // Header line: ALL + live %.
-            rows.push_back((h(
-                text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
-                text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>
-            ) | gap(1)).build());
+            // Header line: ALL + live % — and, when RAM is overlaid, a small
+            // legend so the second (mauve) trace is unambiguous.
+            std::vector<Element> hdr;
+            hdr.push_back((text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>).build());
+            hdr.push_back((text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>).build());
+            if (mem_) {
+                hdr.push_back((Element{blank()} | grow(1)).build());
+                hdr.push_back((text("─ cpu") | nowrap | fgc(pal::cpu_ac)).build());
+                hdr.push_back((text("  ─ ram ") | nowrap | fgc(pal::mem_ac)).build());
+                hdr.push_back((text(fmt::pct_pad(mem_->usage().v)) | nowrap | Bold | fgc(pal::mem_ac)).build());
+            }
+            rows.push_back((h(std::move(hdr)) | gap(1)).build());
             // Graph with a tiny left y-axis: 100 at top, 0 at the floor.
             std::vector<Element> axis;
             for (int r = 0; r < graph_h_; ++r) {
                 const char* lbl = r == 0 ? "100" : r == graph_h_ - 1 ? "  0" : "   ";
                 axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
             }
+            Graph g{cpu_.total_history.data(), cpu_.total_hist_len};
+            g.cells(graph_w_).rows(graph_h_);
+            if (mem_) g.overlay(mem_->usage_history.data(), mem_->hist_len, pal::mem_ac);
             rows.push_back((h(
                 v(std::move(axis)) | w_<3>,
-                Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(graph_w_).rows(graph_h_)
+                std::move(g)
             ) | gap(1) | height(graph_h_)).build());
         } else {
             // No room for the mountain — keep the live ALL meter as one row.

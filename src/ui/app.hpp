@@ -711,10 +711,10 @@ struct App {
         const int cpu_inner = (narrow ? inner : left_w) - 4;
         const int graph_w = std::max(8, cpu_inner - 4);   // minus y-axis (3) + gap (1)
         Element top = narrow
-            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}, MemPanel{s.mem}, NetPanel{s.nets},
+            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}, MemPanel{s.mem}, NetPanel{s.nets},
                  DiskPanel{s.disks, s.disk_io, false})).build()
             : (h(
-                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h}} | width(left_w),
+                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}} | width(left_w),
                   v(MemPanel{s.mem}, NetPanel{s.nets},
                     DiskPanel{s.disks, s.disk_io, false}) | width(right_w)
               ) | gap(gap_w)).build();
