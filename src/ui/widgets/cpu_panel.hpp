@@ -25,12 +25,13 @@ class CpuPanel {
     int cols_;      // 2 = roomy (meter+spark), 3 = compact (meter only)
     int graph_w_;   // width of the ALL history graph (cells)
     int graph_h_;   // height of the ALL graph (rows); 0 = skip it
+    bool heat_;     // narrow mode: cores as a one-row heat strip, not meters
 
 public:
     explicit CpuPanel(const CpuInfo& c, int cols = 2, int graph_w = 46, int graph_h = 4,
-                      const MemInfo* mem = nullptr)
+                      const MemInfo* mem = nullptr, bool heat = false)
         : cpu_(c), mem_(mem), cols_(std::max(2, cols)),
-          graph_w_(std::max(8, graph_w)), graph_h_(std::max(0, graph_h)) {}
+          graph_w_(std::max(8, graph_w)), graph_h_(std::max(0, graph_h)), heat_(heat) {}
 
     operator maya::Element() const { return build(); }
 
@@ -79,10 +80,33 @@ public:
             ) | gap(1)).build());
         }
 
-        // ── Per-core grid: cols_ equal columns, one line each. A clean
-        // number + right-aligned % + a meter that fills the column. No spark
-        // fragments, no dark groove blocks dominating idle cores. ──
+        // ── Per-core view ──
         const int n = static_cast<int>(cpu_.cores.size());
+        if (heat_) {
+            // Narrow mode: one heat-strip row (maya Heatmap idiom) — each core
+            // is a 2-cell block colored by its load. Denser than meters and
+            // reads as a single glance-able texture.
+            std::string content;
+            std::vector<StyledRun> runs;
+            for (int i = 0; i < n; ++i) {
+                const double f = cpu_.cores[static_cast<std::size_t>(i)].usage.v;
+                // Idle cores show a dim groove block so the strip stays a
+                // continuous rail; active ones glow through the gradient.
+                Color cc = f < 0.03 ? pal::track : load_color(f);
+                std::size_t off = content.size();
+                content += "██";
+                runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
+                if (i + 1 < n) content += ' ';
+            }
+            rows.push_back((h(
+                text("cores") | nowrap | fgc(pal::cpu_ac) | w_<6>,
+                Element{TextElement{.content = std::move(content), .style = {},
+                                    .wrap = TextWrap::NoWrap, .runs = std::move(runs)}}
+            ) | gap(1)).build());
+        } else {
+        // Meter grid: cols_ equal columns, one line each. A clean number +
+        // right-aligned % + a meter that fills the column. No spark fragments,
+        // no dark groove blocks dominating idle cores.
         const int per_col = (n + cols_ - 1) / cols_;
         auto cell = [&](int i) -> Element {
             const CpuCore& c = cpu_.cores[static_cast<std::size_t>(i)];
@@ -103,6 +127,7 @@ public:
                 else       line.push_back(Element{blank()} | grow(1));
             }
             rows.push_back((h(line) | gap(3)).build());
+        }
         }
 
         // Temp chip on the border.

@@ -17,8 +17,16 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     const CpuInfo& c = s.cpu;
     std::vector<Element> b;
 
-    // ── hero graph ─────────────────────────────────────────────────────────
-    b.push_back(section("LOAD OVER TIME", pal::cpu_ac));
+    // ── hero graph ─────────────────────────────────────────────────────────────────
+    // Gauge idiom: the live total rides the section rule as a big bold
+    // number with its own load hue — the one figure the pane is about.
+    {
+        std::vector<Element> hdr;
+        hdr.push_back(Element{section("LOAD OVER TIME", pal::cpu_ac)} | grow(1));
+        hdr.push_back((text(" " + fmt::pct(c.total.v) + " ") | nowrap | Bold
+                       | fgc(pal::bg) | bgc(load_color(c.total.v))).build());
+        b.push_back((h(std::move(hdr)) | gap(1)).build());
+    }
     {
         const int gh = cx.graph_h;
         std::vector<Element> axis;

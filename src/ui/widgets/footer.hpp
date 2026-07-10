@@ -39,6 +39,11 @@ public:
                 text(std::string("·") + d) | nowrap | fgc(pal::dim)
             )).build();
         };
+        // StatusBar idiom: a thin rail separator between logical hint groups
+        // so the strip reads as segments, not one long word soup.
+        auto sep = []() -> Element {
+            return (text(" │") | nowrap | fgc(pal::faint)).build();
+        };
 
         std::vector<Element> parts;
 
@@ -51,12 +56,16 @@ public:
             parts.push_back(hint("enter", "apply"));
             parts.push_back(hint("esc", "clear"));
         } else {
+            // Groups: app │ navigate │ act on process │ view
             parts.push_back(hint("q", "quit"));
+            parts.push_back(sep());
             parts.push_back(hint("↑↓", "select"));
             parts.push_back(hint("/", "filter"));
+            parts.push_back(sep());
             parts.push_back(hint("x", "end"));
             parts.push_back(hint("K", "kill"));
             parts.push_back(hint("s", "sort"));
+            parts.push_back(sep());
             parts.push_back(hint("1-6", "detail"));
             parts.push_back(hint("space", "pause"));
             parts.push_back(hint("?", "help"));

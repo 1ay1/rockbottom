@@ -110,7 +110,8 @@ struct App {
         L.narrow = m.width < 96;
         const int ncores = static_cast<int>(s.cpu.cores.size());
         L.cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;
-        const int cores_rows = (ncores + L.cpu_cols - 1) / L.cpu_cols;
+        // Narrow mode packs the cores into a single heat-strip row.
+        const int cores_rows = L.narrow ? 1 : (ncores + L.cpu_cols - 1) / L.cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
         const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
         const int disk_mounts = static_cast<int>(s.disks.size());
@@ -169,20 +170,21 @@ struct App {
     // column span so a click resolves to the right action. Only the normal-mode
     // strip is clickable (filter/pending modes are keyboard-driven).
     // Layout mirror of Footer::build(): outer padding adds 1 leading column;
-    // each hint is " "+k + "·"+d; hints are joined with gap(1).
+    // each hint is " "+k + "·"+d; a " │" separator (2 cols) follows some
+    // groups; everything is joined with gap(1).
     static std::optional<FooterAct> footer_hit(const Model& m, int mx) {
         if (m.filtering || m.pending) return std::nullopt;
-        struct H { const char* k; const char* d; FooterAct a; };
+        struct H { const char* k; const char* d; FooterAct a; bool sep_after; };
         static const H hints[] = {
-            {"q", "quit",   FooterAct::Quit},
-            {"\u2191\u2193", "select", FooterAct::End /*label only, no action*/},
-            {"/", "filter", FooterAct::Filter},
-            {"x", "end",    FooterAct::End},
-            {"K", "kill",   FooterAct::Kill},
-            {"s", "sort",   FooterAct::Sort},
-            {"1-6", "detail", FooterAct::End /*label only, no action*/},
-            {"space", "pause", FooterAct::Pause},
-            {"?", "help",   FooterAct::Help},
+            {"q", "quit",   FooterAct::Quit,  true},
+            {"\u2191\u2193", "select", FooterAct::End /*label only, no action*/, false},
+            {"/", "filter", FooterAct::Filter, true},
+            {"x", "end",    FooterAct::End,   false},
+            {"K", "kill",   FooterAct::Kill,  false},
+            {"s", "sort",   FooterAct::Sort,  true},
+            {"1-6", "detail", FooterAct::End /*label only, no action*/, false},
+            {"space", "pause", FooterAct::Pause, false},
+            {"?", "help",   FooterAct::Help,  false},
         };
         int col = 1;   // outer left padding
         for (std::size_t i = 0; i < std::size(hints); ++i) {
@@ -196,6 +198,7 @@ struct App {
                 return hints[i].a;
             }
             col += w + 1;   // + gap(1)
+            if (hints[i].sep_after) col += 2 + 1;   // " │" + gap(1)
         }
         return std::nullopt;
     }
@@ -672,7 +675,8 @@ struct App {
         // Top band: CPU panel (graph 4 + blank + cores) vs MEM+NET+DISK stack.
         const int ncores = static_cast<int>(s.cpu.cores.size());
         const int cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;   // stay ~8 rows tall
-        const int cores_rows = (ncores + cpu_cols - 1) / cpu_cols;
+        // Narrow mode packs the cores into a single heat-strip row.
+        const int cores_rows = narrow ? 1 : (ncores + cpu_cols - 1) / cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
         const int net_h  = 2 + std::max(1, static_cast<int>(s.nets.size()));
         const int disk_mounts = static_cast<int>(s.disks.size());
@@ -725,7 +729,8 @@ struct App {
         const int cpu_inner = (narrow ? inner : left_w) - 4;
         const int graph_w = std::max(8, cpu_inner - 4);   // minus y-axis (3) + gap (1)
         Element top = narrow
-            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}, MemPanel{s.mem}, NetPanel{s.nets},
+            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true},
+                 MemPanel{s.mem}, NetPanel{s.nets},
                  DiskPanel{s.disks, s.disk_io, false})).build()
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}} | width(left_w),

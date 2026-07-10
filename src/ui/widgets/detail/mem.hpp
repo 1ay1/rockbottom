@@ -17,8 +17,14 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     const MemInfo& m = s.mem;
     std::vector<Element> b;
 
-    // ── trend graph ──────────────────────────────────────────────────────────
-    b.push_back(section("USAGE TREND", pal::mem_ac));
+    // ── trend graph — with the live % riding the rule as a gauge pill ──
+    {
+        std::vector<Element> hdr;
+        hdr.push_back(Element{section("USAGE TREND", pal::mem_ac)} | grow(1));
+        hdr.push_back((text(" " + fmt::pct(m.usage().v) + " ") | nowrap | Bold
+                       | fgc(pal::bg) | bgc(load_color(m.usage().v))).build());
+        b.push_back((h(std::move(hdr)) | gap(1)).build());
+    }
     {
         const int gh = std::max(4, cx.graph_h - 1);
         std::vector<Element> axis;
