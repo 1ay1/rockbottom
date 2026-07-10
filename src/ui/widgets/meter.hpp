@@ -31,6 +31,7 @@ class Meter {
     double value_ = 0;                       // 0..1
     int    width_ = 16;
     std::optional<maya::Color> color_;       // nullopt → load gradient
+    std::optional<maya::Color> bg_;          // ride a row background strip
     maya::Color track_ = pal::track;
     bool groove_ = true;                     // paint the empty remainder slab
 
@@ -42,6 +43,10 @@ public:
     Meter& track(maya::Color c)      { track_ = c; return *this; }
     Meter& fill()                    { width_ = 0; return *this; }
     Meter& groove(bool on)           { groove_ = on; return *this; }   // off = no bg slab
+    // Explicit cell background for EVERY cell the meter writes. Needed when
+    // the meter sits on a bg strip (selected row): the canvas replaces cells
+    // wholesale, so a fg-only run would punch default-bg holes in the strip.
+    Meter& bg(maya::Color c)         { bg_ = c; return *this; }
 
     operator maya::Element() const { return build(); }
 
@@ -84,7 +89,9 @@ public:
             if (i == tip) c = mix(c, pal::white, 0.35);
             std::size_t off = content.size();
             content += kFull;
-            runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
+            auto st = maya::Style{}.with_fg(c);
+            if (bg_) st = st.with_bg(*bg_);
+            runs.push_back({off, content.size() - off, st});
         }
 
         // Partial cell: eighth-block fill over the groove color, so the cell's
@@ -98,6 +105,7 @@ public:
             content += kEighths[frac8];
             auto st = maya::Style{}.with_fg(c);
             if (groove_) st = st.with_bg(track_);
+            else if (bg_) st = st.with_bg(*bg_);
             runs.push_back({off, content.size() - off, st});
             ++used;
         }
@@ -110,6 +118,8 @@ public:
             for (int i = used; i < width_; ++i) content += ' ';
             if (groove_)
                 runs.push_back({off, content.size() - off, maya::Style{}.with_bg(track_)});
+            else if (bg_)
+                runs.push_back({off, content.size() - off, maya::Style{}.with_bg(*bg_)});
         }
 
         return maya::Element{maya::TextElement{
