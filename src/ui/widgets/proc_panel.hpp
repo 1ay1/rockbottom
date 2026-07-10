@@ -189,10 +189,21 @@ private:
         const bool show_memp = w >= 62;
         const bool show_mem  = w >= 54;
         const bool show_io   = w >= 84;
+        // The header is a quiet RAIL, not a row of shouting labels: no
+        // underline wall, a subtle full-width band (bgc on the h-container;
+        // maya's ambient-bg inheritance carries it under every label), and a
+        // three-tier ink hierarchy — the ACTIVE sort column is the only loud
+        // thing (accent + bold + ▾), sortable columns sit in mid ink (they
+        // read as clickable), non-sortable ones recede to dim.
         auto hdr = [&](const char* name, SortKey self) {
-            std::string s = view_.sort == self ? std::string(name) + "▾" : std::string(name);
-            Color c = view_.sort == self ? pal::proc_ac : pal::dim;
-            return text(s) | nowrap | Bold | Underline | fgc(c);
+            const bool on = view_.sort == self;
+            std::string s = on ? std::string(name) + " ▾" : std::string(name);
+            Style st = Style{}.with_fg(on ? pal::proc_ac : pal::label);
+            if (on) st = st.with_bold();
+            return text(s, st) | nowrap;
+        };
+        auto plain = [&](const char* name) {
+            return text(name) | nowrap | fgc(pal::dim);
         };
         // A numeric header sits RIGHT-aligned over the number it labels, so it
         // lines up with the right-aligned values in the rows below (the meter
@@ -204,22 +215,21 @@ private:
             ) | gap(1)).build();
         };
         auto plain_num = [&](const char* name, int num_w) {
-            return ((text(name) | nowrap | Bold | Underline | fgc(pal::dim)) | width(num_w)
-                    | justify(Justify::End)).build();
+            return (plain(name) | width(num_w) | justify(Justify::End)).build();
         };
         std::vector<Element> cols;
-        cols.push_back(((text("  PID") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<8>).build());
-        cols.push_back(((text("USER") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<8>).build());
+        cols.push_back((hdr("  PID", SortKey::Pid) | w_<8>).build());
+        cols.push_back((plain("USER") | w_<8>).build());
         cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
         if (show_memp) cols.push_back(plain_num("MEM%", 5));
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
-        cols.push_back(((text("S") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<2> | justify(Justify::Center)).build());
-        if (show_thr) cols.push_back(((text("THR") | nowrap | Bold | Underline | fgc(pal::dim)) | w_<4> | justify(Justify::End)).build());
+        cols.push_back((plain("S") | w_<2> | justify(Justify::Center)).build());
+        if (show_thr) cols.push_back((plain("THR") | w_<4> | justify(Justify::End)).build());
         if (rgutter > 0) cols.push_back((Element{blank()} | width(rgutter)).build());
-        return (h(std::move(cols)) | gap(1)).build();
+        return (h(std::move(cols)) | gap(1) | bgc(pal::track)).build();
     }
 
     [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit,
