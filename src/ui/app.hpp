@@ -46,6 +46,7 @@ struct App {
         bool     paused = false;
         bool     show_help = false;
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
+        int      detail_scroll = 0;              // scroll offset within a pane
         int      width = 100, height = 40;
         int      ticks = 0;
 
@@ -271,12 +272,19 @@ struct App {
             my >= L.proc_body_y && my < L.proc_body_y + L.body_rows;
 
         // ── Scroll wheel ──
-        // Over the process table it moves the selection; anywhere else it still
-        // scrolls the list so the wheel is never a dead input.
+        // In a scrollable detail pane the wheel moves the pane window; over the
+        // process table it moves the selection; anywhere else it still scrolls
+        // the list so the wheel is never a dead input.
         if (me.button == MouseButton::ScrollDown) {
+            if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
+                m.detail_scroll += 3; clamp_detail_scroll(m); return {std::move(m), C{}};
+            }
             m.sel += 3; clamp_sel(m); return {std::move(m), C{}};
         }
         if (me.button == MouseButton::ScrollUp) {
+            if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
+                m.detail_scroll -= 3; clamp_detail_scroll(m); return {std::move(m), C{}};
+            }
             m.sel -= 3; clamp_sel(m); return {std::move(m), C{}};
         }
 
@@ -445,18 +453,28 @@ struct App {
         if (m.detail != ui::Detail::None) {
             if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q') ||
                 key(ev, maya::SpecialKey::Enter)) {
-                m.detail = ui::Detail::None; return {std::move(m), C{}};
+                m.detail = ui::Detail::None; m.detail_scroll = 0; return {std::move(m), C{}};
             }
-            if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  return {std::move(m), C{}}; }
-            if (key(ev, '2')) { m.detail = ui::Detail::Mem;  return {std::move(m), C{}}; }
-            if (key(ev, '3')) { m.detail = ui::Detail::Net;  return {std::move(m), C{}}; }
-            if (key(ev, '4')) { m.detail = ui::Detail::Disk; return {std::move(m), C{}}; }
-            if (key(ev, '5')) { m.detail = ui::Detail::Proc; return {std::move(m), C{}}; }
+            if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '4')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '5')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (m.detail == ui::Detail::Proc) {
+                // In the process pane ↑↓ walk the selection (and the app keeps
+                // it visible); other keys still work.
                 if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); return {std::move(m), C{}}; }
                 if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
+            } else {
+                // Every other pane is scrollable with the usual keys.
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { m.detail_scroll += 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { m.detail_scroll -= 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::PageUp))  { m.detail_scroll -= 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.detail_scroll = 1 << 20; clamp_detail_scroll(m); return {std::move(m), C{}}; }
             }
             return {std::move(m), C{}};
         }
@@ -472,11 +490,11 @@ struct App {
 
         // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
         // the selected process's detail.
-        if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  return {std::move(m), C{}}; }
-        if (key(ev, '2')) { m.detail = ui::Detail::Mem;  return {std::move(m), C{}}; }
-        if (key(ev, '3')) { m.detail = ui::Detail::Net;  return {std::move(m), C{}}; }
-        if (key(ev, '4')) { m.detail = ui::Detail::Disk; return {std::move(m), C{}}; }
-        if (key(ev, '5') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; return {std::move(m), C{}}; }
+        if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '4')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '5') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
 
         if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m)); }
         if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
@@ -516,6 +534,20 @@ struct App {
     static void clamp_sel(Model& m) {
         int n = static_cast<int>(filtered(m).size());
         m.sel = std::clamp(m.sel, 0, std::max(0, n - 1));
+    }
+
+    // Clamp the detail-pane scroll offset to [0, content - viewport]. Builds a
+    // throwaway DetailPane to ask it how tall its body is at the current size.
+    static void clamp_detail_scroll(Model& m) {
+        const ProcInfo* p = nullptr;
+        if (m.detail == ui::Detail::Proc) {
+            auto view = filtered(m);
+            if (!view.empty() && m.sel < static_cast<int>(view.size()))
+                p = view[static_cast<std::size_t>(m.sel)];
+        }
+        ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, 0};
+        int max_scroll = std::max(0, pane.content_rows() - pane.viewport_rows());
+        m.detail_scroll = std::clamp(m.detail_scroll, 0, max_scroll);
     }
 
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
@@ -568,7 +600,7 @@ struct App {
                 if (!view.empty() && m.sel < static_cast<int>(view.size()))
                     p = view[static_cast<std::size_t>(m.sel)];
             }
-            return DetailPane{m.snap, m.detail, p};
+            return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
         }
 
         const Snapshot& s = m.snap;

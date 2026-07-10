@@ -68,30 +68,43 @@ below exists for the two days a year you feel brave.
 
 ## Press a number, get the whole story (the detail panes)
 
-Every panel has a **full-screen drill-down** that htop and btop simply do not
-have. Hit a number — or just *click the panel* — and bottom throws the doors open:
+Every panel has a **full-screen drill-down** that carries *more detail than htop,
+btop, or anything else on the market* — and then reads it for you. Hit a number —
+or just *click the panel* — and bottom throws the doors open. Every pane has a
+system strip up top (host / kernel / uptime / process census) and ends in a
+plain-language verdict, so you never leave staring at digits wondering *so what?*
 
 - **`1` CPU** — a big load-over-time mountain with a real y-axis, live total +
-  iowait bars, the 1/5/15 load averages, package temp, and **every core** as its
-  own labelled meter with its current clock speed. htop shows you bars. This
-  shows you the *shape* of what your CPU has been doing.
-- **`2` MEMORY** — the usage trend graph (spot a leak before it OOMs you), a
-  proper physical breakdown (used / cache / buffers / available), the swap story
-  with a plain-English verdict (“swap is parked; nothing to worry about” vs.
-  “▲ actively thrashing — the machine wants more RAM”), and the kernel's own PSI
-  memory-pressure numbers.
-- **`3` NETWORK** — per-interface rx/tx sparklines, live rates, lifetime totals,
-  and up/down state. Watch the bytes fly.
-- **`4` DISK** — system-wide read/write sparklines, I/O pressure, and every
-  filesystem as a fill bar with used/size and fstype. “Am I out of space and
-  who's thrashing the platter” in one screen.
+  iowait bars, the 1/5/15 load averages **interpreted against your core count**
+  (“oversubscribed — tasks are waiting for a free core”), package temp, a
+  **distribution strip** (busiest / quietest / median / average / spread / active
+  cores — it'll even call out a single-threaded hog pinning one core), and **every
+  core** as its own labelled meter with its live clock speed.
+- **`2` MEMORY** — the usage trend graph (spot a leak before it OOMs you), a real
+  physical breakdown (used / cache / buffers / available) with the *available*
+  verdict that actually matters, the full swap story with a thrash detector, the
+  kernel's PSI memory-pressure numbers, **and the top memory-hungry processes
+  right in the pane** so you don't go hunting.
+- **`3` NETWORK** — an all-interfaces aggregate line (total down/up, lifetime
+  bytes, links up), then **every interface** with live rx/tx sparklines, lifetime
+  totals, a burst detector, and up/down state.
+- **`4` DISK** — system-wide read/write sparklines, I/O pressure with a
+  bottleneck verdict, **every filesystem** with its backing device, free space,
+  used/size, fstype and a fullness meter, the fullest-mount callout, and the
+  **processes actually driving disk traffic** right now.
 - **`5` / `Enter` PROCESS** — drill into the selected process: full command line,
-  cpu + memory bars, disk read/write, thread count, a *plain-language* run-state
-  (“◆ uninterruptible — blocked on I/O”, not a cryptic `D`), owner, and its
-  listening ports. `x`/`K` still end it from right here.
+  cpu + memory bars, **its rank against every other process** (so you instantly
+  know if it's *the* hog: “#1 CPU consumer on the machine right now”), disk
+  read/write, thread count, a *plain-language* run-state (“◆ uninterruptible —
+  wedged on I/O, can't even be killed”, not a cryptic `D`), owner, and its
+  listening ports. `x`/`K` still end it from right here; `↑↓` walks the list.
 
-`Esc` (or a click) closes the pane; the number keys switch between them without
-going back. It's the “okay, tell me *everything*” button, and it's gorgeous.
+Every pane is **responsive** (it reflows for your terminal — more core columns on
+a wide screen, tighter layout on a small one) and **scrollable** (`↑↓` / `PgUp` /
+`PgDn` / `g` / `G` / the wheel, with a live scrollbar), so no matter how dense the
+data or how small the window, nothing ever clips off the edge. `Esc` (or a click)
+closes; the number keys switch panes without going back. It's the “okay, tell me
+*everything*” button — and it's gorgeous.
 
 ## Everything else (for your brave days)
 
@@ -201,6 +214,7 @@ There. We fixed it. You're welcome. We're not mad.
 | `y` / `n` | yes commit the crime / no I panicked nevermind |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
 | `1`–`5` / `Enter` | open a detail pane (cpu · mem · net · disk · process) |
+| `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it) |
 | `?` / `h` | help, for when all of this immediately leaves your brain |
 | `q` / `Esc` | leave, go outside, touch grass |
