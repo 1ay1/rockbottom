@@ -58,7 +58,6 @@ public:
                 v(std::move(axis)) | w_<3>,
                 Graph{cpu_.total_history.data(), cpu_.total_hist_len}.cells(graph_w_).rows(graph_h_)
             ) | gap(1) | height(graph_h_)).build());
-            rows.push_back(blank());
         } else {
             // No room for the mountain — keep the live ALL meter as one row.
             rows.push_back((h(
@@ -66,7 +65,6 @@ public:
                 text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>,
                 Element{Meter{tf}.fill()} | grow(1)
             ) | gap(1)).build());
-            rows.push_back(blank());
         }
 
         // ── Per-core grid: cols_ equal columns, one line each. A clean

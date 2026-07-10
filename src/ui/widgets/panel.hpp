@@ -26,7 +26,7 @@ class Panel {
     std::string glyph_, title_, chip_;
     maya::Color accent_;
     float grow_ = 0;
-    double tint_ = 0.45;   // how much accent bleeds into the border line
+    double tint_ = 0.25;   // how much accent bleeds into the border line
 
 public:
     Panel(std::string glyph, std::string title, maya::Color accent)
