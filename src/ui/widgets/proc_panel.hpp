@@ -243,10 +243,10 @@ private:
             if (show_port)
                 cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<9> | justify(Justify::End)).build());
             cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
-            cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6>).build());
+            cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
             cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<8> | justify(Justify::End)).build());
             if (show_memp)
-                cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
+                cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5> | justify(Justify::End)).build());
             if (show_io)
                 cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<8> | justify(Justify::End)).build());
             cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
