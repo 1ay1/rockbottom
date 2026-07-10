@@ -366,6 +366,11 @@ private:
         }();
 
         (void)alt;
+        // Selected row rides a full-width background strip (footer idiom:
+        // bgc on the h-container paints the whole band; text cells without
+        // an explicit bg show through). Combined with the lifted ink the
+        // cursor is unmissable even in peripheral vision.
+        if (selected) return (std::move(row) | bgc(pal::sel_bg)).build();
         return row.build();
     }
 };
