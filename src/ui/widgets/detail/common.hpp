@@ -97,10 +97,30 @@ inline Element bar(const std::string& label, double frac,
     return (h(std::move(row)) | gap(2)).build();
 }
 
-// A section heading in the domain accent color.
+// A section heading in the domain accent color: "── TITLE ─────…" — a
+// labelled rule (maya Divider idiom) that structures a dense pane far better
+// than a bare bold word floating in space.
 inline Element section(const char* title, maya::Color ac) {
     using namespace maya; using namespace maya::dsl;
-    return (text(title) | nowrap | Bold | fgc(ac)).build();
+    std::string t = title;
+    return Element{ComponentElement{
+        .render = [t, ac](int w, int) -> Element {
+            std::string content = "── ";
+            std::vector<StyledRun> runs;
+            runs.push_back({0, content.size(), Style{}.with_fg(mix(pal::border, ac, 0.4))});
+            std::size_t off = content.size();
+            content += t;
+            runs.push_back({off, t.size(), Style{}.with_bold().with_fg(ac)});
+            off = content.size();
+            std::string tail = " ";
+            const int used = 3 + static_cast<int>(t.size()) + 1;
+            for (int i = used; i < w; ++i) tail += "─";
+            content += tail;
+            runs.push_back({off, tail.size(), Style{}.with_fg(mix(pal::border, ac, 0.4))});
+            return Element{TextElement{.content = std::move(content), .style = {},
+                                       .wrap = TextWrap::NoWrap, .runs = std::move(runs)}};
+        },
+    }};
 }
 
 // A plain-language verdict line — bottom's signature "read it for you" touch.

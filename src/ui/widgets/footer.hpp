@@ -71,7 +71,11 @@ public:
         } else if (paused_) {
             status = (text(" ⏸ paused ") | nowrap | Bold | fgc(pal::bg) | bgc(pal::warn)).build();
         } else {
-            status = (h(text("◉ ") | nowrap | fgc(pal::good),
+            // Heartbeat: a braille spinner that advances one frame per tick
+            // (sysmon-example idiom) — proof of life, not just a static dot.
+            static constexpr const char* kSpin[] =
+                {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+            status = (h(text(std::string(kSpin[ticks_ % 10]) + " ") | nowrap | fgc(pal::good),
                         text("live " + std::to_string(ticks_)) | nowrap | fgc(pal::dim))).build();
         }
 

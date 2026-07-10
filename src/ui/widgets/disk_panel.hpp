@@ -95,13 +95,30 @@ public:
                     ? "…" + d.mount.substr(d.mount.size() - 11) : d.mount;
                 std::string cap = humanize_bytes(d.used) + " / " + humanize_bytes(d.total);
                 std::string fs = d.fstype;
+                // fstype as a bracketed badge (maya Badge idiom): dim caps,
+                // accent label — a quiet tag instead of loose grey text.
+                // NOTE: capture by VALUE — this lambda is copied into a
+                // ComponentElement render fn that runs after locals die.
+                auto fs_badge = [fs]() -> Element {
+                    std::string content = "[";
+                    std::vector<StyledRun> runs;
+                    runs.push_back({0, 1, Style{}.with_fg(pal::faint)});
+                    std::size_t off = content.size();
+                    content += fs;
+                    runs.push_back({off, fs.size(), Style{}.with_fg(mix(pal::disk_ac, pal::dim, 0.4))});
+                    off = content.size();
+                    content += "]";
+                    runs.push_back({off, 1, Style{}.with_fg(pal::faint)});
+                    return Element{TextElement{.content = std::move(content), .style = {},
+                                               .wrap = TextWrap::NoWrap, .runs = std::move(runs)}};
+                };
                 if (two_up_) {
                     return (h(
                         text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>,
                         text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>,
                         Meter{f}.width(10),
                         text(cap) | nowrap | fgc(pal::text) | w_<12>,
-                        text(fs) | nowrap | fgc(pal::dim)
+                        fs_badge()
                     ) | gap(1)).build();
                 }
                 // One mount per row: the meter fills, capacity + fstype drop
@@ -122,7 +139,7 @@ public:
                         if (show_cap)
                             cols.push_back((text(cap) | nowrap | fgc(pal::text) | w_<12>).build());
                         if (show_fs)
-                            cols.push_back((text(fs) | nowrap | fgc(pal::dim)).build());
+                            cols.push_back(fs_badge());
                         return (h(std::move(cols)) | gap(1)).build();
                     },
                 }};
