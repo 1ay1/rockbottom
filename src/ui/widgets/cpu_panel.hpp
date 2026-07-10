@@ -65,35 +65,28 @@ public:
             rows.push_back(blank());
         }
 
-        // ── Per-core grid: cols_ columns, one line each. Every core gets a
-        // number, a right-aligned %, a compact meter and (when roomy) a
-        // value-colored spark — no floating fragments. ──
+        // ── Per-core grid: cols_ equal columns, one line each. A clean
+        // number + right-aligned % + a meter that fills the column. No spark
+        // fragments, no dark groove blocks dominating idle cores. ──
         const int n = static_cast<int>(cpu_.cores.size());
         const int per_col = (n + cols_ - 1) / cols_;
-        const bool compact = cols_ > 2;
         auto cell = [&](int i) -> Element {
             const CpuCore& c = cpu_.cores[static_cast<std::size_t>(i)];
             const double f = c.usage.v;
             char id[8];
             std::snprintf(id, sizeof id, "%2d", i);
-            if (compact)
-                return (h(
-                    text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
-                    text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
-                    Meter{f}.width(8)
-                ) | gap(1)).build();
             return (h(
                 text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
-                Meter{f}.width(10),
-                Spark{c.history.data(), c.hist_len}.cells(8)
+                Element{Meter{f}.fill().track(pal::bg_panel)} | grow(1)
             ) | gap(1)).build();
         };
         for (int r = 0; r < per_col; ++r) {
             std::vector<Element> line;
             for (int col = 0; col < cols_; ++col) {
                 int i = col * per_col + r;
-                if (i < n) line.push_back(cell(i));
+                if (i < n) line.push_back(Element{cell(i)} | grow(1));
+                else       line.push_back(Element{blank()} | grow(1));
             }
             rows.push_back((h(line) | gap(3)).build());
         }

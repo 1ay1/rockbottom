@@ -96,7 +96,6 @@ public:
         }
 
         const Color lc = color_ ? *color_ : load_color(latest);
-        const Color fc = mix(pal::track, lc, 0.55);   // dim area under the line
 
         std::vector<Element> out;
         out.reserve(static_cast<std::size_t>(rows_));
@@ -107,25 +106,22 @@ public:
             content.reserve(static_cast<std::size_t>(cells_) * 3);
 
             for (int c = 0; c < cells_; ++c) {
-                uint8_t line_bits = 0, fill_bits = 0;
+                uint8_t line_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
                     int ly = line[static_cast<std::size_t>(gx)];
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
-                        if (gy == ly)      line_bits |= kDot[dr][dc];
-                        else if (gy > ly)  fill_bits |= kDot[dr][dc];
+                        if (gy == ly) line_bits |= kDot[dr][dc];
                     }
                 }
-                // The trace glyph wins its cell; the pure-fill glyph is dim.
                 if (line_bits) {
                     std::size_t off = content.size();
-                    utf8(U'\u2800' + (line_bits | fill_bits), content);
-                    runs.push_back({off, content.size() - off, Style{}.with_fg(lc)});
-                } else if (fill_bits) {
-                    std::size_t off = content.size();
-                    utf8(U'\u2800' + fill_bits, content);
-                    runs.push_back({off, content.size() - off, Style{}.with_fg(fc)});
+                    utf8(U'\u2800' + line_bits, content);
+                    // The current column glows by the LATEST value; the rest of
+                    // the trace is the calmer historical hue at that point.
+                    Color cc = color_ ? *color_ : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
+                    runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {
                     content += ' ';
                 }
@@ -139,6 +135,7 @@ public:
             }});
         }
 
+        (void)lc;
         return maya::dsl::v(out).build();
     }
 };
