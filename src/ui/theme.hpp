@@ -16,6 +16,7 @@ namespace pal {
 inline constexpr auto bg       = maya::Color::hex(0x11111b);
 inline constexpr auto bg_panel = maya::Color::hex(0x181825);
 inline constexpr auto border   = maya::Color::hex(0x313244);
+inline constexpr auto track    = maya::Color::hex(0x26263a);   // meter groove
 inline constexpr auto label    = maya::Color::hex(0x9399b2);
 inline constexpr auto dim      = maya::Color::hex(0x6c7086);
 inline constexpr auto faint    = maya::Color::hex(0x45475a);
@@ -76,6 +77,16 @@ inline constexpr auto proc_ac = hot;
         case Health::Critical: return "✖";
     }
     return "●";
+}
+
+[[nodiscard]] inline const char* health_word(Health h) {
+    switch (h) {
+        case Health::Calm:     return "CALM";
+        case Health::Busy:     return "BUSY";
+        case Health::Stressed: return "STRESSED";
+        case Health::Critical: return "CRITICAL";
+    }
+    return "CALM";
 }
 
 }  // namespace bottom::ui

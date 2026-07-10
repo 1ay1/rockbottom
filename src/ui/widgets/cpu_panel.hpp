@@ -38,8 +38,9 @@ public:
         const double tf = cpu_.total.v;
         rows.push_back((h(
             text("ALL") | Bold | fgc(pal::cpu_ac) | w_<4>,
+            text(fmt::pct_pad(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>,
             Meter{tf}.width(16),
-            text(fmt::pct(tf)) | nowrap | Bold | fgc(load_color(tf)) | w_<5>,
+            text(" ") | w_<1>,
             Spark{cpu_.total_history.data(), cpu_.total_hist_len}.cells(28)
         ) | gap(1)).build());
 
@@ -55,13 +56,13 @@ public:
             if (compact)
                 return (h(
                     text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
-                    Meter{f}.width(8),
-                    text(fmt::pct(f)) | nowrap | fgc(load_color(f)) | w_<4>
+                    text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
+                    Meter{f}.width(8)
                 ) | gap(1)).build();
             return (h(
                 text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
+                text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
                 Meter{f}.width(8),
-                text(fmt::pct(f)) | nowrap | fgc(load_color(f)) | w_<4>,
                 Spark{c.history.data(), c.hist_len}.cells(8)
             ) | gap(1)).build();
         };

@@ -8,8 +8,10 @@
 //   Meter{0.72}.width(24)                    → gradient green→…→red fill
 //   Meter{0.31}.width(10).color(pal::teal)   → flat accent fill
 //
-// The fill uses eighth-block partials (▏▎▍▌▋▊▉█) for sub-cell smoothness and
-// a dotted track (·) for the empty remainder.
+// The fill uses eighth-block partials (▏▎▍▌▋▊▉█) for sub-cell smoothness.
+// The empty remainder is a solid dark GROOVE (bg-painted cells), so the bar
+// reads as one object — a pill with a recessed track — instead of the fill
+// drowning in a field of dots.
 
 #pragma once
 
@@ -29,7 +31,7 @@ class Meter {
     double value_ = 0;                       // 0..1
     int    width_ = 16;
     std::optional<maya::Color> color_;       // nullopt → load gradient
-    maya::Color track_ = pal::faint;
+    maya::Color track_ = pal::track;
 
 public:
     constexpr explicit Meter(double value) : value_(std::clamp(value, 0.0, 1.0)) {}
@@ -43,8 +45,7 @@ public:
     [[nodiscard]] maya::Element build() const {
         static constexpr const char* kEighths[] =
             {"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"};
-        static constexpr const char* kFull  = "█";
-        static constexpr const char* kTrack = "·";
+        static constexpr const char* kFull = "█";
 
         const double cells = value_ * width_;
         const int full = static_cast<int>(cells);
@@ -64,21 +65,23 @@ public:
             runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
         }
 
-        // Partial cell.
+        // Partial cell: eighth-block fill over the groove color, so the cell's
+        // unfilled remainder shows the track — a seamless boundary.
         int used = full;
         if (full < width_ && frac8 > 0) {
             maya::Color c = color_ ? *color_ : load_color((full + 0.5) / width_);
             std::size_t off = content.size();
             content += kEighths[frac8];
-            runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
+            runs.push_back({off, content.size() - off,
+                            maya::Style{}.with_fg(c).with_bg(track_)});
             ++used;
         }
 
-        // Track remainder as one dim run.
+        // Groove remainder: one run of bg-painted spaces — a quiet solid slab.
         if (used < width_) {
             std::size_t off = content.size();
-            for (int i = used; i < width_; ++i) content += kTrack;
-            runs.push_back({off, content.size() - off, maya::Style{}.with_fg(track_)});
+            for (int i = used; i < width_; ++i) content += ' ';
+            runs.push_back({off, content.size() - off, maya::Style{}.with_bg(track_)});
         }
 
         return maya::Element{maya::TextElement{

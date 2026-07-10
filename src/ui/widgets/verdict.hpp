@@ -56,6 +56,8 @@ public:
 
         // One TextElement + StyledRuns: flex can never shrink the headline —
         // overflow truncates the tail of the detail instead (TruncateEnd).
+        // Leads with an inverted-color PILL (" ● CALM ") — the single anchor
+        // your eye lands on first, readable from across the room.
         std::string content;
         std::vector<StyledRun> runs;
         auto add = [&](const std::string& txt, Style st) {
@@ -64,7 +66,9 @@ public:
             content += txt;
             runs.push_back({off, txt.size(), st});
         };
-        add(std::string(health_glyph(v.level)) + " ", Style{}.with_bold().with_fg(c));
+        add(std::string(" ") + health_glyph(v.level) + " " + health_word(v.level) + " ",
+            Style{}.with_bold().with_fg(pal::bg).with_bg(c));
+        add("  ", Style{});
         add(v.headline, Style{}.with_bold().with_fg(c));
         add("  ·  ", Style{}.with_fg(pal::faint));
         add(v.detail, Style{}.with_fg(pal::label));

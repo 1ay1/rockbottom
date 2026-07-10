@@ -15,6 +15,14 @@ namespace bottom::ui::fmt {
     return b;
 }
 
+// Right-aligned 4-char percent ("  7%", " 38%", "100%") — numbers form a
+// clean scannable column instead of ragging left.
+[[nodiscard]] inline std::string pct_pad(double frac) {
+    char b[8];
+    std::snprintf(b, sizeof b, "%3d%%", static_cast<int>(std::lround(frac * 100)));
+    return b;
+}
+
 [[nodiscard]] inline std::string fixed1(double v) {
     char b[16];
     std::snprintf(b, sizeof b, "%.1f", v);

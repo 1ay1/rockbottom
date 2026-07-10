@@ -37,7 +37,19 @@ public:
         std::vector<Element> rows;
 
         // ── Row 1: live whole-system I/O rates with peak-normalized history ──
-        {
+        // When the disks are quiet, say so in four dim words instead of two
+        // zero-rows of dead sparkline.
+        const bool io_active = io_.read.per_sec + io_.write.per_sec > 1024 ||
+                               [&]{ for (int i = 0; i < io_.hist_len; ++i)
+                                        if (io_.read_history[static_cast<std::size_t>(i)] +
+                                            io_.write_history[static_cast<std::size_t>(i)] > 1024) return true;
+                                    return false; }();
+        if (!io_active) {
+            rows.push_back((h(
+                text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<13>,
+                text("idle — no disk activity") | nowrap | fgc(pal::dim)
+            ) | gap(1)).build());
+        } else {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
                 peak = std::max({peak,
@@ -69,8 +81,8 @@ public:
                     ? "…" + d.mount.substr(d.mount.size() - 11) : d.mount;
                 return (h(
                     text(mnt) | nowrap | fgc(pal::disk_ac) | w_<13>,
+                    text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>,
                     Meter{f}.width(14),
-                    text(fmt::pct(f)) | nowrap | fgc(load_color(f)) | w_<5>,
                     text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total))
                         | nowrap | fgc(pal::text) | w_<12>,
                     text(d.fstype) | nowrap | fgc(pal::dim) | w_<6>

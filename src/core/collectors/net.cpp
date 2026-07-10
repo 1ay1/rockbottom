@@ -49,9 +49,13 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
     }
 
     // Surface only interfaces that have ever moved bytes, busiest first.
-    for (auto& [k, v] : net_hist_)
-        if (v.rx_total.value || v.tx_total.value)
-            nets.push_back(v);
+    // Loopback earns a row only while it's actually carrying traffic — a
+    // dead-silent lo is noise, not signal.
+    for (auto& [k, v] : net_hist_) {
+        if (!v.rx_total.value && !v.tx_total.value) continue;
+        if (k == "lo" && v.rx.per_sec + v.tx.per_sec < 1.0) continue;
+        nets.push_back(v);
+    }
     std::sort(nets.begin(), nets.end(), [](const NetIface& a, const NetIface& b) {
         return (a.rx.per_sec + a.tx.per_sec) > (b.rx.per_sec + b.tx.per_sec);
     });

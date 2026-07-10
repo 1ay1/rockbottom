@@ -4,6 +4,11 @@
 // column is colored by its own value through the load gradient, so a spike
 // glows orange/red in the history while calm periods stay green/dim.
 //
+// DESIGN RULE: silence is blank. Near-zero history renders as SPACE, not
+// baseline dots — a flat-lined spark should disappear entirely so the eye
+// is drawn only to actual activity. If the whole window is quiet the widget
+// paints nothing but empty cells.
+//
 //   Spark{hist.data(), len}.cells(14)                 → load-gradient columns
 //   Spark{rx.data(), len}.cells(14).color(pal::net_ac) → flat accent columns
 
@@ -38,8 +43,7 @@ public:
 
     [[nodiscard]] maya::Element build() const {
         static constexpr const char* kBars[] =
-            {"⡀", "⣀", "⣄", "⣤", "⣦", "⣶", "⣷", "⣿"};
-        static constexpr const char* kEmpty = "⠄";   // faint baseline dot
+            {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
 
         std::string content;
         std::vector<maya::StyledRun> runs;
@@ -50,18 +54,24 @@ public:
             content += glyph;
             runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
         };
+        auto push_blank = [&] {
+            std::size_t off = content.size();
+            content += ' ';
+            runs.push_back({off, 1, maya::Style{}});
+        };
 
         const int start = len_ > cells_ ? len_ - cells_ : 0;
         const int shown = len_ - start;
 
-        // Left-pad with baseline dots until history fills the window.
-        for (int i = shown; i < cells_; ++i) push(kEmpty, pal::faint);
+        // Left-pad with true blanks until history fills the window.
+        for (int i = shown; i < cells_; ++i) push_blank();
 
         for (int i = start; i < len_; ++i) {
             float v = std::clamp(data_[i], 0.0f, 1.0f);
+            // Silence rule: a near-zero sample is a SPACE. Only activity inks.
+            if (dim_low_ && v < 0.03f) { push_blank(); continue; }
             int idx = std::clamp(static_cast<int>(v * 7.0f + 0.5f), 0, 7);
             maya::Color c = color_ ? *color_ : load_color(v);
-            if (dim_low_ && v < 0.02f) { c = pal::faint; idx = 0; }
             push(kBars[idx], c);
         }
 
