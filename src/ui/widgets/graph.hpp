@@ -2,9 +2,9 @@
 //
 // Renders a history ring on a fixed 0..1 (0-100%) scale using braille dots
 // (U+2800, 2x4 sub-cell resolution) for a crisp continuous trace, backed by
-// a dim depth-faded area fill so the "mountain" reads at a glance while the
-// bright leading line shows the exact shape. The line color follows the load
-// gradient at each column, so a spiking graph glows amber/red at the spike.
+// a checker-dithered, depth-faded area fill — a translucent mountain — and
+// faint dotted gridlines at 25/50/75% in the empty sky above it. The line
+// color follows the load gradient at each column, so a spike glows amber/red.
 //
 //   Graph{hist.data(), len}.cells(46).rows(4)
 //
@@ -84,6 +84,15 @@ public:
         const int gh = rows_ * 4;           // dot rows
         const int start = len_ > cells_ * 2 ? len_ - cells_ * 2 : 0;
 
+        // Gridline dot-rows at 25/50/75% — faint dotted guides that keep an
+        // idle graph composed instead of a black void (dashboard-example
+        // idiom). Drawn only where no data inks the cell.
+        auto is_grid = [&](int gy, int gx) {
+            if (gh < 8) return false;
+            const int q1 = gh / 4, q2 = gh / 2, q3 = 3 * gh / 4;
+            return (gy == q1 || gy == q2 || gy == q3) && (gx % 4 == 0);
+        };
+
         auto sample = [&](int gx) -> double {     // value at dot-column gx
             if (len_ - start <= 0) return 0.0;
             double t = static_cast<double>(gx) / std::max(1, gw - 1);
@@ -142,6 +151,7 @@ public:
                 uint8_t fill_bits = 0;
                 uint8_t over_bits = 0;
                 uint8_t ofill_bits = 0;
+                uint8_t grid_bits = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
                     int ly = line[static_cast<std::size_t>(gx)];
@@ -149,11 +159,16 @@ public:
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
                         if (gy == ly)      line_bits |= kDot[dr][dc];
-                        else if (gy > ly)  fill_bits |= kDot[dr][dc];
+                        // Half-density dither: only every other dot (checker
+                        // parity) inks, so the mountain reads as translucent
+                        // shading instead of a solid dot wall.
+                        else if (gy > ly && ((gx + gy) & 1)) fill_bits |= kDot[dr][dc];
                         if (has_overlay) {
                             if (gy == oy)     over_bits  |= kDot[dr][dc];
-                            else if (gy > oy) ofill_bits |= kDot[dr][dc];
+                            else if (gy > oy && ((gx + gy) & 1)) ofill_bits |= kDot[dr][dc];
                         }
+                        if (gy < ly && (!has_overlay || gy < oy) && is_grid(gy, gx))
+                            grid_bits |= kDot[dr][dc];
                     }
                 }
                 // Combine everything into one braille glyph. A glyph carries
@@ -161,7 +176,7 @@ public:
                 // cell, blend the hues (an idle primary hugging the floor
                 // must never be fully painted over by the overlay); else
                 // whichever crest is present > primary fill > overlay fill.
-                const uint8_t bits = line_bits | fill_bits | over_bits | ofill_bits;
+                const uint8_t bits = line_bits | fill_bits | over_bits | ofill_bits | grid_bits;
                 if (bits) {
                     std::size_t off = content.size();
                     utf8(U'\u2800' + bits, content);
@@ -177,11 +192,13 @@ public:
                         cc = bright;
                     } else if (fill_bits) {
                         // Depth fade: rows further from the top are dimmer.
-                        cc = mix(bright, pal::bg_panel, 0.55 + 0.25 * depth);
-                    } else {
+                        cc = mix(bright, pal::bg_panel, 0.45 + 0.25 * depth);
+                    } else if (ofill_bits) {
                         // Overlay-only fill: even fainter, so the second
                         // mountain reads as a translucent layer behind.
-                        cc = mix(overlay_color_, pal::bg_panel, 0.72 + 0.18 * depth);
+                        cc = mix(overlay_color_, pal::bg_panel, 0.62 + 0.18 * depth);
+                    } else {
+                        cc = pal::track;   // gridline dots
                     }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {
