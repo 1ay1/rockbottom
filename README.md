@@ -29,13 +29,18 @@ The panels underneath are there when you want the detail — not before.
 ## What it shows
 
 - **Verdict banner** — Calm / Busy / Stressed / Critical, with the culprit named.
-- **CPU** — aggregate meter, per-core meters in two columns, braille load
-  sparklines, live frequency, package temperature, load averages.
+- **PSI pressure chips** — the kernel's own stall accounting (`/proc/pressure`):
+  "tasks stalled on I/O 40% of the last 10s" beats guessing from load averages.
+  Neither htop nor btop surfaces this.
+- **CPU** — aggregate meter, per-core meters, value-colored history sparklines,
+  package temperature, load trend arrow.
 - **Memory** — RAM + swap meters, cache / buffers / available breakdown.
-- **Disk** — real mounted block filesystems, busiest first.
+- **Disk** — live system-wide read/write I/O rates + real mounted filesystems
+  (btrfs subvolumes deduped), busiest first.
 - **Network** — per-interface ▼rx / ▲tx rates with peak-normalised sparklines.
-- **Processes** — top by CPU/mem/pid/name, owner, RSS, threads, running-state
-  colouring, with the loudest process flagged.
+- **Processes** — interactive: select, filter, sort, and kill — with the
+  loudest process flagged » and running/disk-sleep state dots.
+- **Battery** — charge chip in the header when hardware exists.
 
 ## Design: type-theoretic core
 
@@ -93,11 +98,15 @@ git submodule update --init --recursive
 
 | Key | Action |
 |-----|--------|
-| `q` / `Esc` | quit |
+| `↑↓` / `j k` | select a process |
+| `/` | filter processes by name or pid (`Esc` clears) |
+| `x` / `Del` | end selected process (SIGTERM, with confirm) |
+| `K` | force-kill selected (SIGKILL, with confirm) |
+| `y` / `n` | confirm / cancel a pending kill |
+| `s` | cycle sort · `c` cpu · `m` mem · `n` name · `P` pid |
 | `p` / `Space` | pause / resume sampling |
-| `s` | cycle sort column |
-| `c` / `m` / `n` / `P` | sort by CPU / memory / name / PID |
-| `?` / `h` | toggle help |
+| `?` / `h` | help overlay |
+| `q` / `Esc` | quit |
 
 ## Platform
 

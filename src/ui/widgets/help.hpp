@@ -30,18 +30,22 @@ public:
             (text("A calmer system monitor — it tells you what's happening.")
                 | fgc(pal::label)).build(),
             blank(),
-            row("q / Esc",   "quit"),
+            row("↑↓ / j k",  "select process"),
+            row("/",         "filter by name or pid (Esc clears)"),
+            row("x / Del",   "end selected process (SIGTERM)"),
+            row("K",         "force-kill selected (SIGKILL)"),
+            row("y / n",     "confirm / cancel a kill"),
+            blank(),
+            row("s",         "cycle sort · c cpu · m mem · n name · P pid"),
             row("p / Space", "pause / resume sampling"),
-            row("s",         "cycle sort column"),
-            row("c",         "sort by CPU"),
-            row("m",         "sort by memory"),
-            row("n",         "sort by name"),
-            row("P",         "sort by PID"),
             row("? / h",     "toggle this help"),
+            row("q / Esc",   "quit"),
             blank(),
             (text("Banner: green calm · blue busy · orange stressed · red critical.")
                 | fgc(pal::dim)).build(),
-            (text("The » row is the process driving the current verdict.")
+            (text("stall chips = kernel PSI: % of time tasks waited on a resource.")
+                | fgc(pal::dim)).build(),
+            (text("» marks the process driving the verdict · ▶ is your selection.")
                 | fgc(pal::dim)).build(),
         };
 

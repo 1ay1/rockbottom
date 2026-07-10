@@ -37,10 +37,24 @@ Verdict Sampler::judge(const Snapshot& s) const {
         return {};
     };
 
-    if (cpu > 90 || mem > 92 || swap > 50 || la_ratio > 2.5) {
+    // PSI first: the kernel's own stall accounting beats derived thresholds.
+    const double io_stall  = s.psi.io.some_avg10;
+    const double mem_stall = s.psi.mem.some_avg10;
+
+    if (io_stall > 40) {
+        v.level = io_stall > 70 ? Health::Critical : Health::Stressed;
+        v.headline = "Things are waiting on disk I/O";
+        char b[64];
+        std::snprintf(b, sizeof b, "tasks stalled on I/O %.0f%% of the last 10s", io_stall);
+        v.detail = b;
+    } else if (mem_stall > 25 || swap > 50 || mem > 92) {
+        v.level = (mem_stall > 60 || mem > 95) ? Health::Critical : Health::Stressed;
+        v.headline = "Memory is critically tight";
+        v.detail = culprit_mem();
+    } else if (cpu > 90 || la_ratio > 2.5) {
         v.level = Health::Critical;
-        if (mem > 92 || swap > 50) { v.headline = "Memory is critically tight"; v.detail = culprit_mem(); }
-        else                       { v.headline = "The CPU is maxed out";       v.detail = culprit_cpu(); }
+        v.headline = "The CPU is maxed out";
+        v.detail = culprit_cpu();
     } else if (cpu > 70 || mem > 80 || la_ratio > 1.5) {
         v.level = Health::Stressed;
         if (cpu > 70)  { v.headline = "Working hard — CPU is heavily loaded"; v.detail = culprit_cpu(); }

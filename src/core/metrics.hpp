@@ -78,6 +78,31 @@ struct Verdict {
     std::string detail;     // supporting context (the culprit, usually)
 };
 
+// PSI pressure-stall info (/proc/pressure/*): the kernel's own answer to
+// "what are tasks waiting on?". avg10 = % of the last 10s stalled.
+struct PsiEntry {
+    double some_avg10 = 0;   // ≥1 task stalled
+    double full_avg10 = 0;   // ALL non-idle tasks stalled (not for cpu)
+    bool   available = false;
+};
+
+struct Psi {
+    PsiEntry cpu, mem, io;
+};
+
+// System-wide block-device I/O rates from /proc/diskstats deltas.
+struct DiskIO {
+    ByteRate read{}, write{};
+    std::array<float, 48> read_history{}, write_history{};
+    int hist_len = 0;
+};
+
+struct Battery {
+    bool present = false;
+    int  percent = 0;
+    bool charging = false;
+};
+
 struct Snapshot {
     std::string           hostname, kernel;
     std::uint64_t         uptime_sec = 0;
@@ -85,8 +110,11 @@ struct Snapshot {
     CpuInfo               cpu;
     MemInfo               mem;
     std::vector<DiskInfo> disks;
+    DiskIO                disk_io;
     std::vector<NetIface> nets;
-    std::vector<ProcInfo> procs;   // sorted by the active key, top N kept
+    std::vector<ProcInfo> procs;   // sorted by the active key (full list)
+    Psi                   psi;
+    Battery               battery;
     Verdict               verdict;
 };
 

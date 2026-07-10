@@ -1,12 +1,21 @@
 // app.hpp — the bottom Program: Elm-style Model/Msg/update/view wiring.
 // All rendering is delegated to the ui::* widgets; all data collection to
 // core::Sampler. This file is just the state machine and layout composition.
+//
+// Interaction model (all keyboard, zero modes to memorize):
+//   ↑/↓ or j/k   move the process selection
+//   /            filter processes by name (Esc clears)
+//   x / Delete   ask to end the selected process (SIGTERM)
+//   K            ask to force-kill (SIGKILL)
+//   y / Enter    confirm pending kill · n / Esc cancels
+//   s c m n P    sorting · space pause · ? help · q quit
 
 #pragma once
 
 #include <maya/maya.hpp>
 
 #include "../core/sampler.hpp"
+#include "state.hpp"
 #include "theme.hpp"
 #include "widgets/header.hpp"
 #include "widgets/verdict.hpp"
@@ -18,7 +27,11 @@
 #include "widgets/footer.hpp"
 #include "widgets/help.hpp"
 
+#include <algorithm>
+#include <csignal>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -33,30 +46,29 @@ struct App {
         bool     show_help = false;
         int      width = 100, height = 40;
         int      ticks = 0;
+
+        // Process interaction state.
+        int         sel = 0;             // index into the *filtered* view
+        std::string filter;              // active name filter ("" = off)
+        bool        filtering = false;   // '/' typing mode
+        std::optional<PendingKill> pending;
+        std::optional<Toast>       toast;
+
         std::shared_ptr<Sampler> sampler = std::make_shared<Sampler>();
     };
 
     struct Tick {};
     struct Resize { int w, h; };
-    struct CycleSort {};
-    struct SortCpu {}; struct SortMem {}; struct SortPid {}; struct SortName {};
-    struct TogglePause {};
-    struct ToggleHelp {};
+    struct Key { maya::KeyEvent ev; };
     struct Quit {};
 
-    using Msg = std::variant<Tick, Resize, CycleSort, SortCpu, SortMem, SortPid,
-                             SortName, TogglePause, ToggleHelp, Quit>;
+    using Msg = std::variant<Tick, Resize, Key, Quit>;
 
-    // ── init / update / subscribe ───────────────────────────────────────────
+    // ── init / update ───────────────────────────────────────────────────────
 
     static std::pair<Model, maya::Cmd<Msg>> init() {
         Model m;
-        m.snap = m.sampler->sample(m.sort, 40);
-        return {std::move(m), maya::Cmd<Msg>{}};
-    }
-
-    static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
-        m.snap = m.sampler->sample(m.sort, 40);
+        m.snap = m.sampler->sample(m.sort, 400);
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
@@ -64,20 +76,125 @@ struct App {
         using C = maya::Cmd<Msg>;
         return std::visit(maya::overload{
             [&](Tick) {
-                if (!m.paused) { ++m.ticks; m.snap = m.sampler->sample(m.sort, 40); }
+                if (!m.paused) { ++m.ticks; m.snap = m.sampler->sample(m.sort, 400); }
+                if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
+                clamp_sel(m);
                 return std::pair{std::move(m), C{}};
             },
-            [&](Resize r)    { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
-            [&](CycleSort)   { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 4); return resample(std::move(m)); },
-            [&](SortCpu)     { m.sort = SortKey::Cpu;  return resample(std::move(m)); },
-            [&](SortMem)     { m.sort = SortKey::Mem;  return resample(std::move(m)); },
-            [&](SortPid)     { m.sort = SortKey::Pid;  return resample(std::move(m)); },
-            [&](SortName)    { m.sort = SortKey::Name; return resample(std::move(m)); },
-            [&](TogglePause) { m.paused = !m.paused; return std::pair{std::move(m), C{}}; },
-            [&](ToggleHelp)  { m.show_help = !m.show_help; return std::pair{std::move(m), C{}}; },
-            [&](Quit)        { return std::pair{std::move(m), C::quit()}; },
+            [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
+            [&](Key k)    { return on_key(std::move(m), k.ev); },
+            [&](Quit)     { return std::pair{std::move(m), C::quit()}; },
         }, msg);
     }
+
+    // ── key handling: one place, mode-aware ─────────────────────────────────
+
+    static std::pair<Model, maya::Cmd<Msg>> on_key(Model m, const maya::KeyEvent& ke) {
+        using C = maya::Cmd<Msg>;
+        maya::Event ev{ke};
+        using maya::key;
+
+        // 1. Kill confirmation intercepts everything.
+        if (m.pending) {
+            if (key(ev, 'y') || key(ev, maya::SpecialKey::Enter)) {
+                std::string err = signal_process(m.pending->pid, m.pending->sig);
+                std::string verb = m.pending->sig == SIGKILL ? "force-killed " : "asked ";
+                std::string tail = m.pending->sig == SIGKILL ? "" : " to exit";
+                m.toast = err.empty()
+                    ? Toast{verb + m.pending->name + " (" + std::to_string(m.pending->pid) + ")" + tail, false}
+                    : Toast{err, true};
+                m.pending.reset();
+                m.snap = m.sampler->sample(m.sort, 400);
+            } else if (key(ev, 'n') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                m.pending.reset();
+            }
+            return {std::move(m), C{}};
+        }
+
+        // 2. Filter typing mode.
+        if (m.filtering) {
+            if (key(ev, maya::SpecialKey::Escape)) { m.filtering = false; m.filter.clear(); }
+            else if (key(ev, maya::SpecialKey::Enter)) { m.filtering = false; }
+            else if (key(ev, maya::SpecialKey::Backspace)) {
+                if (!m.filter.empty()) m.filter.pop_back();
+            } else if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
+                       ck && ck->codepoint >= 0x20 && ck->codepoint < 0x7f) {
+                m.filter += static_cast<char>(ck->codepoint);
+            }
+            m.sel = 0;
+            return {std::move(m), C{}};
+        }
+
+        // 3. Help overlay: any of these dismiss.
+        if (m.show_help) {
+            if (key(ev, '?') || key(ev, 'h') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q'))
+                m.show_help = false;
+            return {std::move(m), C{}};
+        }
+
+        // 4. Normal mode.
+        if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
+            if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+            return {std::move(m), C::quit()};
+        }
+        if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {std::move(m), C{}}; }
+        if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
+        if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+
+        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 4); return resample(std::move(m)); }
+        if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
+        if (key(ev, 'm')) { m.sort = SortKey::Mem;  return resample(std::move(m)); }
+        if (key(ev, 'P')) { m.sort = SortKey::Pid;  return resample(std::move(m)); }
+        if (key(ev, 'n')) { m.sort = SortKey::Name; return resample(std::move(m)); }
+
+        // Selection.
+        if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::PageDown)) { m.sel += 10; clamp_sel(m); return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= 10; clamp_sel(m); return {std::move(m), C{}}; }
+
+        // Kill.
+        if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
+        if (key(ev, 'K'))                                      return arm_kill(std::move(m), SIGKILL);
+
+        return {std::move(m), C{}};
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    static std::vector<const ProcInfo*> filtered(const Model& m) {
+        std::vector<const ProcInfo*> out;
+        for (const auto& p : m.snap.procs) {
+            if (m.filter.empty() ||
+                p.name.find(m.filter) != std::string::npos ||
+                std::to_string(p.pid).find(m.filter) != std::string::npos)
+                out.push_back(&p);
+        }
+        return out;
+    }
+
+    static void clamp_sel(Model& m) {
+        int n = static_cast<int>(filtered(m).size());
+        m.sel = std::clamp(m.sel, 0, std::max(0, n - 1));
+    }
+
+    static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
+        auto view = filtered(m);
+        if (!view.empty() && m.sel < static_cast<int>(view.size())) {
+            const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
+            m.pending = PendingKill{p->pid, p->name, sig};
+        }
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
+        m.snap = m.sampler->sample(m.sort, 400);
+        clamp_sel(m);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // ── subscriptions ───────────────────────────────────────────────────────
 
     static maya::Sub<Msg> subscribe(const Model&) {
         using S = maya::Sub<Msg>;
@@ -88,17 +205,7 @@ struct App {
             return Resize{sz.width.value, sz.height.value};
         }));
         subs.push_back(S::on_key([](const maya::KeyEvent& ke) -> std::optional<Msg> {
-            maya::Event ev{ke};
-            using maya::key;
-            if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) return Quit{};
-            if (key(ev, 'p') || key(ev, ' '))                      return TogglePause{};
-            if (key(ev, '?') || key(ev, 'h'))                      return ToggleHelp{};
-            if (key(ev, 's'))                                      return CycleSort{};
-            if (key(ev, 'c'))                                      return SortCpu{};
-            if (key(ev, 'm'))                                      return SortMem{};
-            if (key(ev, 'P'))                                      return SortPid{};
-            if (key(ev, 'n'))                                      return SortName{};
-            return std::nullopt;
+            return Key{ke};
         }));
         return S::batch(std::move(subs));
     }
@@ -115,20 +222,28 @@ struct App {
         const Snapshot& s = m.snap;
         const bool narrow = m.width < 96;
 
-        // Right column gets the process table sized to the remaining height:
-        // total - header(1) - banner(3) - net panel - footer(1) - borders.
         const int net_rows = static_cast<int>(s.nets.size()) + 2;
         const int proc_rows = std::max(6, m.height - net_rows - 9);
+
+        ProcView pv{
+            .procs     = filtered(m),
+            .sort      = m.sort,
+            .selected  = m.sel,
+            .max_rows  = proc_rows,
+            .filter    = m.filter,
+            .filtering = m.filtering,
+            .pending   = m.pending ? &*m.pending : nullptr,
+        };
 
         Element left = (v(
             CpuPanel{s.cpu},
             MemPanel{s.mem},
-            DiskPanel{s.disks}
+            DiskPanel{s.disks, s.disk_io}
         ) | width(64)).build();
 
         Element right = (v(
             NetPanel{s.nets},
-            ProcPanel{s, m.sort, proc_rows}
+            ProcPanel{s, pv}
         ) | grow(1)).build();
 
         Element body = narrow
@@ -139,7 +254,8 @@ struct App {
             Header{s, m.paused},
             VerdictBanner{s},
             std::move(body),
-            Footer{m.paused, m.ticks}
+            Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
+                   m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
         ) | padding(0, 1, 0, 1)).build();
     }
 };

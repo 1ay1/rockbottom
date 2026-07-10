@@ -34,12 +34,24 @@ public:
         // load trend: comparing 1m to 15m tells you if things are heating up.
         const auto& la = snap_.cpu.loadavg;
         const char* trend = la[0] > la[2] * 1.3 ? "↗" : la[0] < la[2] * 0.7 ? "↘" : "→";
-        std::string load_str = fmt::fixed2(la[0]) + " " + trend;
+        std::string chip = "load " + fmt::fixed2(la[0]) + " " + trend;
+
+        // PSI stall chips appear only when a resource is actually contended —
+        // silence is a feature.
+        const Psi& psi = snap_.psi;
+        auto add_psi = [&](const char* tag, const PsiEntry& e) {
+            if (e.available && e.some_avg10 >= 5)
+                chip += " · " + std::string(tag) + " stall " +
+                        std::to_string(static_cast<int>(e.some_avg10)) + "%";
+        };
+        add_psi("cpu", psi.cpu);
+        add_psi("mem", psi.mem);
+        add_psi("io",  psi.io);
 
         auto b = vstack();
         b.border(BorderStyle::Round)
          .border_color(c)
-         .border_text_end(" load " + load_str + " ", BorderTextPos::Top)
+         .border_text_end(" " + chip + " ", BorderTextPos::Top)
          .padding(0, 1, 0, 1);
 
         std::vector<Element> line;

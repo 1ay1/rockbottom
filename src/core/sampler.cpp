@@ -68,8 +68,11 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     sample_cpu(s.cpu);
     sample_mem(s.mem);
     sample_disks(s.disks);
+    sample_disk_io(s.disk_io, dt);
     sample_net(s.nets, dt);
     sample_procs(s, sort, top_n, dt);
+    sample_psi(s.psi);
+    sample_battery(s.battery);
     s.verdict = judge(s);
 
     first_ = false;

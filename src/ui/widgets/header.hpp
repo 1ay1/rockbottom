@@ -32,13 +32,25 @@ public:
             ? (text(" ⏸ PAUSED ") | Bold | fgc(pal::bg) | bgc(pal::warn)).build()
             : blank();
 
+        // Battery chip, only when hardware exists.
+        Element bat = blank();
+        if (snap_.battery.present) {
+            const auto& b = snap_.battery;
+            Color bc = b.charging ? pal::good : b.percent < 20 ? pal::crit
+                     : b.percent < 40 ? pal::warn : pal::label;
+            std::string icon = b.charging ? "⚡" : "■";
+            bat = (text("  " + icon + " " + std::to_string(b.percent) + "%")
+                   | nowrap | fgc(bc)).build();
+        }
+
         return (h(
             std::move(word),
             text("  " + snap_.hostname) | Bold | fgc(pal::sky),
             text("  " + snap_.kernel) | fgc(pal::dim),
             text("  ") , std::move(pause_chip),
             space,
-            text("up " + humanize_duration(snap_.uptime_sec)) | fgc(pal::label),
+            std::move(bat),
+            text("  up " + humanize_duration(snap_.uptime_sec)) | fgc(pal::label),
             text("  ·  ") | fgc(pal::faint),
             text(std::to_string(snap_.proc_count)) | fgc(pal::text),
             text(" procs ") | fgc(pal::dim),

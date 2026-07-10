@@ -30,8 +30,11 @@ add_executable(bottom
     src/core/collectors/cpu.cpp
     src/core/collectors/mem.cpp
     src/core/collectors/disk.cpp
+    src/core/collectors/diskio.cpp
     src/core/collectors/net.cpp
     src/core/collectors/proc.cpp
+    src/core/collectors/psi.cpp
+    src/core/collectors/battery.cpp
 )
 target_link_libraries(bottom PRIVATE maya)
 target_compile_features(bottom PRIVATE cxx_std_26)

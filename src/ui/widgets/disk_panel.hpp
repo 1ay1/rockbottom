@@ -9,8 +9,11 @@
 #include "../theme.hpp"
 #include "../fmt.hpp"
 #include "meter.hpp"
+#include "spark.hpp"
 #include "panel.hpp"
 
+#include <algorithm>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -18,9 +21,10 @@ namespace bottom::ui {
 
 class DiskPanel {
     const std::vector<DiskInfo>& disks_;
+    const DiskIO& io_;
 
 public:
-    explicit DiskPanel(const std::vector<DiskInfo>& d) : disks_(d) {}
+    DiskPanel(const std::vector<DiskInfo>& d, const DiskIO& io) : disks_(d), io_(io) {}
 
     operator maya::Element() const { return build(); }
 
@@ -29,6 +33,30 @@ public:
         using namespace maya::dsl;
 
         std::vector<Element> rows;
+
+        // ── Live whole-system I/O rates with peak-normalized history ──
+        {
+            float peak = 1.0f;
+            for (int i = 0; i < io_.hist_len; ++i)
+                peak = std::max({peak,
+                                 io_.read_history[static_cast<std::size_t>(i)],
+                                 io_.write_history[static_cast<std::size_t>(i)]});
+            std::array<float, 48> rn{}, wn{};
+            for (int i = 0; i < io_.hist_len; ++i) {
+                rn[static_cast<std::size_t>(i)] = io_.read_history[static_cast<std::size_t>(i)] / peak;
+                wn[static_cast<std::size_t>(i)] = io_.write_history[static_cast<std::size_t>(i)] / peak;
+            }
+            rows.push_back((h(
+                text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<14>,
+                text("▼") | nowrap | fgc(pal::sky),
+                text(humanize_rate(io_.read)) | nowrap | fgc(pal::text) | w_<7>,
+                Spark{rn.data(), io_.hist_len}.cells(8).color(pal::sky),
+                text(" ▲") | nowrap | fgc(pal::pink),
+                text(humanize_rate(io_.write)) | nowrap | fgc(pal::text) | w_<7>,
+                Spark{wn.data(), io_.hist_len}.cells(8).color(pal::pink)
+            ) | gap(1)).build());
+        }
+
         if (disks_.empty())
             rows.push_back((text("no mounted disks") | fgc(pal::dim)).build());
 
