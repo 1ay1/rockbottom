@@ -126,6 +126,24 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         cur[pid].faults = faults;
         cur[pid].csw = csw;
 
+        // Rolling per-process cpu% ring — carry the prior history forward,
+        // push this interval's sample (normalized to a single core, clamped),
+        // so the detail pane can graph the selected process like htop's meter.
+        if (auto pit = prev_proc_.find(pid); pit != prev_proc_.end()) {
+            cur[pid].cpu_hist = pit->second.cpu_hist;
+            cur[pid].cpu_hist_len = pit->second.cpu_hist_len;
+        }
+        {
+            auto& ring = cur[pid].cpu_hist;
+            int& rl = cur[pid].cpu_hist_len;
+            const float sample = static_cast<float>(std::clamp(cpu_pct / 100.0, 0.0, 1.0));
+            if (rl < static_cast<int>(ring.size())) {
+                ring[static_cast<std::size_t>(rl++)] = sample;
+            } else {
+                std::move(ring.begin() + 1, ring.end(), ring.begin());
+                ring.back() = sample;
+            }
+        }
         ProcInfo p;
         p.pid = pid;
         p.ppid = static_cast<int>(tai.pbsd.pbi_ppid);
@@ -138,6 +156,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.cpu_ms = cpu_ns / 1000000;
         p.start_sec = tai.pbsd.pbi_start_tvsec;
         p.rss = rss;
+        p.virt = Bytes{tai.ptinfo.pti_virtual_size};
         p.footprint = Bytes{footprint};
         p.mem_share = Ratio::of(rss, ram_total_);
         p.faults_ps = faults_ps;
@@ -145,6 +164,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.pageins = pageins;
         p.io_read = ior;
         p.io_write = iow;
+        p.cpu_history = cur[pid].cpu_hist;
+        p.hist_len = cur[pid].cpu_hist_len;
         p.user = sys::user_of(tai.pbsd.pbi_uid);
 
         // Open-fd census — proc_pidinfo(LISTFDS) with a null buffer returns

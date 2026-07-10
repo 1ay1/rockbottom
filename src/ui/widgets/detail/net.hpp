@@ -72,13 +72,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         auto txn = norm48(ni.tx_history.data(), ni.hist_len);
         const double rxpk = hist_peak(ni.rx_history.data(), ni.hist_len);
         const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
-        {
-            std::vector<Element> hdr;
-            hdr.push_back(Element{section(std::string(fmt::clip(ni.name, 14)), pal::net_ac)} | grow(1));
-            hdr.push_back((text(ni.up ? "● up  " : "○ down") | nowrap | Bold
-                           | fgc(ni.up ? pal::good : pal::dim)).build());
-            b.push_back((h(std::move(hdr)) | gap(1)).build());
-        }
+        b.push_back(section(std::string(fmt::clip(ni.name, 14)), pal::net_ac,
+                            ni.up ? "● up" : "○ down"));
         // Identity row: address / MAC / MTU — the "which network am I on"
         // facts every other monitor makes you shell out to ifconfig for.
         if (!ni.ip4.empty() || !ni.mac.empty()) {

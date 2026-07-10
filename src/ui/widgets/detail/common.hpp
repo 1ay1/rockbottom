@@ -118,26 +118,50 @@ inline Element bar(const std::string& label, double frac,
     return (h(std::move(row)) | gap(2)).build();
 }
 
-// A section heading in the domain accent color: "── TITLE ─────…" — a
-// labelled rule (maya Divider idiom) that structures a dense pane far better
-// than a bare bold word floating in space.
-inline Element section(std::string title, maya::Color ac) {
+// A section heading in the house style shared with the help overlay: a solid
+// accent ▍ bar, the name in bold accent ink, then a hairline rule trailing
+// off to the right edge so the heading both READS as a title and separates
+// the block below. An optional right-aligned chip carries a stat for the
+// section ("TOP MEMORY CONSUMERS   8 shown") without a second line.
+inline Element section(std::string title, maya::Color ac, std::string chip = "") {
     using namespace maya; using namespace maya::dsl;
     std::string t = std::move(title);
+    std::string ch = std::move(chip);
     return Element{ComponentElement{
-        .render = [t, ac](int w, int) -> Element {
-            std::string content = "── ";
+        .render = [t, ac, ch](int w, int) -> Element {
+            const maya::Color rule = mix(pal::border, ac, 0.35);
+            // The chip is the priority on the right; the rule fills whatever
+            // is left between the name and the chip. A 1-cell right inset
+            // keeps the rule from kissing the panel border.
+            const int avail = std::max(0, w - 1);
+            std::string content = "▍ ";                       // accent bar + gap
             std::vector<StyledRun> runs;
-            runs.push_back({0, content.size(), Style{}.with_fg(mix(pal::border, ac, 0.4))});
+            runs.push_back({0, content.size(), Style{}.with_fg(ac)});
             std::size_t off = content.size();
             content += t;
             runs.push_back({off, t.size(), Style{}.with_bold().with_fg(ac)});
+
+            // Reserve room for a trailing chip ( " · <chip>" ) on the right.
+            const int chip_cells = ch.empty() ? 0
+                                 : 3 + static_cast<int>(ch.size());       // " · " + chip
+            const int used = 2 + static_cast<int>(t.size()) + 1;         // bar + name + gap
+            const int rule_cells = std::max(0, avail - used - chip_cells);
+
             off = content.size();
-            std::string tail = " ";
-            const int used = 3 + static_cast<int>(t.size()) + 1;
-            for (int i = used; i < w; ++i) tail += "─";
-            content += tail;
-            runs.push_back({off, tail.size(), Style{}.with_fg(mix(pal::border, ac, 0.4))});
+            std::string rulestr = " ";
+            for (int i = 0; i < rule_cells; ++i) rulestr += "─";
+            content += rulestr;
+            runs.push_back({off, rulestr.size(), Style{}.with_fg(rule)});
+
+            if (!ch.empty()) {
+                off = content.size();
+                std::string sep = " · ";
+                content += sep;
+                runs.push_back({off, sep.size(), Style{}.with_fg(rule)});
+                off = content.size();
+                content += ch;
+                runs.push_back({off, ch.size(), Style{}.with_fg(mix(ac, pal::text, 0.35))});
+            }
             return Element{TextElement{.content = std::move(content), .style = {},
                                        .wrap = TextWrap::NoWrap, .runs = std::move(runs)}};
         },
@@ -307,6 +331,21 @@ inline std::array<float, 48> norm48(const float* h, int len, float* peak_out = n
     for (int i = 0; i < len && i < 48; ++i) peak = std::max(peak, h[i]);
     std::array<float, 48> out{};
     for (int i = 0; i < len && i < 48; ++i) out[static_cast<std::size_t>(i)] = h[i] / peak;
+    if (peak_out) *peak_out = peak;
+    return out;
+}
+
+// Peak-normalize an already-0..1 history ring (per-process cpu%) so a quiet
+// process still shows shape, while a busy one fills the spark. `floor` keeps a
+// near-idle series from amplifying sampling noise into a full-height wall.
+inline std::array<float, 48> norm_unit(const float* h, int len, float floor,
+                                       float* peak_out = nullptr) {
+    float peak = floor;
+    for (int i = 0; i < len && i < 48; ++i) peak = std::max(peak, h[i]);
+    std::array<float, 48> out{};
+    if (peak <= 0) peak = 1.0f;
+    for (int i = 0; i < len && i < 48; ++i)
+        out[static_cast<std::size_t>(i)] = std::clamp(h[i] / peak, 0.0f, 1.0f);
     if (peak_out) *peak_out = peak;
     return out;
 }

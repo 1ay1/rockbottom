@@ -42,16 +42,20 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     }
     b.push_back(gap_row());
 
-    // ── filesystems ──────────────────────────────────────────────────────────
-    b.push_back(section("FILESYSTEMS", pal::disk_ac));
-    b.push_back((h(
-        text("mount") | nowrap | Bold | Underline | fgc(pal::dim) | width(16),
-        text("usage") | nowrap | Bold | Underline | fgc(pal::dim) | grow(1),
-        text("free") | nowrap | Bold | Underline | fgc(pal::dim) | width(9) | justify(Justify::End),
-        text("used / size") | nowrap | Bold | Underline | fgc(pal::dim) | width(16) | justify(Justify::End),
-        text("inodes") | nowrap | Bold | Underline | fgc(pal::dim) | width(7) | justify(Justify::End),
-        text("  fs") | nowrap | Bold | Underline | fgc(pal::dim) | width(10)
-    ) | gap(1)).build());
+    // ── filesystems ───────────────────────────────────────────────
+    b.push_back(section("FILESYSTEMS", pal::disk_ac,
+                        std::to_string(static_cast<int>(s.disks.size())) + " mounted"));
+    {
+        auto col = [](const char* t) { return text(t) | nowrap | fgc(pal::dim); };
+        b.push_back((h(
+            col("mount") | width(16),
+            col("usage") | grow(1),
+            col("free") | width(9) | justify(Justify::End),
+            col("used / size") | width(16) | justify(Justify::End),
+            col("inodes") | width(7) | justify(Justify::End),
+            col("  fs") | width(10)
+        ) | gap(1) | bgc(pal::track)).build());
+    }
     const DiskInfo* worst = nullptr;
     for (const DiskInfo& d : s.disks) {
         const double f = d.usage().v;
@@ -100,12 +104,13 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         std::sort(top.begin(), top.end(), [](const ProcInfo* a, const ProcInfo* b2) {
             return (a->io_read.per_sec + a->io_write.per_sec) > (b2->io_read.per_sec + b2->io_write.per_sec);
         });
-        b.push_back(section("BUSIEST ON DISK", pal::disk_ac));
         if (top.empty()) {
+            b.push_back(section("BUSIEST ON DISK", pal::disk_ac));
             b.push_back(verdict("nothing is touching the disk right now", pal::dim));
         } else {
             const double top_rate = top[0]->io_read.per_sec + top[0]->io_write.per_sec;
             const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
+            b.push_back(section("BUSIEST ON DISK", pal::disk_ac, "top " + std::to_string(show)));
             for (int i = 0; i < show; ++i) {
                 const ProcInfo& p = *top[static_cast<std::size_t>(i)];
                 const double rate = p.io_read.per_sec + p.io_write.per_sec;

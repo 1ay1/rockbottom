@@ -149,8 +149,9 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         for (const auto& p : s.procs) top.push_back(&p);
         std::sort(top.begin(), top.end(),
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->mem_share.v > b2->mem_share.v; });
-        b.push_back(section("TOP MEMORY CONSUMERS", pal::mem_ac));
         const int show = std::min<int>(cx.tall ? 8 : 4, static_cast<int>(top.size()));
+        b.push_back(section("TOP MEMORY CONSUMERS", pal::mem_ac,
+                            "top " + std::to_string(show)));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),

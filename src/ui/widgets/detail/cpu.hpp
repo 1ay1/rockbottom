@@ -111,7 +111,10 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // On Apple Silicon macOS enumerates the efficiency cluster first (M1:
     // cpu0-3 = E, cpu4-7 = P). Tag each core with its cluster so "why is
     // core 6 pinned" answers itself; P-core ids get the brighter accent.
-    b.push_back(section("PER-CORE", pal::cpu_ac));
+    b.push_back(section("PER-CORE", pal::cpu_ac,
+                        c.perf_cores > 0 && c.eff_cores > 0
+                            ? std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E"
+                            : std::to_string(static_cast<int>(c.cores.size())) + " cores"));
     const int n = static_cast<int>(c.cores.size());
     const bool hetero = c.perf_cores > 0 && c.eff_cores > 0 &&
                         c.perf_cores + c.eff_cores == n;
@@ -155,8 +158,8 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         for (const auto& p : s.procs) top.push_back(&p);
         std::sort(top.begin(), top.end(),
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->cpu > b2->cpu; });
-        b.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac));
         const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
+        b.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac, "top " + std::to_string(show)));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             const double f = std::clamp(p.cpu / 100.0, 0.0, 1.0);

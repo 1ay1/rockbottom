@@ -90,6 +90,25 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         cur[pid].io_read = io_r;
         cur[pid].io_write = io_w;
 
+        // Rolling per-process cpu% ring — carry the prior history forward
+        // (cur[pid] was aggregate-reset above), push this interval's clamped
+        // sample, so the detail pane can graph the process like htop's meter.
+        if (auto pit = prev_proc_.find(pid); pit != prev_proc_.end()) {
+            cur[pid].cpu_hist = pit->second.cpu_hist;
+            cur[pid].cpu_hist_len = pit->second.cpu_hist_len;
+        }
+        {
+            auto& ring = cur[pid].cpu_hist;
+            int& rl = cur[pid].cpu_hist_len;
+            const float sample = static_cast<float>(std::clamp(cpu_pct / 100.0, 0.0, 1.0));
+            if (rl < static_cast<int>(ring.size())) {
+                ring[static_cast<std::size_t>(rl++)] = sample;
+            } else {
+                std::move(ring.begin() + 1, ring.end(), ring.begin());
+                ring.back() = sample;
+            }
+        }
+
         ProcInfo p;
         p.pid = pid;
         p.name = comm;
@@ -97,9 +116,12 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.threads = std::max(1, threads);
         p.cpu = cpu_pct;
         p.rss = rss;
+        p.virt = Bytes{total_pages * static_cast<std::uint64_t>(page_size_)};
         p.mem_share = Ratio::of(rss, ram_total_);
         p.io_read = ior;
         p.io_write = iow;
+        p.cpu_history = cur[pid].cpu_hist;
+        p.hist_len = cur[pid].cpu_hist_len;
 
         struct ::stat stbuf{};
         if (::stat(base.c_str(), &stbuf) == 0) p.user = user_of(stbuf.st_uid);

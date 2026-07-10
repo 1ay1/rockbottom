@@ -89,6 +89,7 @@ struct ProcInfo {
     std::string name, user, cmd;
     double      cpu = 0;        // % of a single core (0..100*ncores)
     Bytes       rss{};          // resident memory
+    Bytes       virt{};         // virtual address-space size (htop VIRT)
     Bytes       footprint{};    // phys footprint (mac) — the honest "memory" figure
     Ratio       mem_share{};    // rss / total ram
     char        state = '?';    // R S D Z T …
@@ -103,6 +104,8 @@ struct ProcInfo {
     std::uint64_t pageins = 0;     // lifetime blocking pageins (disk stalls)
     ByteRate    io_read{}, io_write{};   // block-device I/O rate (/proc/pid/io)
     std::vector<std::uint16_t> ports;   // bound TCP/UDP ports (sorted, deduped)
+    std::array<float, 48> cpu_history{};   // rolling per-process cpu% ring (0..1, peak-normalized at render)
+    int         hist_len = 0;               // valid samples in cpu_history
 };
 
 // Aggregate health verdict — the heart of the "what's going on?" answer.

@@ -64,6 +64,20 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     b.push_back(bar("cpu", cpuf, fmt::fixed1(p.cpu) + "% of one core", load_color(cpuf), cx.wide ? 34 : 0));
     b.push_back(bar("memory", p.mem_share.v, humanize_bytes(p.rss) + " resident", pal::mem_ac, cx.wide ? 34 : 0));
 
+    // Per-process CPU trend — htop's graph meter, but for the one process you
+    // drilled into. Peak-normalized (floor 5% of a core) so a quiet task still
+    // shows shape; the live value + windowed peak ride the right rail.
+    if (p.hist_len > 1) {
+        float pk = 0;
+        auto spk = norm_unit(p.cpu_history.data(), p.hist_len, 0.05f, &pk);
+        b.push_back((h(
+            text("  cpu") | nowrap | fgc(pal::faint) | width(14),
+            Element{Spark{spk.data(), p.hist_len}.fill().color(load_color(cpuf)).baseline(true)} | grow(1),
+            text(fmt::fixed1(p.cpu) + "%") | nowrap | Bold | fgc(load_color(cpuf)) | width(8) | justify(Justify::End),
+            text("pk " + fmt::fixed1(pk * 100.0f) + "%") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End)
+        ) | gap(1)).build());
+    }
+
     // Rank against every process so you know if THIS is the culprit.
     int cpu_rank = 1, mem_rank = 1;
     const int total = static_cast<int>(s.procs.size());
@@ -85,18 +99,18 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     // ── memory detail ────────────────────────────────────────────────────────
     // Footprint is the honest figure (what Activity Monitor's "Memory" column
     // shows): anonymous + compressed + IOKit, not just resident pages.
-    if (p.footprint.value > 0 || p.faults_ps > 0 || p.pageins > 0) {
+    if (p.rss.value > 0 || p.virt.value > 0 || p.footprint.value > 0 || p.faults_ps > 0 || p.pageins > 0) {
         b.push_back(section("MEMORY", pal::proc_ac));
         b.push_back(kv3(
             "resident", humanize_bytes(p.rss), pal::mem_ac,
-            "footprint", p.footprint.value ? humanize_bytes(p.footprint) : "n/a", pal::mem_ac,
-            "of total ram", fmt::pct(p.mem_share.v), pal::label));
+            "virtual", p.virt.value ? humanize_bytes(p.virt) : "n/a", pal::label,
+            "footprint", p.footprint.value ? humanize_bytes(p.footprint) : "n/a", pal::mem_ac));
         b.push_back(kv3(
+            "of total ram", fmt::pct(p.mem_share.v), pal::label,
             "page faults", fmt::count(p.faults_ps) + "/s",
             p.faults_ps > 10000 ? pal::hot : p.faults_ps > 0.5 ? pal::text : pal::dim,
             "pageins", fmt::count(static_cast<double>(p.pageins)),
-            pal::label,
-            "", "", pal::dim));
+            pal::label));
         if (p.faults_ps > 50000)
             b.push_back(verdict("▲ faulting very hard — allocating or touching new memory at a furious rate", pal::hot));
         b.push_back(gap_row());
@@ -147,7 +161,8 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     // ── listening ports ──────────────────────────────────────────────────────
     if (!p.ports.empty()) {
         b.push_back(gap_row());
-        b.push_back(section("LISTENING PORTS", pal::proc_ac));
+        b.push_back(section("LISTENING PORTS", pal::proc_ac,
+                            std::to_string(p.ports.size()) + (p.ports.size() == 1 ? " port" : " ports")));
         std::string ports;
         for (std::size_t i = 0; i < p.ports.size() && i < 32; ++i)
             ports += (i ? "  " : "") + (":" + std::to_string(p.ports[i]));

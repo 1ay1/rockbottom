@@ -45,6 +45,8 @@ private:
         std::uint64_t cpu_ticks = 0;
         std::uint64_t io_read = 0, io_write = 0;
         std::uint64_t faults = 0, csw = 0;
+        std::array<float, 48> cpu_hist{};   // rolling cpu% (0..1) so the detail pane can graph it
+        int cpu_hist_len = 0;
     };
 
     // Collectors (each lives in its own .cpp under platform/<os>/).
