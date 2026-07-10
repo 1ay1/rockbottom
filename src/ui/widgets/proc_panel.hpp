@@ -230,17 +230,15 @@ private:
         const double cpu_frac = std::clamp(p.cpu / 100.0, 0.0, 1.0);
         const double mem_frac = p.mem_share.v;
 
-        // The cursor row is "lit" with lifted ink AND rides a bg strip. The
-        // strip is painted by bgc() on the row's h-container, but the canvas
-        // REPLACES cells wholesale: a text run with no explicit bg resets to
-        // the terminal default at SGR-emit time, so every glyph would punch a
-        // default-bg hole in the strip. Every styled cell on the selected row
-        // therefore carries with_bg(sel_bg) explicitly — same idiom as the
-        // footer's status chips.
+        // The cursor row is "lit" with lifted ink AND rides a bg strip painted
+        // by bgc() on the row's h-container. maya's renderer inherits that
+        // ambient bg into every descendant text run that doesn't declare its
+        // own (paint-time bg inheritance), so plain fg-only styles here are
+        // enough — no per-cell with_bg plumbing.
         auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.4) : c; };
         auto cell_st = [&](Color c) {
             Style st = Style{}.with_fg(lift(c));
-            if (selected) st = st.with_bold().with_bg(pal::sel_bg);
+            if (selected) st = st.with_bold();
             return st;
         };
         const Color quiet  = selected ? pal::text  : pal::dim;    // dim ink, lifted
@@ -248,7 +246,6 @@ private:
 
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();
-        if (selected) name_st = name_st.with_bg(pal::sel_bg);
         Style cpu_st = cell_st(load_color(cpu_frac));
         if (p.cpu > 50) cpu_st = cpu_st.with_bold();
 
@@ -312,7 +309,7 @@ private:
             std::vector<Element> cols;
             Style pid_st = Style{}.with_fg(selected ? pal::proc_ac
                                           : sk == SortKey::Pid ? pal::text : gutter_c);
-            if (selected) pid_st = pid_st.with_bold().with_bg(pal::sel_bg);
+            if (selected) pid_st = pid_st.with_bold();
             cols.push_back((text(gutter + std::to_string(p.pid), pid_st) | nowrap | w_<8>).build());
             cols.push_back((text(fmt::clip(p.user, 7), cell_st(user_c)) | nowrap | w_<8>).build());
             {
@@ -337,10 +334,9 @@ private:
                     std::string t = "  " + cmd_trail;
                     if (clip_bytes(t, budget - off - 3)) t += "…";
                     content += t;
-                    Style trail_st = Style{}.with_fg(
-                        selected ? pal::label : mix(pal::dim, pal::bg_panel, 0.35));
-                    if (selected) trail_st = trail_st.with_bg(pal::sel_bg);
-                    runs.push_back({off, content.size() - off, trail_st});
+                    runs.push_back({off, content.size() - off,
+                                    Style{}.with_fg(selected ? pal::label
+                                                             : mix(pal::dim, pal::bg_panel, 0.35))});
                 }
                 cols.push_back(Element{TextElement{.content = std::move(content), .style = {},
                                                    .wrap = TextWrap::NoWrap,
@@ -350,12 +346,7 @@ private:
                 cols.push_back((text(port_txt, sk == SortKey::Port ? cell_st(pal::sky).with_bold()
                                                                    : cell_st(pal::sky))
                                 | nowrap | w_<9> | justify(Justify::End)).build());
-            cols.push_back([&] {
-                Meter m{cpu_frac};
-                m.width(show_mem ? 14 : 8).groove(false);
-                if (selected) m.bg(pal::sel_bg);
-                return m.build_fixed();
-            }());
+            cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
             cols.push_back((text(humanize_bytes(p.rss),
                                  sk == SortKey::Mem ? cell_st(pal::white).with_bold()
@@ -371,11 +362,7 @@ private:
                                          ? cell_st(pal::sky).with_bold()
                                          : cell_st(io_c))
                                 | nowrap | w_<8> | justify(Justify::End)).build());
-            {
-                Style dot_st = Style{}.with_fg(dot_c);
-                if (selected) dot_st = dot_st.with_bg(pal::sel_bg);
-                cols.push_back((text(dot, dot_st) | nowrap | w_<2> | justify(Justify::Center)).build());
-            }
+            cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
             if (show_thr)
                 cols.push_back((text(std::to_string(p.threads), cell_st(quiet))
                                 | nowrap | w_<4> | justify(Justify::End)).build());
