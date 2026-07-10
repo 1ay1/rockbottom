@@ -86,20 +86,28 @@ public:
                                      : "nothing matches \"" + view_.filter + "\"")
                             | fgc(pal::dim)).build());
 
-        // Scrollbar: maya's scrollbar_y renders from plain ScrollState fields,
-        // so we drive it straight from our selection window — no scroll
-        // plumbing, just where-am-I feedback for 380-row lists.
+        // Scrollbar: a self-contained proportional thumb built from plain
+        // text segments. We deliberately do NOT use maya::scrollbar_y here —
+        // that helper stashes a pointer to the ScrollState you pass it
+        // (`bx->scroll_state = &s`) for drag/hover writeback, and our state is
+        // a local that dies when build() returns → stack-use-after-return the
+        // renderer would later dereference. This bar owns nothing dangling.
         if (scrolling) {
-            ScrollState sb;
-            sb.y = start;
-            sb.max_y = n - body_rows;
-            ScrollbarStyle st;
-            st.track_color = pal::faint;
-            st.thumb_color = pal::proc_ac;
+            const int vh = static_cast<int>(body.size());
+            const int max_y = std::max(1, n - body_rows);
+            const int thumb = std::max(1, vh * vh / std::max(1, n));
+            const int track = std::max(0, vh - thumb);
+            const int pos = std::clamp(start * track / max_y, 0, track);
+            std::vector<Element> barcol;
+            for (int r = 0; r < vh; ++r) {
+                const bool on = r >= pos && r < pos + thumb;
+                barcol.push_back((text(on ? "█" : "│") | nowrap
+                                  | fgc(on ? pal::proc_ac : pal::faint)).build());
+            }
             rows.push_back((h(
                 (v(body) | grow(1)),
                 Element{blank()} | width(1),
-                scrollbar_y(sb, static_cast<int>(body.size()), st)
+                v(std::move(barcol)) | width(1)
             )).build());
         } else {
             for (auto& r : body) rows.push_back(std::move(r));
