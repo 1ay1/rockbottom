@@ -1,10 +1,12 @@
 // widgets/detail/gpu.hpp — the GPU drill-down body. Replaces nvtop.
 //
-// Everything nvtop shows and then some, read for you: a utilisation-over-time
-// hero graph, core + VRAM meters, a full telemetry strip (temperature, power
-// draw vs limit, core/mem clocks, fan, perf-state, encoder/decoder load), the
-// processes actually holding VRAM, and a plain-language verdict. Handles
-// multiple GPUs, and every vendor field that isn't available is simply omitted.
+// Works for every vendor rockbottom samples — Apple Silicon (IOAccelerator:
+// device/renderer/tiler utilisation, unified memory, core count), NVIDIA
+// (nvidia-smi: SM %, VRAM, temp, power vs limit, clocks, fan, NVENC/NVDEC,
+// P-state, per-process VRAM), AMD (sysfs: busy %, VRAM, hwmon telemetry,
+// clocks) and Intel (clocks + hwmon). Every field a vendor can't report is
+// simply omitted — never a fake zero dressed up as data — so the pane is
+// honest and dense on every platform.
 
 #pragma once
 
@@ -18,25 +20,30 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
 
     if (s.gpus.empty()) {
         b.push_back(section("NO GPU DETECTED", pal::proc_ac));
-        b.push_back(verdict("no NVIDIA / AMD / Intel GPU telemetry available.", pal::dim));
+        b.push_back(verdict("no GPU telemetry available on this machine.", pal::dim));
         b.push_back(verdict("NVIDIA needs the driver + nvidia-smi on PATH; AMD/Intel expose", pal::dim));
-        b.push_back(verdict("stats under /sys/class/drm — which may be root-only on your box.", pal::dim));
+        b.push_back(verdict("stats under /sys/class/drm; Apple GPUs publish IOAccelerator nodes.", pal::dim));
         return b;
     }
 
     int gi = 0;
     for (const GpuInfo& g : s.gpus) {
-        // ── header ───────────────────────────────────────────────────────────
+        // ── header: vendor · name, core count, driver ─────────────────────
         std::string head = g.name;
-        if (!g.vendor.empty()) head = g.vendor + " · " + head;
+        if (!g.vendor.empty() && g.name.find(g.vendor) == std::string::npos)
+            head = g.vendor + " · " + head;
+        std::string sub;
+        if (g.cores > 0) sub += std::to_string(g.cores) + "-core";
+        if (g.unified) sub += sub.empty() ? "unified memory" : " · unified memory";
+        if (!g.driver.empty()) sub += (sub.empty() ? "" : " · ") + ("driver " + g.driver);
         b.push_back((h(
             text(head) | nowrap | Bold | fgc(pal::proc_ac),
             Element{blank()} | grow(1),
-            text(g.driver.empty() ? "" : "driver " + g.driver) | nowrap | fgc(pal::dim)
+            text(sub) | nowrap | fgc(pal::dim)
         )).build());
         b.push_back(gap_row());
 
-        // ── hero graph ───────────────────────────────────────────────────
+        // ── hero graph ─────────────────────────────────────────────────────
         {
             std::vector<Element> hdr;
             hdr.push_back(Element{section("UTILISATION OVER TIME", pal::proc_ac)} | grow(1));
@@ -65,40 +72,91 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         b.push_back(gap_row());
 
-        // ── core + VRAM ───────────────────────────────────────────────────────
-        b.push_back(section("RIGHT NOW", pal::proc_ac));
-        b.push_back(bar("core", g.usage.v, "SM / shader engines busy", load_color(g.usage.v), cx.wide ? 34 : 0));
-        b.push_back(bar("vram", g.mem_usage.v,
-                        humanize_bytes(g.mem_used) + " / " + humanize_bytes(g.mem_total),
-                        pal::mem_ac, cx.wide ? 34 : 0));
-        if (g.enc_usage.v > 0 || g.dec_usage.v > 0) {
-            b.push_back(bar("encoder", g.enc_usage.v, "NVENC video encode", pal::teal, cx.wide ? 34 : 0));
-            b.push_back(bar("decoder", g.dec_usage.v, "NVDEC video decode", pal::sky, cx.wide ? 34 : 0));
+        // ── engines ────────────────────────────────────────────────────────
+        // Every engine the card reports, one meter each. Apple splits the
+        // pipeline into renderer (3D/fragment) and tiler (geometry); NVIDIA
+        // reports NVENC/NVDEC video engines.
+        b.push_back(section("ENGINES", pal::proc_ac));
+        b.push_back(bar("core", g.usage.v, "overall GPU busy", load_color(g.usage.v), cx.wide ? 34 : 0));
+        // Gate the extra engine rows on the VENDOR, not the live value — a
+        // renderer at 0% must render as an empty meter, not vanish, or the
+        // pane's layout breathes with the workload.
+        if (g.vendor == "Apple") {
+            b.push_back(bar("renderer", g.renderer_usage.v, "3D / fragment work", pal::proc_ac, cx.wide ? 34 : 0));
+            b.push_back(bar("tiler", g.tiler_usage.v, "geometry / vertex work", pal::sky, cx.wide ? 34 : 0));
+        }
+        if (g.vendor == "NVIDIA") {
+            b.push_back(bar("encoder", g.enc_usage.v, "video encode (NVENC)", pal::teal, cx.wide ? 34 : 0));
+            b.push_back(bar("decoder", g.dec_usage.v, "video decode (NVDEC)", pal::sky, cx.wide ? 34 : 0));
         }
         b.push_back(gap_row());
 
-        // ── telemetry strip ────────────────────────────────────────────────────
-        b.push_back(section("TELEMETRY", pal::proc_ac));
-        b.push_back(kv3(
-            "temp", g.temp_c > 1 ? std::to_string(static_cast<int>(g.temp_c)) + " °C" : "n/a",
-            load_color(std::clamp((g.temp_c - 40) / 50.0, 0.0, 1.0)),
-            "power", g.power_w > 0
-                ? fmt::fixed1(g.power_w) + (g.power_limit_w > 0 ? " / " + fmt::fixed1(g.power_limit_w) + "W" : "W")
-                : "n/a",
-            g.power_limit_w > 0 && g.power_w > g.power_limit_w * 0.9 ? pal::hot : pal::text,
-            "fan", g.fan_pct >= 0 ? std::to_string(g.fan_pct) + "%" : "n/a",
-            g.fan_pct > 80 ? pal::hot : pal::text));
-        b.push_back(kv3(
-            "core clock", g.core_clock.value > 0 ? humanize_hz(g.core_clock) : "n/a", pal::proc_ac,
-            "mem clock", g.mem_clock.value > 0 ? humanize_hz(g.mem_clock) : "n/a", pal::mem_ac,
-            "perf state", g.pstate.empty() ? "n/a" : g.pstate,
-            g.pstate == "P0" ? pal::hot : pal::dim));
+        // ── memory ─────────────────────────────────────────────────────────
+        b.push_back(section("MEMORY", pal::proc_ac));
+        if (g.mem_total.value) {
+            b.push_back(bar("vram", g.mem_usage.v,
+                            humanize_bytes(g.mem_used) + " / " + humanize_bytes(g.mem_total),
+                            pal::mem_ac, cx.wide ? 34 : 0));
+            if (g.unified)
+                b.push_back(verdict("unified memory — the GPU shares system RAM, so GPU allocations "
+                                    "compete with your apps", pal::dim));
+        } else if (g.mem_used.value) {
+            b.push_back(kv3(
+                "in use", humanize_bytes(g.mem_used), pal::mem_ac,
+                "", "", pal::dim, "", "", pal::dim));
+        } else {
+            b.push_back(verdict("this driver does not report memory usage", pal::dim));
+        }
+        b.push_back(gap_row());
+
+        // ── telemetry strip — only rows that carry at least one live figure ──
+        {
+            struct Cell { std::string k, v; maya::Color c; };
+            std::vector<Cell> cells;
+            if (g.temp_c > 1)
+                cells.push_back({"temp", std::to_string(static_cast<int>(g.temp_c)) + " °C",
+                                 load_color(std::clamp((g.temp_c - 40) / 50.0, 0.0, 1.0))});
+            if (g.power_w > 0)
+                cells.push_back({"power",
+                                 fmt::fixed1(g.power_w) +
+                                     (g.power_limit_w > 0 ? " / " + fmt::fixed1(g.power_limit_w) + "W" : "W"),
+                                 g.power_limit_w > 0 && g.power_w > g.power_limit_w * 0.9 ? pal::hot : pal::text});
+            if (g.fan_pct >= 0)
+                cells.push_back({"fan", std::to_string(g.fan_pct) + "%",
+                                 g.fan_pct > 80 ? pal::hot : pal::text});
+            if (g.core_clock.value > 0)
+                cells.push_back({"core clock", humanize_hz(g.core_clock), pal::proc_ac});
+            if (g.mem_clock.value > 0)
+                cells.push_back({"mem clock", humanize_hz(g.mem_clock), pal::mem_ac});
+            if (!g.pstate.empty()) {
+                const bool resets = g.pstate.find("reset") != std::string::npos;
+                cells.push_back({resets ? "gpu resets" : "perf state", g.pstate,
+                                 resets ? pal::hot
+                                 : g.pstate == "P0" ? pal::hot : pal::dim});
+            }
+            if (!cells.empty()) {
+                b.push_back(section("TELEMETRY", pal::proc_ac));
+                for (std::size_t i = 0; i < cells.size(); i += 3) {
+                    auto at = [&](std::size_t j) -> const Cell* {
+                        return j < cells.size() ? &cells[j] : nullptr;
+                    };
+                    const Cell* c1 = at(i);
+                    const Cell* c2 = at(i + 1);
+                    const Cell* c3 = at(i + 2);
+                    b.push_back(kv3(
+                        c1 ? c1->k : "", c1 ? c1->v : "", c1 ? c1->c : pal::dim,
+                        c2 ? c2->k : "", c2 ? c2->v : "", c2 ? c2->c : pal::dim,
+                        c3 ? c3->k : "", c3 ? c3->v : "", c3 ? c3->c : pal::dim));
+                }
+            }
+        }
 
         // Verdict: read the numbers for you.
         {
             const double u = g.usage.v, mu = g.mem_usage.v;
             std::string msg; maya::Color c;
-            if (mu > 0.95) { msg = "▲ VRAM is nearly full — the next allocation may fail or spill to system RAM (slow)"; c = pal::crit; }
+            if (!g.unified && mu > 0.95) { msg = "▲ VRAM is nearly full — the next allocation may fail or spill to system RAM (slow)"; c = pal::crit; }
+            else if (g.unified && mu > 0.5) { msg = "▲ the GPU holds over half of system RAM — apps and GPU are fighting for memory"; c = pal::hot; }
             else if (u > 0.9) { msg = "▲ pinned at full load — this is your bottleneck right now"; c = pal::hot; }
             else if (g.temp_c > 84) { msg = "▲ running hot — the card may be thermal-throttling"; c = pal::hot; }
             else if (u < 0.05 && mu < 0.2) { msg = "● idle — nothing is really using the GPU"; c = pal::good; }
@@ -107,11 +165,9 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         b.push_back(gap_row());
 
-        // ── VRAM consumers ─────────────────────────────────────────────────────
-        b.push_back(section("USING THIS GPU", pal::proc_ac));
-        if (g.procs.empty()) {
-            b.push_back(verdict("no processes are holding GPU memory right now", pal::dim));
-        } else {
+        // ── VRAM consumers ─────────────────────────────────────────────────
+        if (!g.procs.empty()) {
+            b.push_back(section("USING THIS GPU", pal::proc_ac));
             const int show = std::min<int>(cx.tall ? 8 : 5, static_cast<int>(g.procs.size()));
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
@@ -124,7 +180,8 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
 
         if (++gi < static_cast<int>(s.gpus.size())) {
             b.push_back(gap_row());
-            b.push_back((text(std::string(cx.w - 4, '-')) | nowrap | fgc(pal::faint)).build());
+            b.push_back((text(std::string(static_cast<std::size_t>(std::max(8, cx.w - 4)), '-'))
+                         | nowrap | fgc(pal::faint)).build());
             b.push_back(gap_row());
         }
     }

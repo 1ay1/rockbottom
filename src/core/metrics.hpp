@@ -152,9 +152,13 @@ struct GpuProc {
 // is the rolling utilisation ring for the hero graph.
 struct GpuInfo {
     std::string           name = "GPU";
-    std::string           vendor;        // "NVIDIA" / "AMD" / "Intel"
+    std::string           vendor;        // "NVIDIA" / "AMD" / "Intel" / "Apple"
     std::string           driver;        // driver version, if known
+    int                   cores = 0;      // GPU core count (Apple) / SM count, 0 unknown
+    bool                  unified = false;// unified memory (Apple Silicon) — VRAM is RAM
     Ratio                 usage{};        // core/SM busy fraction 0..1
+    Ratio                 renderer_usage{}; // 3D/render engine busy (Apple)
+    Ratio                 tiler_usage{};    // tiler / geometry engine busy (Apple)
     Ratio                 mem_usage{};    // vram used / total 0..1
     Bytes                 mem_used{}, mem_total{};
     float                 temp_c = 0;     // 0 if unavailable

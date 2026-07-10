@@ -173,7 +173,10 @@ void collect_amd(std::vector<GpuInfo>& out) {
 
         GpuInfo g;
         g.vendor = "AMD";
-        g.name = "AMD GPU";   // amdgpu doesn't expose a marketing name in sysfs
+        // Newer amdgpu exposes the marketing name; fall back to the generic.
+        g.name = trim(first_line(slurp(dev + "/product_name")));
+        if (g.name.empty()) g.name = "AMD GPU";
+        g.driver = trim(first_line(slurp("/sys/module/amdgpu/version")));
         std::string busy = trim(first_line(slurp(dev + "/gpu_busy_percent")));
         g.usage = Ratio{num(busy) / 100.0};
         g.mem_used = Bytes{read_u64(dev + "/mem_info_vram_used")};
@@ -213,6 +216,7 @@ void collect_intel(std::vector<GpuInfo>& out) {
         GpuInfo g;
         g.vendor = "Intel";
         g.name = "Intel GPU";
+        g.driver = trim(first_line(slurp("/sys/module/i915/version")));
         g.core_clock = Hertz{read_u64(card + "/gt_act_freq_mhz") * 1000000ull};
         // i915 doesn't export a simple busy% in sysfs; leave usage at 0 so the
         // pane shows clocks + whatever hwmon gives us rather than a fake load.
