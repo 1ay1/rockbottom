@@ -86,8 +86,10 @@ public:
         } else {
             auto mount_cell = [&](const DiskInfo& d) -> Element {
                 const double f = d.usage().v;
-                std::string mnt = d.mount.size() > 12
-                    ? "…" + d.mount.substr(d.mount.size() - 11) : d.mount;
+                // Label column matches the I/O row's (8 cells) so both rows
+                // hang on the same left rail.
+                std::string mnt = d.mount.size() > 8
+                    ? "…" + d.mount.substr(d.mount.size() - 7) : d.mount;
                 std::string cap = humanize_bytes(d.used) + " / " + humanize_bytes(d.total);
                 std::string fs = d.fstype;
                 // fstype as a bracketed badge (maya Badge idiom): dim caps,
@@ -116,23 +118,30 @@ public:
                         fs_badge()
                     ) | gap(1)).build();
                 }
-                // One mount per row: the meter fills, capacity + fstype drop
-                // out first when the panel narrows.
+                // One mount per row, on the SAME grid as the I/O row above:
+                //   I/O   ▼ 8.8M/s ▂▃▁  ▲ 320K/s ▁▁▁
+                //   /       89%    ███████  411G / 460G  [apfs]
+                // label(8) · numeric right-aligned to the rate column's right
+                // edge (▼+gap+rate = 9 cells) · meter starts where the first
+                // spark starts · capacity + fs badge at the right end.
                 return Element{ComponentElement{
                     .render = [=](int w, int) -> Element {
                         const bool show_fs  = w >= 44;
                         const bool show_cap = w >= 32;
                         const bool show_pct = w >= 20;
-                        int used = 11 + (show_pct ? 6 : 0)
-                                 + (show_cap ? 13 : 0) + (show_fs ? 7 : 0);
+                        const int fsw = static_cast<int>(fs.size()) + 2;
+                        int used = 8 + (show_pct ? 9 + 1 : 0)
+                                 + (show_cap ? 12 + 1 : 0) + (show_fs ? fsw + 1 : 0) + 1;
                         int mw = std::max(4, w - used);
                         std::vector<Element> cols;
-                        cols.push_back((text(mnt) | nowrap | fgc(pal::disk_ac) | w_<11>).build());
+                        cols.push_back((text(mnt) | nowrap | fgc(pal::disk_ac) | w_<8>).build());
                         if (show_pct)
-                            cols.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<5>).build());
+                            cols.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f))
+                                            | width(9) | justify(Justify::End)).build());
                         cols.push_back(Meter{f}.width(mw).build_fixed());
                         if (show_cap)
-                            cols.push_back((text(cap) | nowrap | fgc(pal::text) | w_<12>).build());
+                            cols.push_back((text(cap) | nowrap | fgc(pal::text)
+                                            | w_<12> | justify(Justify::End)).build());
                         if (show_fs)
                             cols.push_back(fs_badge());
                         return (h(std::move(cols)) | gap(1)).build();
