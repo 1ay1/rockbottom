@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -158,6 +159,125 @@ inline Element rank_row(int rank, const std::string& pid, const std::string& nam
     if (v2w > 0)
         row.push_back((text(v2) | nowrap | fgc(c2) | width(v2w) | justify(Justify::End)).build());
     return (h(std::move(row)) | gap(1)).build();
+}
+
+// ── BIG-NUMBER STAT CARD ─────────────────────────────────────────────
+// The Grafana "stat panel" idiom, terminal-native: the pane's headline
+// figure rendered in 3-row seven-segment block digits, with a trend arrow
+// and window stats (avg / peak) beneath — parked LEFT of the hero graph so
+// the one number you came for is unmissable from across the room.
+
+inline const char* big_digit(int d, int row) {
+    static constexpr const char* F[10][3] = {
+        {"█▀█", "█ █", "█▄█"},   // 0
+        {"▄█ ", " █ ", "▄█▄"},   // 1
+        {"▀▀█", "█▀▀", "█▄▄"},   // 2
+        {"▀▀█", " ▀█", "▄▄█"},   // 3
+        {"█ █", "▀▀█", "  █"},   // 4
+        {"█▀▀", "▀▀█", "▄▄█"},   // 5
+        {"█▀▀", "█▀█", "█▄█"},   // 6
+        {"▀▀█", "  █", "  █"},   // 7
+        {"█▀█", "█▀█", "█▄█"},   // 8
+        {"█▀█", "▀▀█", "▄▄█"},   // 9
+    };
+    return F[d][row];
+}
+
+// A fixed-width column: big percent digits, label, trend arrow computed from
+// the history ring (recent window vs the stretch before it), avg + peak of
+// the window. Emits exactly `rows_avail` rows so it slots beside a graph of
+// the same height; lines drop from the bottom when the graph is short.
+inline Element stat_card(double frac, maya::Color c, const std::string& label,
+                         const float* hist, int len, int rows_avail) {
+    using namespace maya; using namespace maya::dsl;
+    const int pct = std::clamp(static_cast<int>(std::lround(frac * 100)), 0, 999);
+    std::string digits = std::to_string(pct);
+
+    std::array<std::string, 3> rows;
+    for (char ch : digits)
+        for (int r = 0; r < 3; ++r)
+            rows[static_cast<std::size_t>(r)] += std::string(big_digit(ch - '0', r)) + " ";
+    rows[2] += "%";
+
+    // Window stats + trend: mean of the last ~6 samples vs the ~18 before.
+    double avg = 0, peak = 0, recent = 0, prior = 0;
+    int rn = 0, pn = 0;
+    for (int i = 0; i < len; ++i) {
+        const double v = hist[i];
+        avg += v; peak = std::max(peak, v);
+        if (i >= len - 6) { recent += v; ++rn; }
+        else if (i >= len - 24) { prior += v; ++pn; }
+    }
+    if (len > 0) avg /= len;
+    if (rn) recent /= rn;
+    if (pn) prior /= pn;
+    const double d = pn ? recent - prior : 0;
+    const char* arrow = d > 0.03 ? "↗ rising" : d < -0.03 ? "↘ falling" : "→ steady";
+    const maya::Color ac = d > 0.03 ? pal::hot : d < -0.03 ? pal::good : pal::dim;
+
+    std::vector<Element> col;
+    for (int r = 0; r < 3 && r < rows_avail; ++r)
+        col.push_back((text(rows[static_cast<std::size_t>(r)]) | nowrap | Bold | fgc(c)).build());
+    if (rows_avail >= 5)
+        col.push_back((text(label) | nowrap | fgc(pal::dim)).build());
+    if (rows_avail >= 6)
+        col.push_back((text(arrow) | nowrap | fgc(ac)).build());
+    if (rows_avail >= 8) {
+        col.push_back((text("avg " + fmt::pct(avg)) | nowrap | fgc(pal::faint)).build());
+        col.push_back((text("pk  " + fmt::pct(peak)) | nowrap | fgc(pal::faint)).build());
+    }
+    while (static_cast<int>(col.size()) < rows_avail) col.push_back(blank());
+    return (v(std::move(col)) | width(16)).build();
+}
+
+// ── STACKED COMPOSITION BAR ──────────────────────────────────────────
+// One full-width bar whose colored segments show HOW a total is composed
+// (the Activity-Monitor / htop memory idiom) — far more legible than a
+// stack of near-identical meters. Free space renders as a quiet ░ tail.
+struct Seg { double frac; maya::Color c; };
+
+inline Element comp_bar(std::vector<Seg> segs) {
+    using namespace maya;
+    return Element{ComponentElement{
+        .render = [segs = std::move(segs)](int w, int) -> Element {
+            std::string content;
+            std::vector<StyledRun> runs;
+            int used = 0;
+            for (const Seg& s : segs) {
+                int cells = static_cast<int>(std::lround(s.frac * w));
+                cells = std::min(cells, w - used);
+                if (cells <= 0) continue;
+                std::size_t off = content.size();
+                for (int i = 0; i < cells; ++i) content += "█";
+                runs.push_back({off, content.size() - off, Style{}.with_fg(s.c)});
+                used += cells;
+            }
+            if (used < w) {
+                std::size_t off = content.size();
+                for (int i = used; i < w; ++i) content += "░";
+                runs.push_back({off, content.size() - off,
+                                Style{}.with_fg(mix(pal::dim, pal::bg_panel, 0.5))});
+            }
+            return Element{TextElement{.content = std::move(content), .style = {},
+                                       .wrap = TextWrap::NoWrap, .runs = std::move(runs)}};
+        },
+    }};
+}
+
+// Legend row for a comp_bar: "■ apps 5.5G   ■ wired 2.2G   …" — swatch in
+// the segment color, label dim, value bold.
+struct LegendItem { std::string label, value; maya::Color c; };
+
+inline Element comp_legend(const std::vector<LegendItem>& items) {
+    using namespace maya; using namespace maya::dsl;
+    std::vector<Element> row;
+    for (const LegendItem& it : items) {
+        row.push_back((text("■") | nowrap | fgc(it.c)).build());
+        row.push_back((text(" " + it.label + " ") | nowrap | fgc(pal::dim)).build());
+        row.push_back((text(it.value) | nowrap | Bold | fgc(pal::label)).build());
+        row.push_back((text("   ") | nowrap).build());
+    }
+    return (h(std::move(row))).build();
 }
 
 // Peak-normalize a raw-rate history (B/s floats) into 0..1 for Spark, which

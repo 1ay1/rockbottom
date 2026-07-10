@@ -17,17 +17,10 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     const CpuInfo& c = s.cpu;
     std::vector<Element> b;
 
-    // ── hero graph ─────────────────────────────────────────────────────────────────
-    // Gauge idiom: the live total rides the section rule as a big bold
-    // number with its own load hue — the one figure the pane is about.
-    {
-        std::vector<Element> hdr;
-        hdr.push_back(Element{section("LOAD OVER TIME", pal::cpu_ac)} | grow(1));
-        hdr.push_back((text("── cpu ") | nowrap | Bold | fgc(load_color(c.total.v))).build());
-        hdr.push_back((text(" " + fmt::pct(c.total.v) + " ") | nowrap | Bold
-                       | fgc(pal::bg) | bgc(load_color(c.total.v))).build());
-        b.push_back((h(std::move(hdr)) | gap(1)).build());
-    }
+    // ── hero: BIG number + graph ────────────────────────────────────────
+    // Grafana stat-panel idiom: the headline figure in block digits with a
+    // trend arrow, parked left of the load graph — readable across the room.
+    b.push_back(section("LOAD OVER TIME", pal::cpu_ac));
     {
         const int gh = cx.graph_h;
         std::vector<Element> axis;
@@ -39,6 +32,8 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
         }
         b.push_back((h(
+            stat_card(c.total.v, load_color(c.total.v), "cpu load",
+                      c.total_history.data(), c.total_hist_len, gh),
             v(std::move(axis)) | width(3),
             Element{Graph{c.total_history.data(), c.total_hist_len}.fill().rows(gh)} | grow(1)
         ) | gap(1) | height(gh)).build());

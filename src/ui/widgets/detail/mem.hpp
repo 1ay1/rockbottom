@@ -17,15 +17,8 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     const MemInfo& m = s.mem;
     std::vector<Element> b;
 
-    // ── trend graph — with the live % riding the rule as a gauge pill ──
-    {
-        std::vector<Element> hdr;
-        hdr.push_back(Element{section("USAGE TREND", pal::mem_ac)} | grow(1));
-        hdr.push_back((text("── ram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
-        hdr.push_back((text(" " + fmt::pct(m.usage().v) + " ") | nowrap | Bold
-                       | fgc(pal::bg) | bgc(load_color(m.usage().v))).build());
-        b.push_back((h(std::move(hdr)) | gap(1)).build());
-    }
+    // ── hero: BIG number + trend graph ──────────────────────────────────
+    b.push_back(section("USAGE TREND", pal::mem_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
         std::vector<Element> axis;
@@ -34,27 +27,61 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
             axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
         }
         b.push_back((h(
+            stat_card(m.usage().v, pal::mem_ac, "ram used",
+                      m.usage_history.data(), m.hist_len, gh),
             v(std::move(axis)) | width(3),
             Element{Graph{m.usage_history.data(), m.hist_len}.fill().rows(gh).color(pal::mem_ac)} | grow(1)
         ) | gap(1) | height(gh)).build());
     }
     b.push_back(gap_row());
 
-    // ── physical breakdown ───────────────────────────────────────────
-    // Where every byte actually is: app anonymous pages, kernel-wired pages,
-    // the compressor pool, file cache, purgeable buffers. Apps + wired +
-    // compressed ≈ committed; cache/purgeable are reclaimable on demand.
+    // ── physical composition ─────────────────────────────────────────────
+    // ONE stacked bar shows how RAM is divided (the Activity-Monitor idiom)
+    // — apps / wired / compressed / cache, free as the quiet tail — then a
+    // legend with the exact figures. Far more legible than five separate
+    // meters that all start at the same left edge.
     b.push_back(section("PHYSICAL", pal::mem_ac));
-    b.push_back(bar("used", m.usage().v, humanize_bytes(m.used) + " / " + humanize_bytes(m.total), pal::mem_ac, cx.wide ? 34 : 0));
-    if (m.app.value)
-        b.push_back(bar("apps", Ratio::of(m.app, m.total).v, humanize_bytes(m.app) + " anonymous pages", pal::mem_ac, cx.wide ? 34 : 0));
-    if (m.wired.value)
-        b.push_back(bar("wired", Ratio::of(m.wired, m.total).v, humanize_bytes(m.wired) + " kernel-pinned", pal::hot, cx.wide ? 34 : 0));
-    if (m.compressed.value)
-        b.push_back(bar("compressed", Ratio::of(m.compressed, m.total).v, humanize_bytes(m.compressed) + " compressor pool", pal::pink, cx.wide ? 34 : 0));
-    b.push_back(bar("cache", Ratio::of(m.cached, m.total).v, humanize_bytes(m.cached) + " file cache", pal::teal, cx.wide ? 34 : 0));
-    if (m.buffers.value)
-        b.push_back(bar("purgeable", Ratio::of(m.buffers, m.total).v, humanize_bytes(m.buffers) + " volatile", pal::sky, cx.wide ? 34 : 0));
+    {
+        const double t = static_cast<double>(m.total.value ? m.total.value : 1);
+        std::vector<Seg> segs;
+        std::vector<LegendItem> leg;
+        std::uint64_t seg_sum = 0;
+        auto add = [&](Bytes v, const char* name, maya::Color c) {
+            if (!v.value) return;
+            segs.push_back({static_cast<double>(v.value) / t, c});
+            leg.push_back({name, humanize_bytes(v), c});
+            seg_sum += v.value;
+        };
+        if (m.app.value || m.wired.value || m.compressed.value) {
+            add(m.app, "apps", pal::mem_ac);
+            add(m.wired, "wired", pal::hot);
+            add(m.compressed, "compressed", pal::pink);
+            add(m.cached, "cache", pal::teal);
+            add(m.buffers, "purgeable", pal::sky);
+        } else {
+            // Linux shape: used / cache / buffers.
+            add(m.used, "used", pal::mem_ac);
+            add(m.cached, "cache", pal::teal);
+            add(m.buffers, "buffers", pal::sky);
+        }
+        // The trailing figure and the "free" swatch must agree with what the
+        // bar PAINTS (sum of segments), not with the abstract used counter —
+        // a bar at 75% captioned "3.8G / 16G" reads as a bug.
+        const std::uint64_t painted = std::min(seg_sum, m.total.value);
+        const std::uint64_t tail = m.total.value > painted ? m.total.value - painted : 0;
+        b.push_back((h(
+            text("ram") | nowrap | fgc(pal::label) | width(14),
+            Element{comp_bar(std::move(segs))} | grow(1),
+            text(humanize_bytes(Bytes{painted}) + " / " + humanize_bytes(m.total))
+                | nowrap | Bold | fgc(pal::label) | width(16) | justify(Justify::End)
+        ) | gap(2)).build());
+        leg.push_back({"free", humanize_bytes(Bytes{tail}),
+                       mix(pal::dim, pal::bg_panel, 0.5)});
+        b.push_back((h(
+            Element{blank()} | width(16),
+            Element{comp_legend(leg)} | grow(1)
+        )).build());
+    }
 
     // Available is the number that actually matters — how much a new process
     // could take without swapping. Read it out plainly.

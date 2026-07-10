@@ -44,15 +44,12 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         b.push_back(gap_row());
 
         // ── hero graph ─────────────────────────────────────────────────────
+        // ── hero: BIG number + graph ─────────────────────────────────
         {
             std::vector<Element> hdr;
             hdr.push_back(Element{section("UTILISATION OVER TIME", pal::proc_ac)} | grow(1));
             hdr.push_back((text("── core ") | nowrap | Bold | fgc(pal::proc_ac)).build());
-            hdr.push_back((text(" " + fmt::pct(g.usage.v) + " ") | nowrap | Bold
-                           | fgc(pal::bg) | bgc(load_color(g.usage.v))).build());
             hdr.push_back((text(" ── vram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
-            hdr.push_back((text(" " + fmt::pct(g.mem_usage.v) + " ") | nowrap | Bold
-                           | fgc(pal::bg) | bgc(load_color(g.mem_usage.v))).build());
             b.push_back((h(std::move(hdr)) | gap(1)).build());
         }
         {
@@ -66,6 +63,8 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             gr.fill().rows(gh).color(pal::proc_ac)
               .overlay(g.mem_history.data(), g.mem_hist_len, pal::mem_ac);
             b.push_back((h(
+                stat_card(g.usage.v, load_color(g.usage.v), "gpu busy",
+                          g.util_history.data(), g.hist_len, gh),
                 v(std::move(axis)) | width(3),
                 Element{std::move(gr)} | grow(1)
             ) | gap(1) | height(gh)).build());
