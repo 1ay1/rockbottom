@@ -36,20 +36,11 @@ public:
 
         std::vector<Element> rows;
 
-        // ── Row 1: live whole-system I/O rates with peak-normalized history ──
-        // When the disks are quiet, say so in four dim words instead of two
-        // zero-rows of dead sparkline.
-        const bool io_active = io_.read.per_sec + io_.write.per_sec > 1024 ||
-                               [&]{ for (int i = 0; i < io_.hist_len; ++i)
-                                        if (io_.read_history[static_cast<std::size_t>(i)] +
-                                            io_.write_history[static_cast<std::size_t>(i)] > 1024) return true;
-                                    return false; }();
-        if (!io_active) {
-            rows.push_back((h(
-                text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<13>,
-                text("idle — no disk activity") | nowrap | fgc(pal::dim)
-            ) | gap(1)).build());
-        } else {
+        // ── Row 1: live whole-system I/O rates — rendered exactly like a
+        // network interface row: peak-normalized rx/tx-style sparks with the
+        // baseline mode keeping a faint ▁ track alive when the disk idles,
+        // so the graph never vanishes.
+        {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
                 peak = std::max({peak,
@@ -66,20 +57,24 @@ public:
             int hl = io_.hist_len;
             rows.push_back(Element{ComponentElement{
                 .render = [=](int w, int) -> Element {
+                    // Mirror net_panel's row: label(8) + ▼(1)+rate(7) + spark
+                    // + ▲(1)+rate(7) + spark, sparks splitting the slack.
                     const bool show_spark = w >= 34;
-                    int fixed = 5 + 1 + 8 + 2 + 8 + 5;
+                    int fixed = 8 + 1 + 7 + 2 + 7 + 5;
                     int slack = std::max(0, w - fixed);
                     int each = show_spark ? slack / 2 : 0;
                     std::vector<Element> cols;
-                    cols.push_back((text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<5>).build());
+                    cols.push_back((text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<8>).build());
                     cols.push_back((text("▼") | nowrap | fgc(pal::sky)).build());
-                    cols.push_back((text(rd) | nowrap | Bold | fgc(pal::text) | w_<8>).build());
+                    cols.push_back((text(rd) | nowrap | fgc(pal::text) | w_<7>).build());
                     if (each > 0)
-                        cols.push_back(Spark{rna.data(), hl}.cells(each).color(pal::sky).build_fixed());
+                        cols.push_back(Spark{rna.data(), hl}.cells(each).color(pal::sky)
+                                           .baseline(true).build_fixed());
                     cols.push_back((text("▲") | nowrap | fgc(pal::pink)).build());
-                    cols.push_back((text(wr) | nowrap | Bold | fgc(pal::text) | w_<8>).build());
+                    cols.push_back((text(wr) | nowrap | fgc(pal::text) | w_<7>).build());
                     if (each > 0)
-                        cols.push_back(Spark{wna.data(), hl}.cells(each).color(pal::pink).build_fixed());
+                        cols.push_back(Spark{wna.data(), hl}.cells(each).color(pal::pink)
+                                           .baseline(true).build_fixed());
                     return (h(std::move(cols)) | gap(1)).build();
                 },
             }});
