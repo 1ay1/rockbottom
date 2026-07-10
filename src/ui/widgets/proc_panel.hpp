@@ -174,8 +174,7 @@ private:
         cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<11>).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
-        if (show_mem) cols.push_back(num_hdr("MEM", SortKey::Mem, 12, 7));
-        else          cols.push_back(plain_num("MEM", 7));
+        cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
         if (show_memp) cols.push_back(plain_num("MEM%", 5));
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<10> | justify(Justify::End)).build());
         cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>).build());
@@ -238,9 +237,7 @@ private:
                 cols.push_back((text(port_txt) | nowrap | fgc(pal::sky) | w_<11>).build());
             cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6>).build());
-            if (show_mem)
-                cols.push_back(Meter{mem_frac}.width(12).color(pal::mem_ac).groove(false).build_fixed());
-            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7> | justify(Justify::End)).build());
+            cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<8> | justify(Justify::End)).build());
             if (show_memp)
                 cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
             if (show_io)
