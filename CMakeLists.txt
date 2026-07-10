@@ -41,4 +41,7 @@ add_executable(rockbottom
 target_link_libraries(rockbottom PRIVATE maya)
 target_compile_features(rockbottom PRIVATE cxx_std_26)
 
+# The binary is `rb` — short, one hand, the way you'll actually type it.
+set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
+
 install(TARGETS rockbottom RUNTIME DESTINATION bin)

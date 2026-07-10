@@ -237,7 +237,7 @@ git clone --recurse-submodules https://github.com/1ay1/rockbottom
 cd rockbottom
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-./build/rockbottom
+./build/rb
 ```
 
 Cloned it and forgot `--recurse-submodules`, you beautiful disaster?
