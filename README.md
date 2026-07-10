@@ -88,11 +88,18 @@ plain-language verdict, so you never leave staring at digits wondering *so what?
 - **`3` NETWORK** — an all-interfaces aggregate line (total down/up, lifetime
   bytes, links up), then **every interface** with live rx/tx sparklines, lifetime
   totals, a burst detector, and up/down state.
-- **`4` DISK** — system-wide read/write sparklines, I/O pressure with a
+- **`4` GPU** — **it replaces nvtop entirely.** Utilisation-over-time graph, core
+  + VRAM meters, a full telemetry strip (temperature, power draw vs limit, core
+  & memory clocks, fan, perf-state, NVENC/NVDEC encoder/decoder load), the
+  processes actually holding VRAM, and a verdict (“▲ VRAM is nearly full” /
+  “pinned at full load — this is your bottleneck”). Works with NVIDIA (via
+  `nvidia-smi`), AMD (`amdgpu` sysfs) and Intel; whatever your card can't report
+  is simply left out. Multiple GPUs stack.
+- **`5` DISK** — system-wide read/write sparklines, I/O pressure with a
   bottleneck verdict, **every filesystem** with its backing device, free space,
   used/size, fstype and a fullness meter, the fullest-mount callout, and the
   **processes actually driving disk traffic** right now.
-- **`5` / `Enter` PROCESS** — drill into the selected process: full command line,
+- **`6` / `Enter` PROCESS** — drill into the selected process: full command line,
   cpu + memory bars, **its rank against every other process** (so you instantly
   know if it's *the* hog: “#1 CPU consumer on the machine right now”), disk
   read/write, thread count, a *plain-language* run-state (“◆ uninterruptible —
@@ -213,7 +220,7 @@ There. We fixed it. You're welcome. We're not mad.
 | `K` | *aggressively* remove a process (SIGKILL — still asks first, we're not savages) |
 | `y` / `n` | yes commit the crime / no I panicked nevermind |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
-| `1`–`5` / `Enter` | open a detail pane (cpu · mem · net · disk · process) |
+| `1`–`6` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it) |
 | `?` / `h` | help, for when all of this immediately leaves your brain |

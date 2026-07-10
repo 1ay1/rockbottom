@@ -23,6 +23,7 @@
 #include "detail/cpu.hpp"
 #include "detail/mem.hpp"
 #include "detail/net.hpp"
+#include "detail/gpu.hpp"
 #include "detail/disk.hpp"
 #include "detail/proc.hpp"
 
@@ -31,7 +32,7 @@
 
 namespace bottom::ui {
 
-enum class Detail { None, Cpu, Mem, Net, Disk, Proc };
+enum class Detail { None, Cpu, Mem, Net, Gpu, Disk, Proc };
 
 class DetailPane {
     const Snapshot& s_;
@@ -87,6 +88,7 @@ private:
             case Detail::Cpu:  glyph = "◈"; title = "CPU · " + fmt::short_model(s_.cpu.model); ac = pal::cpu_ac; break;
             case Detail::Mem:  glyph = "▤"; title = "MEMORY";  ac = pal::mem_ac;  break;
             case Detail::Net:  glyph = "⇅"; title = "NETWORK"; ac = pal::net_ac;  break;
+            case Detail::Gpu:  glyph = "◆"; title = "GPU";     ac = pal::proc_ac; break;
             case Detail::Disk: glyph = "◇"; title = "DISK";    ac = pal::disk_ac; break;
             case Detail::Proc: glyph = "≡"; title = "PROCESS"; ac = pal::proc_ac; break;
             default:           glyph = " "; title = "";        ac = pal::text;    break;
@@ -99,6 +101,7 @@ private:
             case Detail::Cpu:  return detail::cpu_body(s_, cx);
             case Detail::Mem:  return detail::mem_body(s_, cx);
             case Detail::Net:  return detail::net_body(s_, cx);
+            case Detail::Gpu:  return detail::gpu_body(s_, cx);
             case Detail::Disk: return detail::disk_body(s_, cx);
             case Detail::Proc: return detail::proc_body(s_, cx, proc_);
             default:           return {};
@@ -143,8 +146,10 @@ private:
         row.push_back((text("3") | nowrap | Bold | fgc(pal::sky)).build());
         row.push_back((text(" net ") | nowrap | fgc(pal::dim)).build());
         row.push_back((text("4") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text(" disk ") | nowrap | fgc(pal::dim)).build());
+        row.push_back((text(" gpu ") | nowrap | fgc(pal::dim)).build());
         row.push_back((text("5") | nowrap | Bold | fgc(pal::sky)).build());
+        row.push_back((text(" disk ") | nowrap | fgc(pal::dim)).build());
+        row.push_back((text("6") | nowrap | Bold | fgc(pal::sky)).build());
         row.push_back((text(" proc") | nowrap | fgc(pal::dim)).build());
         if (scrollable) {
             row.push_back((Element{blank()} | grow(1)).build());

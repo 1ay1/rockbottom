@@ -164,7 +164,7 @@ struct App {
             {"x", "end",    FooterAct::End},
             {"K", "kill",   FooterAct::Kill},
             {"s", "sort",   FooterAct::Sort},
-            {"1-5", "detail", FooterAct::End /*label only, no action*/},
+            {"1-6", "detail", FooterAct::End /*label only, no action*/},
             {"space", "pause", FooterAct::Pause},
             {"?", "help",   FooterAct::Help},
         };
@@ -174,9 +174,9 @@ struct App {
             const int dw = disp_width(hints[i].d);
             const int w  = 1 /*leading space*/ + kw + 1 /*·*/ + dw;
             if (mx >= col && mx < col + w) {
-                // ↑↓ select and 1-5 detail are labels with no click action.
+                // ↑↓ select and 1-6 detail are labels with no click action.
                 if (std::string(hints[i].k) == "\u2191\u2193" ||
-                    std::string(hints[i].k) == "1-5") return std::nullopt;
+                    std::string(hints[i].k) == "1-6") return std::nullopt;
                 return hints[i].a;
             }
             col += w + 1;   // + gap(1)
@@ -458,8 +458,9 @@ struct App {
             if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '4')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '5')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+            if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (m.detail == ui::Detail::Proc) {
                 // In the process pane ↑↓ walk the selection (and the app keeps
                 // it visible); other keys still work.
@@ -493,8 +494,9 @@ struct App {
         if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
         if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
         if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '4')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '5') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '6') || key(ev, maya::SpecialKey::Enter)) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; return {std::move(m), C{}}; }
 
         if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m)); }
         if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }

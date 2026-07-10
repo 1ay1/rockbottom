@@ -111,6 +111,40 @@ struct Battery {
     bool charging = false;
 };
 
+// A process holding GPU memory / doing GPU work (from nvidia-smi compute-apps
+// or the DRM fdinfo scan). `mem` is bytes of VRAM the process has mapped.
+struct GpuProc {
+    int         pid = 0;
+    std::string name;
+    Bytes       mem{};
+};
+
+// One GPU. Fields that a given vendor can't report stay at their sentinel
+// (usage/temp = 0, freq = 0, power = 0) and the pane just omits them. `history`
+// is the rolling utilisation ring for the hero graph.
+struct GpuInfo {
+    std::string           name = "GPU";
+    std::string           vendor;        // "NVIDIA" / "AMD" / "Intel"
+    std::string           driver;        // driver version, if known
+    Ratio                 usage{};        // core/SM busy fraction 0..1
+    Ratio                 mem_usage{};    // vram used / total 0..1
+    Bytes                 mem_used{}, mem_total{};
+    float                 temp_c = 0;     // 0 if unavailable
+    double                power_w = 0;    // current draw, 0 if unavailable
+    double                power_limit_w = 0;
+    Hertz                 core_clock{};   // current core/SM clock
+    Hertz                 mem_clock{};
+    int                   fan_pct = -1;   // -1 if unavailable
+    Ratio                 enc_usage{};    // encoder busy (NVENC)
+    Ratio                 dec_usage{};    // decoder busy (NVDEC)
+    std::string           pstate;         // perf state (P0..P8), if known
+    std::array<float, 96> util_history{};
+    int                   hist_len = 0;
+    std::array<float, 96> mem_history{};
+    int                   mem_hist_len = 0;
+    std::vector<GpuProc>  procs;          // top VRAM consumers
+};
+
 struct Snapshot {
     std::string           hostname, kernel;
     std::uint64_t         uptime_sec = 0;
@@ -121,6 +155,7 @@ struct Snapshot {
     std::vector<DiskInfo> disks;
     DiskIO                disk_io;
     std::vector<NetIface> nets;
+    std::vector<GpuInfo>  gpus;
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
     Psi                   psi;
     Battery               battery;

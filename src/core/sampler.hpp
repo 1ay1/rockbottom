@@ -49,6 +49,7 @@ private:
     void    sample_disks(std::vector<DiskInfo>&);
     void    sample_disk_io(DiskIO&, double dt);
     void    sample_net(std::vector<NetIface>&, double dt);
+    void    sample_gpu(std::vector<GpuInfo>&);
     void    sample_procs(Snapshot&, SortKey, int top_n, double dt);
     void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
@@ -84,6 +85,8 @@ private:
     int                                       total_hist_len_ = 0;
     std::unordered_map<int, CpuCore>          core_hist_;   // by core index
     std::unordered_map<std::string, NetIface> net_hist_;    // by iface name
+    std::unordered_map<int, std::pair<std::array<float,96>,std::array<float,96>>> gpu_hist_;  // util,mem rings by gpu index
+    std::unordered_map<int, int>              gpu_hist_len_; // valid samples by gpu index
 };
 
 }  // namespace bottom
