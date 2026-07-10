@@ -67,6 +67,29 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         { std::ifstream sm(base + "/statm"); sm >> total_pages >> rss_pages; }
         Bytes rss{rss_pages * static_cast<std::uint64_t>(page_size_)};
 
+        // Per-process block-device I/O from /proc/<pid>/io. read_bytes /
+        // write_bytes are cumulative bytes actually fetched from / sent to the
+        // storage layer (not page-cache hits). Readable only for our own
+        // processes unless privileged; unreadable rows just stay at 0.
+        std::uint64_t io_r = 0, io_w = 0;
+        {
+            std::ifstream iof(base + "/io");
+            std::string key;
+            std::uint64_t val;
+            while (iof >> key >> val) {
+                if (key == "read_bytes:")  io_r = val;
+                else if (key == "write_bytes:") io_w = val;
+            }
+        }
+        ByteRate ior{}, iow{};
+        if (!first_ && prev_proc_.count(pid) && dt > 0) {
+            const auto& pp = prev_proc_[pid];
+            if (io_r >= pp.io_read) ior.per_sec = static_cast<double>(io_r - pp.io_read) / dt;
+            if (io_w >= pp.io_write) iow.per_sec = static_cast<double>(io_w - pp.io_write) / dt;
+        }
+        cur[pid].io_read = io_r;
+        cur[pid].io_write = io_w;
+
         ProcInfo p;
         p.pid = pid;
         p.name = comm;
@@ -75,6 +98,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.cpu = cpu_pct;
         p.rss = rss;
         p.mem_share = Ratio::of(rss, ram_total_);
+        p.io_read = ior;
+        p.io_write = iow;
 
         struct ::stat stbuf{};
         if (::stat(base.c_str(), &stbuf) == 0) p.user = user_of(stbuf.st_uid);
@@ -98,6 +123,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         switch (k) {
             case SortKey::Cpu:  return [](const ProcInfo& a, const ProcInfo& b){ return a.cpu > b.cpu; };
             case SortKey::Mem:  return [](const ProcInfo& a, const ProcInfo& b){ return a.rss.value > b.rss.value; };
+            case SortKey::Io:   return [](const ProcInfo& a, const ProcInfo& b){
+                    return (a.io_read.per_sec + a.io_write.per_sec)
+                         > (b.io_read.per_sec + b.io_write.per_sec); };
             case SortKey::Pid:  return [](const ProcInfo& a, const ProcInfo& b){ return a.pid < b.pid; };
             case SortKey::Name: return [](const ProcInfo& a, const ProcInfo& b){ return a.name < b.name; };
             case SortKey::Port:

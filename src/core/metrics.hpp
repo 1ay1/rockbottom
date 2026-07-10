@@ -73,6 +73,7 @@ struct ProcInfo {
     Ratio       mem_share{};    // rss / total ram
     char        state = '?';    // R S D Z T …
     int         threads = 0;
+    ByteRate    io_read{}, io_write{};   // block-device I/O rate (/proc/pid/io)
     std::vector<std::uint16_t> ports;   // bound TCP/UDP ports (sorted, deduped)
 };
 

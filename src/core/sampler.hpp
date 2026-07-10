@@ -19,7 +19,7 @@
 
 namespace bottom {
 
-enum class SortKey { Cpu, Mem, Pid, Name, Port };
+enum class SortKey { Cpu, Mem, Io, Pid, Name, Port };
 
 // Send a signal to a pid. Returns empty string on success, error text on
 // failure (permission, vanished, …). Lives here because it's the only other
@@ -39,7 +39,7 @@ public:
 
 private:
     struct CpuTimes { std::uint64_t idle = 0, total = 0; };
-    struct ProcPrev { std::uint64_t cpu_ticks = 0; };
+    struct ProcPrev { std::uint64_t cpu_ticks = 0; std::uint64_t io_read = 0, io_write = 0; };
 
     // Collectors (each lives in its own .cpp under collectors/).
     void    read_static();

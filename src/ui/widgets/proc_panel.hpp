@@ -114,6 +114,7 @@ private:
         switch (view_.sort) {
             case SortKey::Cpu:  return "cpu";
             case SortKey::Mem:  return "mem";
+            case SortKey::Io:   return "i/o";
             case SortKey::Pid:  return "pid";
             case SortKey::Name: return "name";
             case SortKey::Port: return "port";
@@ -148,6 +149,7 @@ private:
         const bool show_thr  = w >= 70;
         const bool show_memp = w >= 62;
         const bool show_mem  = w >= 54;
+        const bool show_io   = w >= 84;
         auto hdr = [&](const char* name, SortKey self) {
             std::string s = view_.sort == self ? std::string(name) + "▾" : std::string(name);
             Color c = view_.sort == self ? pal::proc_ac : pal::dim;
@@ -161,6 +163,7 @@ private:
         cols.push_back((hdr("CPU", SortKey::Cpu) | width(show_mem ? 21 : 14)).build());
         cols.push_back((hdr("MEM", SortKey::Mem) | width(show_mem ? 20 : 8)).build());
         if (show_memp) cols.push_back(((text("MEM%") | nowrap | Bold | fgc(pal::dim)) | w_<5>).build());
+        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<10>).build());
         cols.push_back(((text("S") | nowrap | Bold | fgc(pal::dim)) | w_<2>).build());
         if (show_thr) cols.push_back((text("THR") | nowrap | Bold | fgc(pal::dim)).build());
         return (h(std::move(cols)) | gap(1)).build();
@@ -207,6 +210,12 @@ private:
             const bool show_thr  = w >= 70;
             const bool show_memp = w >= 62;
             const bool show_mem  = w >= 54;
+            const bool show_io   = w >= 84;
+            // Combined disk I/O rate; dim when idle, sky when the process is
+            // actually touching the platter so a thrasher pops out.
+            const double iorate = p.io_read.per_sec + p.io_write.per_sec;
+            std::string io_txt = iorate > 512 ? humanize_rate(ByteRate{iorate}) : "·";
+            Color io_c = iorate > 512 ? pal::sky : pal::faint;
             std::vector<Element> cols;
             cols.push_back((text(gutter + std::to_string(p.pid)) | nowrap | fgc(gutter_c) | w_<8>).build());
             cols.push_back((text(fmt::clip(p.user, 7)) | nowrap | fgc(pal::label) | w_<8>).build());
@@ -220,6 +229,8 @@ private:
             cols.push_back((text(humanize_bytes(p.rss)) | nowrap | fgc(pal::text) | w_<7>).build());
             if (show_memp)
                 cols.push_back((text(memp_txt) | nowrap | fgc(mem_frac > 0.1 ? pal::hot : pal::dim) | w_<5>).build());
+            if (show_io)
+                cols.push_back((text(io_txt) | nowrap | fgc(io_c) | w_<10>).build());
             cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2>).build());
             if (show_thr)
                 cols.push_back((text(std::to_string(p.threads)) | nowrap | fgc(pal::dim)).build());

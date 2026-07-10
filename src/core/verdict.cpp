@@ -68,10 +68,14 @@ Verdict Sampler::judge(const Snapshot& s) const {
     const ProcInfo* top_cpu = nullptr;
     const ProcInfo* top_mem = nullptr;
     const ProcInfo* top_d   = nullptr;   // a D-state process to name for io findings
+    const ProcInfo* top_io  = nullptr;   // the heaviest disk-I/O process
     for (const auto& p : s.procs) {
         if (!top_cpu || p.cpu > top_cpu->cpu) top_cpu = &p;
         if (!top_mem || p.rss.value > top_mem->rss.value) top_mem = &p;
         if (p.state == 'D' && (!top_d || p.cpu > top_d->cpu)) top_d = &p;
+        const double io = p.io_read.per_sec + p.io_write.per_sec;
+        if (io > 64 * 1024 && (!top_io ||
+            io > top_io->io_read.per_sec + top_io->io_write.per_sec)) top_io = &p;
     }
     auto name_pid = [](const ProcInfo* p) {
         return p ? p->name + " (pid " + std::to_string(p->pid) + ")" : std::string{};
@@ -131,8 +135,14 @@ Verdict Sampler::judge(const Snapshot& s) const {
         std::string ev;
         if (io_stall > 0)  ev += "tasks stalled on I/O " + fmt_pct(io_stall) + " of the last 10s";
         if (iowait > 15)   ev += (ev.empty() ? "" : "; ") + ("cores idle-waiting " + fmt_pct(iowait));
-        if (s.dstate > 0)  ev += (ev.empty() ? "" : "; ") + std::to_string(s.dstate) +
-                                 " uninterruptible" + (top_d ? " incl. " + name_pid(top_d) : "");
+        if (top_io) {
+            const double io = top_io->io_read.per_sec + top_io->io_write.per_sec;
+            ev += (ev.empty() ? "" : "; ") + name_pid(top_io) + " is moving " +
+                  humanize_rate(ByteRate{io});
+        } else if (s.dstate > 0) {
+            ev += (ev.empty() ? "" : "; ") + std::to_string(s.dstate) +
+                  " uninterruptible" + (top_d ? " incl. " + name_pid(top_d) : "");
+        }
         findings.push_back({sev, "Disk I/O is the bottleneck", std::move(ev)});
     }
 

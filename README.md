@@ -40,6 +40,11 @@ The panels underneath are there when you want the detail — not before.
 - **Network** — per-interface ▼rx / ▲tx rates with peak-normalised sparklines.
 - **Processes** — interactive: select, filter, sort, and kill — with the
   loudest process flagged » and running/disk-sleep state dots.
+- **Per-process disk I/O** — actual block-device read+write rate from
+  `/proc/<pid>/io` (cache-miss traffic, not page-cache hits), shown in the
+  `DISK` column and sortable with `i` — answers "who's thrashing the disk?"
+  The verdict engine names the heaviest I/O process when the machine is
+  I/O-bound.
 - **Ports** — every process's bound TCP/UDP ports (`:8080 +2`), joined from
   `/proc/net/*` socket inodes to `/proc/<pid>/fd` — the `ss -p` trick, live
   in the table, sortable with `o`.
@@ -106,7 +111,7 @@ git submodule update --init --recursive
 | `x` / `Del` | end selected process (SIGTERM, with confirm) |
 | `K` | force-kill selected (SIGKILL, with confirm) |
 | `y` / `n` | confirm / cancel a pending kill |
-| `s` | cycle sort · `c` cpu · `m` mem · `n` name · `P` pid · `o` port |
+| `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
 | `p` / `Space` | pause / resume sampling |
 | `?` / `h` | help overlay |
 | `q` / `Esc` | quit |
