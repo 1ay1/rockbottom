@@ -51,6 +51,11 @@ struct App {
         int      detail_pid = 0;                 // PID the Proc pane is pinned to
         int      width = 100, height = 40;
         int      ticks = 0;
+        // Monotonic generation bumped every time a new Snapshot is folded in
+        // (a Sampled message). visual_hash() folds this instead of deep-
+        // hashing the whole snapshot: a new sample = new data = new frame,
+        // and nothing else mutates snap.
+        std::uint64_t snap_gen = 0;
 
         // Process interaction state.
         int         sel = 0;             // index into the *filtered* view
@@ -166,70 +171,14 @@ struct App {
         return std::clamp(start, 0, std::max(0, n - body_rows));
     }
 
-    // ── footer hit-testing ─────────────────────────────────────────────
-    enum class FooterAct { Quit, Filter, End, Kill, Sort, Pause, Help };
-
-    // Rebuild the SAME hint sequence Footer renders, tracking each label's
-    // column span so a click resolves to the right action. Only the normal-mode
-    // strip is clickable (filter/pending modes are keyboard-driven).
-    // Layout mirror of Footer::build(): outer padding adds 1 leading column;
-    // each hint is " "+k + "·"+d; a " │" separator (2 cols) follows some
-    // groups; everything is joined with gap(1).
-    static std::optional<FooterAct> footer_hit(const Model& m, int mx) {
-        if (m.filtering || m.pending) return std::nullopt;
-        struct H { const char* k; const char* d; FooterAct a; bool sep_after; };
-        static const H hints[] = {
-            {"q", "quit",   FooterAct::Quit,  true},
-            {"\u2191\u2193", "select", FooterAct::End /*label only, no action*/, false},
-            {"/", "filter", FooterAct::Filter, true},
-            {"x", "end",    FooterAct::End,   false},
-            {"K", "kill",   FooterAct::Kill,  false},
-            {"s", "sort",   FooterAct::Sort,  true},
-            {"1-6", "detail", FooterAct::End /*label only, no action*/, false},
-            {"space", "pause", FooterAct::Pause, false},
-            {"?", "help",   FooterAct::Help,  false},
-        };
-        int col = 1;   // outer left padding
-        for (std::size_t i = 0; i < std::size(hints); ++i) {
-            const int kw = disp_width(hints[i].k);
-            const int dw = disp_width(hints[i].d);
-            const int w  = 1 /*leading space*/ + kw + 1 /*·*/ + dw;
-            if (mx >= col && mx < col + w) {
-                // ↑↓ select and 1-6 detail are labels with no click action.
-                if (std::string(hints[i].k) == "\u2191\u2193" ||
-                    std::string(hints[i].k) == "1-6") return std::nullopt;
-                return hints[i].a;
-            }
-            col += w + 1;   // + gap(1)
-            if (hints[i].sep_after) col += 2 + 1;   // " │" + gap(1)
-        }
-        return std::nullopt;
-    }
-
-    // ── detail tab-bar hit-testing ──────────────────────────────────
-    // Mirrors DetailPane::hint()'s exact cell layout: border(1) + panel
-    // padding(1) = 2 leading cols; " esc"(4) + "·back"(5) + "   "(3); then
-    // each tab is either the active CHIP " ◈ key label " (pad+glyph+pad = 4
-    // extra cells) or key(1) + " "+label, followed by "   "(3). Every span is
-    // inclusive of its trailing gap so there are no dead columns between tabs.
-    static std::optional<ui::Detail> detail_tab_hit(const Model& m, int mx) {
-        struct T { ui::Detail d; int label_w; };
-        static constexpr T tabs[] = {
-            {ui::Detail::Cpu, 3}, {ui::Detail::Mem, 3}, {ui::Detail::Net, 3},
-            {ui::Detail::Gpu, 3}, {ui::Detail::Disk, 4}, {ui::Detail::Proc, 4},
-        };
-        int col = 2 + 4 + 5 + 3;   // chrome + esc·back + spacer
-        for (const T& t : tabs) {
-            const bool on = m.detail == t.d;
-            const int w = (on ? 4 : 0) + 1 + 1 + t.label_w;   // [␣◈␣]key␣label[␣]
-            if (mx >= col && mx < col + w + 3) return t.d;    // + "   " gap
-            col += w + 3;
-        }
-        return std::nullopt;
-    }
-
-    static std::pair<Model, maya::Cmd<Msg>> dispatch_footer(Model m, FooterAct a) {
+    // ── footer action dispatch ─────────────────────────────────────────
+    // Clicks resolve to a ui::FooterAct via the paint-time hit registry
+    // (see hit_ids.hpp + Footer's hit() tags); this maps the action to a
+    // model transition. No coordinate math — the id came from the same
+    // layout pass that painted the hint.
+    static std::pair<Model, maya::Cmd<Msg>> dispatch_footer(Model m, ui::FooterAct a) {
         using C = maya::Cmd<Msg>;
+        using ui::FooterAct;
         switch (a) {
             case FooterAct::Quit:  return {std::move(m), C::quit()};
             case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}};
@@ -242,78 +191,17 @@ struct App {
         return {std::move(m), C{}};
     }
 
-    // ── sort-header hit-testing ───────────────────────────────────────
-    // The proc panel sits under outer padding(1) + panel border(1) + panel
-    // padding(1) = 3 leading columns before the header content. We map a click
-    // in the header row to the column it lands on. Rather than reproduce every
-    // column's exact width, we split the header row into three coarse zones
-    // that are forgiving yet unambiguous: left third of the numeric block
-    // cycles nothing, but each visible sort label owns a zone. To stay simple
-    // and miss-free we test against the SAME width tiers the header uses.
-    static std::optional<SortKey> sort_header_hit(const Model& m, int mx) {
-        const int w = std::max(20, m.width - 6);   // ProcView.width
-        const bool show_port = w >= 92;
-        const bool show_memp = w >= 62;
-        const bool show_mem  = w >= 54;
-        const bool show_io   = w >= 84;
-        const bool show_thr  = w >= 70;
-        // Leading offset: outer pad(1) + border(1) + panel pad(1) = 3, but the
-        // rendered labels sit one cell left of the raw column math, so anchor
-        // at 2 and make every zone CONTIGUOUS (each swallows its trailing gap)
-        // so there are no dead columns between headers — a click anywhere in the
-        // header row resolves to exactly one column.
-        int c = 2;
-        auto zone = [&](int width) { int s = c; c += width + 1; return std::pair{s, c}; };
-        { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Pid; }   // PID
-        zone(8);   // USER (not a sort key)
-        int fixed = 8 + 8;                                  // PID + USER
-        if (show_port) fixed += 9 + 1;
-        fixed += (show_mem ? 14 : 8) + 1 + 6;               // CPU meter + gap + value
-        fixed += 8;                                          // MEM
-        if (show_memp) fixed += 5 + 1;
-        if (show_io)   fixed += 8 + 1;
-        fixed += 2;                                          // S
-        if (show_thr)  fixed += 4 + 1;
-        const int name_w = std::max(4, w - fixed - 2);
-        auto [name_s, name_e] = zone(name_w);
-        if (mx >= name_s && mx < name_e) return SortKey::Name;
-        if (show_port) { auto [s,e] = zone(9); if (mx >= s && mx < e) return SortKey::Port; }
-        { auto [s,e] = zone((show_mem ? 14 : 8) + 1 + 6); if (mx >= s && mx < e) return SortKey::Cpu; }
-        { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Mem; }
-        if (show_memp) { auto [s,e] = zone(5); if (mx >= s && mx < e) return SortKey::Mem; }
-        if (show_io)   { auto [s,e] = zone(8); if (mx >= s && mx < e) return SortKey::Io; }
-        return std::nullopt;
-    }
-
-    // Display width of a UTF-8 label (wide box/arrow glyphs count as 1 cell in
-    // this app's font set except the ↑↓ pair which is two 1-cell glyphs).
-    static int disp_width(const char* s) {
-        int w = 0;
-        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ) {
-            unsigned char c = *p;
-            int len = (c < 0x80) ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xe ? 3 : 4;
-            w += 1;   // every codepoint here is one terminal cell
-            p += len;
-        }
-        return w;
-    }
-
     // ── mouse handling ───────────────────────────────────────────────────────
     static std::pair<Model, maya::Cmd<Msg>> on_mouse(Model m, const maya::MouseEvent& me) {
         using C = maya::Cmd<Msg>;
         using maya::MouseButton;
         using maya::MouseEventKind;
 
-        // maya delivers 1-based cell coords; convert to 0-based frame rows/cols.
-        const int mx = me.x.value - 1;
-        const int my = me.y.value - 1;
-
-        const Layout L = compute_layout(m);
-        auto view = filtered(m);
-        const int n = static_cast<int>(view.size());
-
-        const bool over_table =
-            my >= L.proc_body_y && my < L.proc_body_y + L.body_rows;
+        // maya delivers 1-based cell coords; convert to 0-based frame cells,
+        // then resolve the click to a hit-tagged widget by the SAME rect the
+        // renderer painted last frame — no hand-mirrored layout math.
+        const auto hit = maya::hit_test(me.x.value - 1, me.y.value - 1);
+        const int n = static_cast<int>(filtered(m).size());
 
         // ── Scroll wheel ──
         // In a scrollable detail pane the wheel moves the pane window; over the
@@ -349,95 +237,63 @@ struct App {
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {std::move(m), C{}}; }
         if (m.detail != ui::Detail::None) {
-            // The bottom tab bar is a real click target: a left click on a
-            // tab switches to that domain (hit-test mirrors DetailPane::hint's
-            // exact glyph widths). Anywhere else closes the pane.
-            if (me.button == MouseButton::Left && my == m.height - 2) {
-                if (auto d = detail_tab_hit(m, mx)) {
-                    m.detail = *d; m.detail_scroll = 0;
-                    if (*d == ui::Detail::Proc) pin_detail_pid(m);
-                    return {std::move(m), C{}};
-                }
+            // A click on a detail tab switches domain; anywhere else closes.
+            if (me.button == MouseButton::Left && hit
+                && maya::hit_kind(*hit) == ui::HK_DetailTab) {
+                m.detail = static_cast<ui::Detail>(maya::hit_index(*hit));
+                m.detail_scroll = 0;
+                if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
+                return {std::move(m), C{}};
             }
             m.detail = ui::Detail::None;
             m.detail_pid = 0;
             return {std::move(m), C{}};
         }
         if (m.pending) {
-            // Footer shows y·confirm / n·cancel; a click on the table row of the
-            // pending process (or anywhere) just cancels for safety — killing is
-            // keyboard-confirmed only, never a stray click.
+            // Footer shows y·confirm / n·cancel; a click anywhere just cancels
+            // for safety — killing is keyboard-confirmed only, never a click.
             m.pending.reset();
             return {std::move(m), C{}};
         }
 
-        // ── Footer hint clicks ──
-        if (my == L.footer_y && me.button == MouseButton::Left) {
-            if (auto act = footer_hit(m, mx)) return dispatch_footer(std::move(m), *act);
-            return {std::move(m), C{}};
-        }
+        // ── Everything else routes through the paint-time hit registry ──
+        if (hit) {
+            switch (maya::hit_kind(*hit)) {
+                case ui::HK_FooterAct:
+                    if (me.button == MouseButton::Left)
+                        return dispatch_footer(std::move(m),
+                            static_cast<ui::FooterAct>(maya::hit_index(*hit)));
+                    return {std::move(m), C{}};
 
-        // ── Sort-header clicks (the column-header row of the proc table) ──
-        if (my == L.proc_hdr_y && me.button == MouseButton::Left && !m.filtering) {
-            if (auto sk = sort_header_hit(m, mx)) {
-                m.sort = *sk;
-                return resample(std::move(m));
-            }
-            return {std::move(m), C{}};
-        }
+                case ui::HK_SortCol:
+                    if (me.button == MouseButton::Left && !m.filtering) {
+                        m.sort = static_cast<SortKey>(maya::hit_index(*hit));
+                        return resample(std::move(m));
+                    }
+                    return {std::move(m), C{}};
 
-        // ── Top-band panel clicks → open that domain's detail ──
-        // The band sits directly above the proc panel. Left column = CPU, right
-        // column (split at left_w) stacks MEM / NET / DISK. In narrow mode it's
-        // a single column CPU→MEM→NET→DISK.
-        const int band_top = L.proc_top_y - L.top_h;   // first band row
-        if (my >= band_top && my < L.proc_top_y && me.button == MouseButton::Left) {
-            if (L.narrow) {
-                const Snapshot& s = m.snap;
-                // Narrow mode renders the cores as a ONE-ROW heat strip — the
-                // multi-row meter formula here would shift every boundary
-                // below it and mis-route MEM/NET/DISK clicks.
-                const int cores_rows = 1;
-                const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
-                const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-                const int net_h = 2 + ui::NetPanel::rows(s.nets);
-                if (my < band_top + cpu_h)                 m.detail = ui::Detail::Cpu;
-                else if (my < band_top + cpu_h + mem_h)    m.detail = ui::Detail::Mem;
-                else if (my < band_top + cpu_h + mem_h + net_h) m.detail = ui::Detail::Net;
-                else                                       m.detail = ui::Detail::Disk;
-            } else {
-                const int inner_left = 1 + L.left_w;   // outer pad + CPU column
-                if (mx <= inner_left) {
-                    m.detail = ui::Detail::Cpu;
-                } else {
-                    // Right stack: MEM (top), NET (mid), DISK (bottom) by row.
-                    const Snapshot& s = m.snap;
-                    const int mem_h = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
-                    const int net_h = 2 + ui::NetPanel::rows(s.nets);
-                    const int ry = my - band_top;
-                    if (ry < mem_h)              m.detail = ui::Detail::Mem;
-                    else if (ry < mem_h + net_h) m.detail = ui::Detail::Net;
-                    else                         m.detail = ui::Detail::Disk;
+                case ui::HK_BandPanel:
+                    if (me.button == MouseButton::Left) {
+                        m.detail = static_cast<ui::Detail>(maya::hit_index(*hit));
+                        m.detail_scroll = 0;
+                        if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
+                        return {std::move(m), C{}};
+                    }
+                    return {std::move(m), C{}};
+
+                case ui::HK_ProcRow: {
+                    const int idx = static_cast<int>(maya::hit_index(*hit));
+                    if (idx >= 0 && idx < n) {
+                        m.sel = idx;
+                        if (me.button == MouseButton::Right)
+                            return arm_kill(std::move(m), SIGTERM);
+                    }
+                    return {std::move(m), C{}};
                 }
-            }
-            return {std::move(m), C{}};
-        }
 
-        // ── Process row clicks ──
-        if (over_table && n > 0) {
-            const int start = scroll_start(m.sel, n, L.body_rows);
-            const int row   = my - L.proc_body_y;      // 0-based visible row
-            const int idx   = start + row;
-            if (idx >= 0 && idx < n) {
-                if (me.button == MouseButton::Left) {
-                    m.sel = idx;
-                } else if (me.button == MouseButton::Right) {
-                    // Right-click a row = arm a SIGTERM on it (keyboard confirms).
-                    m.sel = idx;
-                    return arm_kill(std::move(m), SIGTERM);
-                }
+                default:
+                    break;
             }
-            return {std::move(m), C{}};
         }
 
         return {std::move(m), C{}};
@@ -489,6 +345,7 @@ struct App {
                 // Pure fold: the effect already did the I/O off-thread.
                 const Health prev = m.last_health;
                 m.snap = std::move(sm.snap);
+                ++m.snap_gen;   // new data → visual_hash advances → frame renders
                 m.last_health = m.snap.verdict.level;
                 if (static_cast<int>(m.last_health) > static_cast<int>(prev))
                     m.verdict_pulse = 3;   // degrade → flare for 3 ticks
@@ -743,6 +600,57 @@ struct App {
 
     // ── subscriptions ───────────────────────────────────────────────────────
 
+    // ── visual_hash: skip view()+render() when nothing visible changed ──────
+    // maya's run loop hashes the model before each render and skips the whole
+    // view()+layout+paint+diff pipeline when the hash is unchanged. We fold
+    // EVERY field the frame's appearance depends on; anything omitted would
+    // freeze a real visual change, anything spurious would defeat the skip.
+    //
+    // Payoff: a PAUSED monitor renders zero frames between keystrokes (the
+    // spinner is a static badge, the snapshot is frozen), and even a running
+    // monitor skips the Tick frames that merely KICK a sample — only the
+    // Sampled fold (snap_gen++) actually repaints. Idle CPU drops to ~0.
+    static std::uint64_t visual_hash(const Model& m) {
+        std::uint64_t h = 1469598103934665603ULL;
+        auto fold = [&](std::uint64_t v) { h ^= v; h *= 1099511628211ULL; };
+        auto fold_str = [&](const std::string& s) {
+            for (unsigned char c : s) fold(c);
+            fold(s.size());
+        };
+
+        // Data + geometry: a new sample (snap_gen) or resize repaints all.
+        fold(m.snap_gen);
+        fold(static_cast<std::uint64_t>(m.width));
+        fold(static_cast<std::uint64_t>(m.height));
+
+        // Interaction / mode state that view() branches on.
+        fold(static_cast<std::uint64_t>(m.sort));
+        fold(static_cast<std::uint64_t>(m.sel));
+        fold(m.paused ? 1 : 0);
+        fold(m.filtering ? 1 : 0);
+        fold_str(m.filter);
+        fold(static_cast<std::uint64_t>(m.detail));
+        fold(static_cast<std::uint64_t>(m.detail_scroll));
+        fold(static_cast<std::uint64_t>(m.detail_pid));
+        fold(m.show_help ? 1 : 0);
+        fold(static_cast<std::uint64_t>(m.help_scroll));
+        fold(static_cast<std::uint64_t>(m.verdict_pulse));
+
+        // Pending kill strip (footer + proc panel both change).
+        if (m.pending) { fold(7); fold(static_cast<std::uint64_t>(m.pending->pids.size()));
+                         fold(static_cast<std::uint64_t>(m.pending->sig)); fold_str(m.pending->name); }
+        // Toast: text + error tint (its ttl countdown is what expires it).
+        if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
+
+        // Footer heartbeat spinner advances one frame PER TICK — but only when
+        // it's actually shown (not paused, no toast, no pending). Fold ticks
+        // only in that case so a paused/notified UI can settle to zero renders.
+        if (!m.paused && !m.toast && !m.pending)
+            fold(static_cast<std::uint64_t>(m.ticks));
+
+        return h;
+    }
+
     static maya::Sub<Msg> subscribe(const Model&) {
         using S = maya::Sub<Msg>;
         using namespace std::chrono_literals;
@@ -836,13 +744,19 @@ struct App {
         const int cpu_inner = (narrow ? inner : left_w) - 4;
         const int graph_w = std::max(8, cpu_inner - 4);   // minus y-axis (3) + gap (1)
         Element top = narrow
-            ? (v(CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true},
-                 MemPanel{s.mem}, NetPanel{s.nets},
-                 DiskPanel{s.disks, s.disk_io, false})).build()
+            ? (v(Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
+                     | hit(ui::hit_band(ui::Detail::Cpu)),
+                 Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
+                 Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
+                 Element{DiskPanel{s.disks, s.disk_io, false}}
+                     | hit(ui::hit_band(ui::Detail::Disk)))).build()
             : (h(
-                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}} | width(left_w),
-                  v(MemPanel{s.mem}, NetPanel{s.nets},
-                    DiskPanel{s.disks, s.disk_io, false}) | width(right_w)
+                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
+                      | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
+                  v(Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
+                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
+                    Element{DiskPanel{s.disks, s.disk_io, false}}
+                        | hit(ui::hit_band(ui::Detail::Disk))) | width(right_w)
               ) | gap(gap_w)).build();
 
         return (v(

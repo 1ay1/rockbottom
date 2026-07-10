@@ -7,6 +7,7 @@
 
 #include "../state.hpp"
 #include "../theme.hpp"
+#include "hit_ids.hpp"
 
 #include <string>
 #include <vector>
@@ -33,11 +34,19 @@ public:
         using namespace maya;
         using namespace maya::dsl;
 
+        // A clickable hint carries a hit(id) so the mouse handler resolves
+        // it by the SAME rect the renderer painted — no coordinate mirror.
         auto hint = [](const char* k, const char* d) -> Element {
             return (h(
                 text(std::string(" ") + k) | nowrap | Bold | fgc(pal::sky),
                 text(std::string("·") + d) | nowrap | fgc(pal::dim)
             )).build();
+        };
+        auto act_hint = [](const char* k, const char* d, FooterAct a) -> Element {
+            return (h(
+                text(std::string(" ") + k) | nowrap | Bold | fgc(pal::sky),
+                text(std::string("·") + d) | nowrap | fgc(pal::dim)
+            ) | hit(hit_footer(a))).build();
         };
         // StatusBar idiom: a thin rail separator between logical hint groups
         // so the strip reads as segments, not one long word soup.
@@ -56,19 +65,20 @@ public:
             parts.push_back(hint("enter", "apply"));
             parts.push_back(hint("esc", "clear"));
         } else {
-            // Groups: app │ navigate │ act on process │ view
-            parts.push_back(hint("q", "quit"));
+            // Groups: app │ navigate │ act on process │ view. Only the hints
+            // with a real action get a hit id; ↑↓ / 1-6 are labels only.
+            parts.push_back(act_hint("q", "quit", FooterAct::Quit));
             parts.push_back(sep());
             parts.push_back(hint("↑↓", "select"));
-            parts.push_back(hint("/", "filter"));
+            parts.push_back(act_hint("/", "filter", FooterAct::Filter));
             parts.push_back(sep());
-            parts.push_back(hint("x", "end"));
-            parts.push_back(hint("K", "kill"));
-            parts.push_back(hint("s", "sort"));
+            parts.push_back(act_hint("x", "end", FooterAct::End));
+            parts.push_back(act_hint("K", "kill", FooterAct::Kill));
+            parts.push_back(act_hint("s", "sort", FooterAct::Sort));
             parts.push_back(sep());
             parts.push_back(hint("1-6", "detail"));
-            parts.push_back(hint("space", "pause"));
-            parts.push_back(hint("?", "help"));
+            parts.push_back(act_hint("space", "pause", FooterAct::Pause));
+            parts.push_back(act_hint("?", "help", FooterAct::Help));
         }
 
         // Toast overrides the live indicator on the right.

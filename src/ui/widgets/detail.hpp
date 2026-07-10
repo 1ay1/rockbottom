@@ -17,6 +17,8 @@
 #include "../../core/metrics.hpp"
 #include "../fmt.hpp"
 #include "../theme.hpp"
+#include "detail_kind.hpp"
+#include "hit_ids.hpp"
 #include "panel.hpp"
 
 #include "detail/common.hpp"
@@ -32,7 +34,8 @@
 
 namespace rockbottom::ui {
 
-enum class Detail { None, Cpu, Mem, Net, Gpu, Disk, Proc };
+// Detail enum now lives in detail_kind.hpp (included above) so lightweight
+// headers can name it without the full pane stack.
 
 class DetailPane {
     const Snapshot& s_;
@@ -170,10 +173,13 @@ private:
                 // filled block among quiet labels is unmissable at a glance,
                 // where underline+color alone read as just another hint.
                 row.push_back((text(" " + std::string(t.glyph) + " " + t.key + " " + t.label + " ")
-                               | nowrap | Bold | fgc(pal::bg) | bgc(t.ac)).build());
+                               | nowrap | Bold | fgc(pal::bg) | bgc(t.ac)
+                               | hit(hit_tab(t.d))).build());
             } else {
-                row.push_back((text(t.key) | nowrap | Bold | fgc(pal::sky)).build());
-                row.push_back((text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)).build());
+                row.push_back((h(
+                    text(t.key) | nowrap | Bold | fgc(pal::sky),
+                    text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)
+                ) | hit(hit_tab(t.d))).build());
             }
             row.push_back((text("   ") | nowrap).build());
         }

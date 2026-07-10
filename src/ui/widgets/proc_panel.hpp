@@ -18,6 +18,7 @@
 #include "../state.hpp"
 #include "../theme.hpp"
 #include "../fmt.hpp"
+#include "hit_ids.hpp"
 #include "meter.hpp"
 #include "panel.hpp"
 
@@ -100,7 +101,7 @@ public:
                                     i == view_.selected,
                                     loud && i == hi,
                                     ((i - start) & 1) != 0,
-                                    name_w));
+                                    name_w, i));
 
         if (n == 0)
             body.push_back((text(view_.filter.empty()
@@ -200,7 +201,7 @@ private:
             std::string s = on ? std::string(name) + " ▾" : std::string(name);
             Style st = Style{}.with_fg(on ? pal::proc_ac : pal::label);
             if (on) st = st.with_bold();
-            return text(s, st) | nowrap;
+            return text(s, st) | nowrap | hit(hit_sort(self));
         };
         auto plain = [&](const char* name) {
             return text(name) | nowrap | fgc(pal::dim);
@@ -214,9 +215,6 @@ private:
                 hdr(name, self) | width(num_w) | justify(Justify::End)
             ) | gap(1)).build();
         };
-        auto plain_num = [&](const char* name, int num_w) {
-            return (plain(name) | width(num_w) | justify(Justify::End)).build();
-        };
         std::vector<Element> cols;
         cols.push_back((hdr("  PID", SortKey::Pid) | w_<8>).build());
         cols.push_back((plain("USER") | w_<8>).build());
@@ -224,7 +222,7 @@ private:
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
-        if (show_memp) cols.push_back(plain_num("MEM%", 5));
+        if (show_memp) cols.push_back((hdr("MEM%", SortKey::Mem) | w_<5> | justify(Justify::End)).build());
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
         cols.push_back((plain("S") | w_<2> | justify(Justify::Center)).build());
         if (show_thr) cols.push_back((plain("THR") | w_<4> | justify(Justify::End)).build());
@@ -233,7 +231,7 @@ private:
     }
 
     [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit,
-                                         bool alt, int name_w) const {
+                                         bool alt, int name_w, int idx) const {
         using namespace maya;
         using namespace maya::dsl;
 
@@ -391,6 +389,9 @@ private:
         }();
 
         (void)alt;
+        // Every row carries a hit id keyed by its filtered-view index, so a
+        // click resolves to the exact row the renderer painted — no scroll_
+        // start arithmetic in the mouse handler.
         // Selected row rides a full-width background strip (footer idiom:
         // bgc on the h-container paints the whole band; ambient-bg
         // inheritance carries it under every glyph). The strip is tinted a
@@ -398,8 +399,9 @@ private:
         // generic gray — together with the ▎ edge bar it's unmissable in
         // peripheral vision without any bold shouting.
         if (selected)
-            return (std::move(row) | bgc(mix(pal::sel_bg, pal::proc_ac, 0.10))).build();
-        return row.build();
+            return (std::move(row) | bgc(mix(pal::sel_bg, pal::proc_ac, 0.10))
+                    | hit(hit_proc_row(idx))).build();
+        return (std::move(row) | hit(hit_proc_row(idx))).build();
     }
 };
 
