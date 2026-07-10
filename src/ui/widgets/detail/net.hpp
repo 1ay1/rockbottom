@@ -42,10 +42,24 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         "upload", humanize_rate(ByteRate{agg_tx}), pal::good,
         "links up", std::to_string(up) + "/" + std::to_string(s.nets.size()),
         up > 0 ? pal::good : pal::dim));
+    double agg_rpps = 0, agg_tpps = 0;
+    std::uint64_t agg_errs = 0, agg_drops = 0;
+    for (const NetIface& ni : s.nets) {
+        agg_rpps += ni.rx_pps; agg_tpps += ni.tx_pps;
+        agg_errs += ni.rx_errs + ni.tx_errs; agg_drops += ni.drops;
+    }
     b.push_back(kv3(
         "lifetime ↓", humanize_bytes(agg_rxt), pal::label,
         "lifetime ↑", humanize_bytes(agg_txt), pal::label,
-        "", "", pal::dim));
+        "packets", fmt::count(agg_rpps + agg_tpps) + "/s", pal::label));
+    if (agg_errs || agg_drops) {
+        b.push_back(kv3(
+            "errors", fmt::count(static_cast<double>(agg_errs)), agg_errs ? pal::hot : pal::dim,
+            "dropped", fmt::count(static_cast<double>(agg_drops)), agg_drops ? pal::hot : pal::dim,
+            "", "", pal::dim));
+        if (agg_drops > 1000)
+            b.push_back(verdict("▲ inbound packets are being dropped — a receiver is not keeping up", pal::hot));
+    }
     b.push_back(gap_row());
 
     // Per-interface breakdown. Each interface gets its own labelled section
@@ -65,10 +79,44 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                            | fgc(ni.up ? pal::good : pal::dim)).build());
             b.push_back((h(std::move(hdr)) | gap(1)).build());
         }
+        // Identity row: address / MAC / MTU — the "which network am I on"
+        // facts every other monitor makes you shell out to ifconfig for.
+        if (!ni.ip4.empty() || !ni.mac.empty()) {
+            std::vector<Element> idr;
+            idr.push_back((text("  ") | nowrap).build());
+            if (!ni.ip4.empty()) {
+                idr.push_back((text("ip ") | nowrap | fgc(pal::faint)).build());
+                idr.push_back((text(ni.ip4) | nowrap | Bold | fgc(pal::sky)).build());
+                idr.push_back((text("   ") | nowrap).build());
+            }
+            if (!ni.mac.empty()) {
+                idr.push_back((text("mac ") | nowrap | fgc(pal::faint)).build());
+                idr.push_back((text(ni.mac) | nowrap | fgc(pal::label)).build());
+                idr.push_back((text("   ") | nowrap).build());
+            }
+            if (ni.mtu > 0) {
+                idr.push_back((text("mtu ") | nowrap | fgc(pal::faint)).build());
+                idr.push_back((text(std::to_string(ni.mtu)) | nowrap | fgc(pal::label)).build());
+            }
+            if (ni.rx_errs + ni.tx_errs > 0) {
+                idr.push_back((text("   ") | nowrap).build());
+                idr.push_back((text("errs ") | nowrap | fgc(pal::faint)).build());
+                idr.push_back((text(fmt::count(static_cast<double>(ni.rx_errs + ni.tx_errs)))
+                               | nowrap | Bold | fgc(pal::hot)).build());
+            }
+            if (ni.drops > 0) {
+                idr.push_back((text("   ") | nowrap).build());
+                idr.push_back((text("drop ") | nowrap | fgc(pal::faint)).build());
+                idr.push_back((text(fmt::count(static_cast<double>(ni.drops)))
+                               | nowrap | Bold | fgc(pal::hot)).build());
+            }
+            b.push_back((h(std::move(idr))).build());
+        }
         b.push_back((h(
             text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
             Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
             text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
+            text(fmt::count(ni.rx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
             text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
             text("↓ " + std::string(humanize_bytes(ni.rx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
         ) | gap(1)).build());
@@ -76,6 +124,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
             Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
             text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
+            text(fmt::count(ni.tx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
             text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
             text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
         ) | gap(1)).build());

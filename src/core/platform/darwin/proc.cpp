@@ -94,11 +94,15 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         Bytes rss{tai.ptinfo.pti_resident_size};
 
         // Honest per-process disk bytes (not cache hits) via rusage_info_v2.
-        std::uint64_t io_r = 0, io_w = 0;
-        rusage_info_v2 ru{};
-        if (::proc_pid_rusage(pid, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ru)) == 0) {
+        // RUSAGE_INFO_V4 additionally carries phys_footprint — the figure
+        // Activity Monitor's "Memory" column shows — plus lifetime pageins.
+        std::uint64_t io_r = 0, io_w = 0, footprint = 0, pageins = 0;
+        rusage_info_v4 ru{};
+        if (::proc_pid_rusage(pid, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t*>(&ru)) == 0) {
             io_r = ru.ri_diskio_bytesread;
             io_w = ru.ri_diskio_byteswritten;
+            footprint = ru.ri_phys_footprint;
+            pageins = ru.ri_pageins;
         }
         ByteRate ior{}, iow{};
         if (!first_ && prev_proc_.count(pid) && dt > 0) {
@@ -109,17 +113,44 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         cur[pid].io_read = io_r;
         cur[pid].io_write = io_w;
 
+        // Page-fault + context-switch RATES from the cumulative counters in
+        // the task info — same delta discipline as CPU time.
+        const std::uint64_t faults = tai.ptinfo.pti_faults;
+        const std::uint64_t csw    = tai.ptinfo.pti_csw;
+        double faults_ps = 0, csw_ps = 0;
+        if (!first_ && prev_proc_.count(pid) && dt > 0) {
+            const auto& pp = prev_proc_[pid];
+            if (faults >= pp.faults) faults_ps = static_cast<double>(faults - pp.faults) / dt;
+            if (csw >= pp.csw)       csw_ps    = static_cast<double>(csw - pp.csw) / dt;
+        }
+        cur[pid].faults = faults;
+        cur[pid].csw = csw;
+
         ProcInfo p;
         p.pid = pid;
+        p.ppid = static_cast<int>(tai.pbsd.pbi_ppid);
         p.name = tai.pbsd.pbi_name[0] ? tai.pbsd.pbi_name : tai.pbsd.pbi_comm;
         p.state = state;
         p.threads = std::max(1, threads);
+        p.prio = tai.ptinfo.pti_priority;
+        p.nice = tai.pbsd.pbi_nice;
         p.cpu = cpu_pct;
+        p.cpu_ms = cpu_ns / 1000000;
+        p.start_sec = tai.pbsd.pbi_start_tvsec;
         p.rss = rss;
+        p.footprint = Bytes{footprint};
         p.mem_share = Ratio::of(rss, ram_total_);
+        p.faults_ps = faults_ps;
+        p.csw_ps = csw_ps;
+        p.pageins = pageins;
         p.io_read = ior;
         p.io_write = iow;
         p.user = sys::user_of(tai.pbsd.pbi_uid);
+
+        // Open-fd census — proc_pidinfo(LISTFDS) with a null buffer returns
+        // the byte size needed; divide by the record size for the count.
+        int fdbytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+        p.fds = fdbytes > 0 ? fdbytes / PROC_PIDLISTFD_SIZE : -1;
 
         // Full command-line path for the process-detail pane, if readable.
         char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};

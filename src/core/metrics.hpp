@@ -27,7 +27,11 @@ struct CpuCore {
 struct CpuInfo {
     std::string          model = "CPU";
     int                  logical = 0;
+    int                  perf_cores = 0;  // performance cores (0 = homogeneous/unknown)
+    int                  eff_cores = 0;   // efficiency cores
     Ratio                total{};      // aggregate busy fraction
+    Ratio                user{};       // busy fraction spent in user code
+    Ratio                system{};     // busy fraction spent in the kernel
     Ratio                iowait{};     // fraction of time cores sat in iowait
     std::array<double, 3> loadavg{};   // 1 / 5 / 15 minute load averages
     std::vector<CpuCore> cores;
@@ -38,10 +42,15 @@ struct CpuInfo {
 
 struct MemInfo {
     Bytes total{}, used{}, available{}, cached{}, buffers{};
+    Bytes wired{};        // kernel-pinned pages, can never be paged out
+    Bytes compressed{};   // pages held by the memory compressor (mac) / zram
+    Bytes app{};          // anonymous pages apps actually allocated
     Bytes swap_total{}, swap_used{};
     ByteRate swap_in{}, swap_out{};    // live paging activity (vmstat) — the
                                        // difference between "swap is parked"
                                        // and "the machine is thrashing"
+    ByteRate page_in{}, page_out{};    // file-backed pagein/pageout traffic
+    double   faults_ps = 0;            // page faults per second (all kinds)
     std::array<float, 120> usage_history{};   // usage fraction ring (leak trend)
     int hist_len = 0;
     Ratio usage() const { return Ratio::of(used, total); }
@@ -51,13 +60,22 @@ struct MemInfo {
 struct DiskInfo {
     std::string mount, device, fstype;
     Bytes       total{}, used{};
+    std::uint64_t inodes_total = 0, inodes_free = 0;   // 0 = not reported
+    bool        read_only = false;
     Ratio       usage() const { return Ratio::of(used, total); }
 };
 
 struct NetIface {
     std::string name;
+    std::string mac;                    // link-layer address, if known
+    std::string ip4;                    // first IPv4 address, if any
+    int         mtu = 0;
     Bytes       rx_total{}, tx_total{};
     ByteRate    rx{}, tx{};
+    double      rx_pps = 0, tx_pps = 0;            // packets per second
+    std::uint64_t rx_packets = 0, tx_packets = 0;  // lifetime packet counts
+    std::uint64_t rx_errs = 0, tx_errs = 0;        // lifetime error counts
+    std::uint64_t drops = 0;                       // lifetime dropped inbound
     std::array<float, 48> rx_history{}, tx_history{};
     int         hist_len = 0;
     bool        up = false;
@@ -67,12 +85,22 @@ struct NetIface {
 // cores, matching top's per-core percentage convention when multiplied out).
 struct ProcInfo {
     int         pid = 0;
+    int         ppid = 0;       // parent pid, 0 if unknown
     std::string name, user, cmd;
     double      cpu = 0;        // % of a single core (0..100*ncores)
     Bytes       rss{};          // resident memory
+    Bytes       footprint{};    // phys footprint (mac) — the honest "memory" figure
     Ratio       mem_share{};    // rss / total ram
     char        state = '?';    // R S D Z T …
     int         threads = 0;
+    int         prio = 0;       // scheduling priority (platform units)
+    int         nice = 0;
+    int         fds = -1;       // open file descriptors, -1 unknown
+    std::uint64_t start_sec = 0;   // epoch seconds the process started, 0 unknown
+    std::uint64_t cpu_ms = 0;      // cumulative CPU time, milliseconds
+    double      faults_ps = 0;     // page faults / second this interval
+    double      csw_ps = 0;        // context switches / second this interval
+    std::uint64_t pageins = 0;     // lifetime blocking pageins (disk stalls)
     ByteRate    io_read{}, io_write{};   // block-device I/O rate (/proc/pid/io)
     std::vector<std::uint16_t> ports;   // bound TCP/UDP ports (sorted, deduped)
 };

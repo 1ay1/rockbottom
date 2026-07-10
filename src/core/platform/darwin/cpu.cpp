@@ -58,6 +58,12 @@ std::uint64_t Sampler::uptime_sec() const {
 void Sampler::sample_cpu(CpuInfo& cpu) {
     cpu.model = cpu_model_;
     cpu.logical = ncpu_;
+    // Apple Silicon splits cores into performance / efficiency clusters;
+    // perflevel0 = P cores, perflevel1 = E cores. Absent on Intel — stays 0.
+    cpu.perf_cores = static_cast<int>(
+        sysctl_num<std::int32_t>("hw.perflevel0.logicalcpu").value_or(0));
+    cpu.eff_cores = static_cast<int>(
+        sysctl_num<std::int32_t>("hw.perflevel1.logicalcpu").value_or(0));
 
     natural_t                ncpus = 0;
     processor_info_array_t   info = nullptr;
@@ -72,11 +78,14 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     for (natural_t i = 0; i < ncpus; ++i) {
         const auto& t = loads[i].cpu_ticks;
         std::uint64_t idle  = t[CPU_STATE_IDLE];
-        std::uint64_t total = t[CPU_STATE_USER] + t[CPU_STATE_SYSTEM] +
-                              t[CPU_STATE_IDLE] + t[CPU_STATE_NICE];
-        cores[i] = {idle, total};
+        std::uint64_t user  = t[CPU_STATE_USER] + t[CPU_STATE_NICE];
+        std::uint64_t sys   = t[CPU_STATE_SYSTEM];
+        std::uint64_t total = user + sys + idle;
+        cores[i] = {idle, total, user, sys};
         agg.idle += idle;
         agg.total += total;
+        agg.user += user;
+        agg.system += sys;
     }
     ::vm_deallocate(::mach_task_self(), reinterpret_cast<vm_address_t>(info),
                     info_cnt * sizeof(int));
@@ -88,7 +97,14 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         return Ratio{1.0 - static_cast<double>(di) / static_cast<double>(dt)};
     };
 
-    if (!first_) cpu.total = busy(agg, prev_total_);
+    if (!first_) {
+        cpu.total = busy(agg, prev_total_);
+        const std::uint64_t dt = agg.total - prev_total_.total;
+        if (dt > 0) {
+            cpu.user   = Ratio{static_cast<double>(agg.user - prev_total_.user) / static_cast<double>(dt)};
+            cpu.system = Ratio{static_cast<double>(agg.system - prev_total_.system) / static_cast<double>(dt)};
+        }
+    }
     prev_total_ = agg;
     // iowait has no macOS analogue; leave cpu.iowait at 0 (panes omit it).
 

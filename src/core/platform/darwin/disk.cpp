@@ -44,6 +44,9 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
         d.fstype = f.f_fstypename;
         d.total  = Bytes{total};
         d.used   = Bytes{total - static_cast<std::uint64_t>(f.f_bfree) * bs};
+        d.inodes_total = f.f_files;
+        d.inodes_free  = f.f_ffree;
+        d.read_only    = (f.f_flags & MNT_RDONLY) != 0;
         disks.push_back(std::move(d));
     }
 

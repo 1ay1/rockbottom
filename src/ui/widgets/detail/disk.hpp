@@ -49,20 +49,33 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         text("usage") | nowrap | Bold | Underline | fgc(pal::dim) | grow(1),
         text("free") | nowrap | Bold | Underline | fgc(pal::dim) | width(9) | justify(Justify::End),
         text("used / size") | nowrap | Bold | Underline | fgc(pal::dim) | width(16) | justify(Justify::End),
-        text("  fs") | nowrap | Bold | Underline | fgc(pal::dim) | width(8)
+        text("inodes") | nowrap | Bold | Underline | fgc(pal::dim) | width(7) | justify(Justify::End),
+        text("  fs") | nowrap | Bold | Underline | fgc(pal::dim) | width(10)
     ) | gap(1)).build());
     const DiskInfo* worst = nullptr;
     for (const DiskInfo& d : s.disks) {
         const double f = d.usage().v;
         const std::uint64_t freeb = d.total.value > d.used.value ? d.total.value - d.used.value : 0;
         if (!worst || f > worst->usage().v) worst = &d;
+        // Inode pressure — the disk-full failure nobody checks for until
+        // "No space left on device" with 40G free.
+        std::string ino = "·";
+        maya::Color ino_c = pal::faint;
+        if (d.inodes_total > 0) {
+            const double iused = 1.0 - static_cast<double>(d.inodes_free) /
+                                          static_cast<double>(d.inodes_total);
+            ino = fmt::pct(iused);
+            ino_c = iused > 0.9 ? pal::crit : iused > 0.7 ? pal::hot : pal::dim;
+        }
+        std::string fstag = "  " + d.fstype + (d.read_only ? " ro" : "");
         b.push_back((h(
             text(fmt::clip(d.mount, 15)) | nowrap | Bold | fgc(pal::text) | width(16),
             Element{Meter{f}.fill().color(pal::disk_ac)} | grow(1),
             text(fmt::pct_pad(f)) | nowrap | Bold | fgc(load_color(f)) | width(5) | justify(Justify::End),
             text(humanize_bytes(freeb)) | nowrap | fgc(f > 0.9 ? pal::crit : pal::good) | width(9) | justify(Justify::End),
             text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total)) | nowrap | fgc(pal::label) | width(16) | justify(Justify::End),
-            text("  " + d.fstype) | nowrap | fgc(mix(pal::disk_ac, pal::dim, 0.4)) | width(8)
+            text(ino) | nowrap | fgc(ino_c) | width(7) | justify(Justify::End),
+            text(fstag) | nowrap | fgc(d.read_only ? pal::hot : mix(pal::disk_ac, pal::dim, 0.4)) | width(10)
         ) | gap(1)).build());
         // On wide terminals, show the backing device under the mount.
         if (cx.wide && !d.device.empty())

@@ -40,13 +40,21 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     }
     b.push_back(gap_row());
 
-    // ── physical breakdown ───────────────────────────────────────────────────
-    // "used" from /proc includes nothing reclaimable; apps + cache + buffers +
-    // free = total. We separate them so you see what's actually committed.
+    // ── physical breakdown ───────────────────────────────────────────
+    // Where every byte actually is: app anonymous pages, kernel-wired pages,
+    // the compressor pool, file cache, purgeable buffers. Apps + wired +
+    // compressed ≈ committed; cache/purgeable are reclaimable on demand.
     b.push_back(section("PHYSICAL", pal::mem_ac));
     b.push_back(bar("used", m.usage().v, humanize_bytes(m.used) + " / " + humanize_bytes(m.total), pal::mem_ac, cx.wide ? 34 : 0));
-    b.push_back(bar("cache", Ratio::of(m.cached, m.total).v, humanize_bytes(m.cached) + " reclaimable", pal::teal, cx.wide ? 34 : 0));
-    b.push_back(bar("buffers", Ratio::of(m.buffers, m.total).v, humanize_bytes(m.buffers), pal::sky, cx.wide ? 34 : 0));
+    if (m.app.value)
+        b.push_back(bar("apps", Ratio::of(m.app, m.total).v, humanize_bytes(m.app) + " anonymous pages", pal::mem_ac, cx.wide ? 34 : 0));
+    if (m.wired.value)
+        b.push_back(bar("wired", Ratio::of(m.wired, m.total).v, humanize_bytes(m.wired) + " kernel-pinned", pal::hot, cx.wide ? 34 : 0));
+    if (m.compressed.value)
+        b.push_back(bar("compressed", Ratio::of(m.compressed, m.total).v, humanize_bytes(m.compressed) + " compressor pool", pal::pink, cx.wide ? 34 : 0));
+    b.push_back(bar("cache", Ratio::of(m.cached, m.total).v, humanize_bytes(m.cached) + " file cache", pal::teal, cx.wide ? 34 : 0));
+    if (m.buffers.value)
+        b.push_back(bar("purgeable", Ratio::of(m.buffers, m.total).v, humanize_bytes(m.buffers) + " volatile", pal::sky, cx.wide ? 34 : 0));
 
     // Available is the number that actually matters — how much a new process
     // could take without swapping. Read it out plainly.
@@ -64,14 +72,29 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     b.push_back(verdict(av, avc));
     b.push_back(gap_row());
 
+    // ── VM activity ───────────────────────────────────────────────────
+    // How hard the paging machinery is working right now — fault rate plus
+    // file-backed page traffic. High pagein = cold starts / cache misses.
+    if (m.faults_ps > 0 || m.page_in.per_sec > 0 || m.page_out.per_sec > 0) {
+        b.push_back(section("VM ACTIVITY", pal::mem_ac));
+        b.push_back(kv3(
+            "page faults", fmt::count(m.faults_ps) + "/s",
+            m.faults_ps > 50000 ? pal::hot : pal::text,
+            "page in", humanize_rate(m.page_in),
+            m.page_in.per_sec > 1 << 20 ? pal::hot : pal::label,
+            "page out", humanize_rate(m.page_out),
+            m.page_out.per_sec > 1 << 20 ? pal::hot : pal::label));
+        b.push_back(gap_row());
+    }
+
     // ── swap ─────────────────────────────────────────────────────────────────
     b.push_back(section("SWAP", pal::mem_ac));
     if (m.swap_total.value > 0) {
         b.push_back(bar("used", m.swap_usage().v,
                         humanize_bytes(m.swap_used) + " / " + humanize_bytes(m.swap_total), pal::hot, cx.wide ? 34 : 0));
         b.push_back(kv3(
-            "paging in", humanize_rate(m.swap_in), m.swap_in.per_sec > 1024 ? pal::crit : pal::dim,
-            "paging out", humanize_rate(m.swap_out), m.swap_out.per_sec > 1024 ? pal::crit : pal::dim,
+            "swapping in", humanize_rate(m.swap_in), m.swap_in.per_sec > 1024 ? pal::crit : pal::dim,
+            "swapping out", humanize_rate(m.swap_out), m.swap_out.per_sec > 1024 ? pal::crit : pal::dim,
             "", "", pal::dim));
         const double churn = m.swap_in.per_sec + m.swap_out.per_sec;
         b.push_back(verdict(
@@ -100,7 +123,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         std::sort(top.begin(), top.end(),
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->mem_share.v > b2->mem_share.v; });
         b.push_back(section("TOP MEMORY CONSUMERS", pal::mem_ac));
-        const int show = std::min<int>(cx.tall ? 6 : 4, static_cast<int>(top.size()));
+        const int show = std::min<int>(cx.tall ? 8 : 4, static_cast<int>(top.size()));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             b.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),

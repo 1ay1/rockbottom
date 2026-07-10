@@ -48,7 +48,14 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // ── right-now stat strip ─────────────────────────────────────────────────
     b.push_back(section("RIGHT NOW", pal::cpu_ac));
     b.push_back(bar("total", c.total.v, "busy across all cores", load_color(c.total.v), cx.wide ? 34 : 0));
-    b.push_back(bar("iowait", c.iowait.v, "cores stalled waiting on disk", pal::hot, cx.wide ? 34 : 0));
+    // User/system split — the first question about a busy CPU: is it MY code
+    // or the kernel? Heavy system time usually means syscall/IO churn.
+    if (c.user.v > 0 || c.system.v > 0) {
+        b.push_back(bar("user", c.user.v, "running app code", pal::cpu_ac, cx.wide ? 34 : 0));
+        b.push_back(bar("system", c.system.v, "in the kernel (syscalls)", pal::hot, cx.wide ? 34 : 0));
+    }
+    if (c.iowait.v > 0.005)
+        b.push_back(bar("iowait", c.iowait.v, "stalled waiting on disk", pal::hot, cx.wide ? 34 : 0));
 
     // Load average, interpreted against the core count — the number htop shows
     // but never explains. >1.0 per core = the run queue is backing up.
@@ -65,8 +72,12 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         "load 1m", fmt::fixed2(c.loadavg[0]), load_color(std::min(1.0, sat)),
         "5m", fmt::fixed2(c.loadavg[1]), pal::label,
         "15m", fmt::fixed2(c.loadavg[2]), pal::label));
+    // Core topology reads "8 (4P + 4E)" on heterogeneous silicon.
+    std::string topo = std::to_string(c.logical);
+    if (c.perf_cores > 0 && c.eff_cores > 0)
+        topo += " (" + std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E)";
     b.push_back(kv3(
-        "logical cpus", std::to_string(c.logical), pal::text,
+        "logical cpus", topo, pal::text,
         "load / core", fmt::fixed2(sat), vc,
         c.temp_c > 1 ? "package" : "", c.temp_c > 1 ? std::to_string(static_cast<int>(c.temp_c)) + " °C" : "",
         load_color(std::clamp((c.temp_c - 40) / 50.0, 0.0, 1.0))));
@@ -101,9 +112,14 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         b.push_back(gap_row());
     }
 
-    // ── per-core meters ──────────────────────────────────────────────────────
+    // ── per-core meters ──────────────────────────────────────────────────
+    // On Apple Silicon macOS enumerates the efficiency cluster first (M1:
+    // cpu0-3 = E, cpu4-7 = P). Tag each core with its cluster so "why is
+    // core 6 pinned" answers itself; P-core ids get the brighter accent.
     b.push_back(section("PER-CORE", pal::cpu_ac));
     const int n = static_cast<int>(c.cores.size());
+    const bool hetero = c.perf_cores > 0 && c.eff_cores > 0 &&
+                        c.perf_cores + c.eff_cores == n;
     // Responsive column count: wider terminals fit more core columns.
     int cols = cx.w >= 140 ? 4 : cx.w >= 104 ? 3 : cx.w >= 68 ? 2 : 1;
     if (n <= 4) cols = 1;
@@ -116,11 +132,17 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             if (i >= n) { line.push_back(Element{blank()} | grow(1)); continue; }
             const CpuCore& core = c.cores[static_cast<std::size_t>(i)];
             const double f = core.usage.v;
-            char id[8]; std::snprintf(id, sizeof id, "%2d", i);
+            char id[10];
+            if (hetero)
+                std::snprintf(id, sizeof id, "%2d·%c", i, i < c.eff_cores ? 'E' : 'P');
+            else
+                std::snprintf(id, sizeof id, "%2d", i);
             std::string fq = core.freq.value > 0
                 ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
             line.push_back(Element{(h(
-                text(id) | nowrap | fgc(pal::cpu_ac) | width(3),
+                text(id) | nowrap | fgc(hetero && i >= c.eff_cores
+                                            ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.5))
+                    | width(hetero ? 5 : 3),
                 Element{Meter{f}.fill().groove(false)} | grow(1),
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | width(5) | justify(Justify::End),
                 text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)

@@ -35,6 +35,11 @@ void Sampler::sample_mem(MemInfo& m) {
     m.total     = ram_total_;
     m.cached    = B(vm.external_page_count);
     m.buffers   = B(vm.purgeable_count);
+    m.wired     = B(vm.wire_count);
+    m.compressed = B(vm.compressor_page_count);
+    m.app       = B(vm.internal_page_count > vm.purgeable_count
+                        ? vm.internal_page_count - vm.purgeable_count
+                        : vm.internal_page_count);
     // Reclaimable memory ≈ free + inactive + speculative + file-backed cache.
     const std::uint64_t avail_pages = static_cast<std::uint64_t>(vm.free_count) +
                                       vm.inactive_count + vm.speculative_count +
@@ -70,6 +75,19 @@ void Sampler::sample_mem_rates(MemInfo& m, double dt) {
     m.swap_out = first_ ? ByteRate{0} : rate(Bytes{dout * page}, dt);
     prev_pswpin_ = in;
     prev_pswpout_ = out;
+
+    // File-backed paging traffic + total fault rate — the "how hard is the
+    // VM system working" trio Process-Hacker-style panes want.
+    std::uint64_t pgin = vm.pageins, pgout = vm.pageouts, flt = vm.faults;
+    std::uint64_t dpi = pgin  > prev_pgin_  ? pgin  - prev_pgin_  : 0;
+    std::uint64_t dpo = pgout > prev_pgout_ ? pgout - prev_pgout_ : 0;
+    std::uint64_t dfl = flt   > prev_faults_ ? flt  - prev_faults_ : 0;
+    m.page_in   = first_ ? ByteRate{0} : rate(Bytes{dpi * page}, dt);
+    m.page_out  = first_ ? ByteRate{0} : rate(Bytes{dpo * page}, dt);
+    m.faults_ps = first_ || dt <= 0 ? 0 : static_cast<double>(dfl) / dt;
+    prev_pgin_ = pgin;
+    prev_pgout_ = pgout;
+    prev_faults_ = flt;
 }
 
 }  // namespace rockbottom

@@ -40,8 +40,12 @@ public:
     Bytes       ram_total() const { return ram_total_; }
 
 private:
-    struct CpuTimes { std::uint64_t idle = 0, total = 0; };
-    struct ProcPrev { std::uint64_t cpu_ticks = 0; std::uint64_t io_read = 0, io_write = 0; };
+    struct CpuTimes { std::uint64_t idle = 0, total = 0, user = 0, system = 0; };
+    struct ProcPrev {
+        std::uint64_t cpu_ticks = 0;
+        std::uint64_t io_read = 0, io_write = 0;
+        std::uint64_t faults = 0, csw = 0;
+    };
 
     // Collectors (each lives in its own .cpp under platform/<os>/).
     void    read_static();
@@ -64,9 +68,12 @@ private:
     std::uint64_t                         prev_iowait_ = 0;
     std::vector<CpuTimes>                 prev_cores_;
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_;  // rx,tx
+    std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_pkts_;  // rx,tx packets
     std::unordered_map<int, ProcPrev>     prev_proc_;
     std::uint64_t                         prev_io_read_ = 0, prev_io_write_ = 0;  // sectors
     std::uint64_t                         prev_pswpin_ = 0, prev_pswpout_ = 0;    // pages
+    std::uint64_t                         prev_pgin_ = 0, prev_pgout_ = 0;        // file page io
+    std::uint64_t                         prev_faults_ = 0;                       // page faults
     std::array<float, 48>                 io_read_hist_{}, io_write_hist_{};
     int                                   io_hist_len_ = 0;
     std::array<float, 120>                mem_hist_{};
