@@ -17,6 +17,7 @@ inline constexpr auto bg       = maya::Color::hex(0x11111b);
 inline constexpr auto bg_panel = maya::Color::hex(0x181825);
 inline constexpr auto border   = maya::Color::hex(0x313244);
 inline constexpr auto track    = maya::Color::hex(0x26263a);   // meter groove
+inline constexpr auto rail     = maya::Color::hex(0x363a52);   // table header band
 inline constexpr auto sel_bg   = maya::Color::hex(0x2c2c44);   // selected-row strip
 inline constexpr auto label    = maya::Color::hex(0x9399b2);
 inline constexpr auto dim      = maya::Color::hex(0x6c7086);

@@ -82,22 +82,15 @@ public:
         // Kill confirmation strip replaces the header while pending
         // (config() already dropped the header row, so the row budget
         // is unchanged).
+        // The table draws its own ╭ PROCESSES ─╮ frame now (show_border),
+        // so we return it directly instead of wrapping in an app Panel —
+        // otherwise the box doubles. The sort/filter chip rides in the
+        // title so the border rail still carries view state.
         std::vector<Element> kids;
         if (view_.pending) kids.push_back(confirm_strip());
         kids.push_back((tbl.build() | grow(1)).build());
 
-        // Chip: filter beats sort in relevance when active; tree/follow/dir
-        // badges make the current view state legible at a glance.
-        const char* arrow = view_.sort_desc ? "▼" : "▲";
-        std::string mode = view_.tree ? "flow" : ("sort " + sort_label() + arrow);
-        std::string chip = view_.filtering ? "/" + view_.filter + "▌"
-                         : !view_.filter.empty() ? "/" + view_.filter + " · " + mode
-                         : mode + " · " + std::to_string(n);
-        if (view_.follow_pid) chip = "◉ follow " + std::to_string(view_.follow_pid) + " · " + chip;
-
-        return Panel("≡", "PROCESSES", pal::proc_ac)
-            .chip(chip)
-            .grow(1)(std::move(kids));
+        return v(std::move(kids)) | grow(1);
     }
 
 private:
@@ -148,9 +141,12 @@ private:
         cfg.stripe_rows  = false;
         cfg.cell_padding = 0;
         cfg.column_gap   = 1;
-        cfg.show_separator = false;               // dense: header rail only
+        cfg.show_separator = true;                // ── rule under the header
+        cfg.show_border  = true;                  // ╭ PROCESSES ─╮ frame
+        cfg.title        = title_with_chip();
+        cfg.border_color = pal::border;
         cfg.show_header  = view_.pending == nullptr;  // strip replaces it
-        cfg.header_bg    = pal::track;            // the quiet rail band
+        cfg.header_bg    = pal::rail;             // filled header pill band
         cfg.header_style = Style{}.with_fg(pal::label);
         cfg.sort_header_style = Style{}.with_bold().with_fg(pal::proc_ac);
         cfg.sort_col     = sort_column();
@@ -181,6 +177,18 @@ private:
             case SortKey::Port: return CPort;
         }
         return CCpu;
+    }
+
+    [[nodiscard]] std::string title_with_chip() const {
+        const int n = static_cast<int>(view_.procs.size());
+        const char* arrow = view_.sort_desc ? "▼" : "▲";
+        std::string mode = view_.tree ? "flow" : ("sort " + sort_label() + arrow);
+        std::string chip = view_.filtering ? "/" + view_.filter + "▌"
+                         : !view_.filter.empty() ? "/" + view_.filter + " · " + mode
+                         : mode + " · " + std::to_string(n);
+        if (view_.follow_pid)
+            chip = "◉ follow " + std::to_string(view_.follow_pid) + " · " + chip;
+        return "PROCESSES · " + chip;
     }
 
     [[nodiscard]] std::string sort_label() const {
