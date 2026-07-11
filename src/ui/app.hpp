@@ -69,7 +69,8 @@ struct App {
         std::string filter;              // active name filter ("" = off)
         bool        filtering = false;   // '/' typing mode
         bool        sort_desc = true;    // sort direction (▼ default, ▲ reversed)
-        bool        tree = false;        // process-tree view vs flat sorted list
+        bool        tree = true;          // process-tree view (DEFAULT) vs flat list
+        bool        auto_folded = false;  // did we seed the initial collapse-to-roots?
         std::set<int> collapsed;         // pids whose subtree is folded (tree mode)
         int         follow_pid = 0;      // keep this pid selected as the list moves (* toggles)
         std::optional<PendingKill> pending;
@@ -347,7 +348,24 @@ struct App {
         // to block, and the first frame should paint with real data instead of
         // an empty snapshot. Every sample AFTER this is a background effect.
         m.snap = m.sampler->sample(m.sort, 400);
+        // rockbottom opens on the TREE, folded to roots — the process hierarchy
+        // as a scannable overview, not a 400-row wall. The activity rail (see
+        // proc_panel) lets you read where the load hides before drilling in.
+        seed_fold(m);
         return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Fold every parent to its root, ONCE, seeding the default overview. Marks
+    // auto_folded so we don't re-fold subtrees the user has since opened.
+    static void seed_fold(Model& m) {
+        if (m.auto_folded || !m.tree) return;
+        std::set<int> empty;
+        ui::OrderedProcs full = ui::order_procs(m.snap.procs, m.filter, m.sort,
+                                                m.sort_desc, true, empty);
+        for (std::size_t i = 0; i < full.procs.size(); ++i)
+            if (i < full.has_kids.size() && full.has_kids[i])
+                m.collapsed.insert(full.procs[i]->pid);
+        m.auto_folded = true;
     }
 
     // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
@@ -680,7 +698,8 @@ struct App {
     static std::pair<Model, maya::Cmd<Msg>> toggle_tree(Model m) {
         const int keep = selected_pid(m);
         m.tree = !m.tree;
-        if (!m.tree) m.collapsed.clear();   // fresh slate when leaving tree mode
+        if (!m.tree) { m.collapsed.clear(); m.auto_folded = false; }  // fresh slate
+        else seed_fold(m);   // re-entering tree re-folds to the root overview
         select_pid(m, keep);
         return {std::move(m), maya::Cmd<Msg>{}};
     }

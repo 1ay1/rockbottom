@@ -35,9 +35,10 @@ public:
             {"PROCESSES", {
                 {"↑↓ j k", "select process"},
                 {"/", "filter by name or pid"},
-                {"t", "toggle process tree"},
+                {"t", "toggle tree ↔ flat list"},
                 {"← →", "collapse / expand subtree (tree)"},
                 {"= / +", "collapse-all / expand-all (tree)"},
+                {"▁▅█", "fold marker = subtree CPU (taller/brighter = busier)"},
                 {"*", "follow: lock cursor to this process"},
                 {"x / Del", "end process (SIGTERM)"},
                 {"K", "force-kill (SIGKILL)"},

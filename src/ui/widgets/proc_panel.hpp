@@ -398,16 +398,52 @@ private:
                                       && view_.has_kids[static_cast<std::size_t>(idx)];
                     const bool folded = idx < static_cast<int>(view_.collapsed_row.size())
                                         && view_.collapsed_row[static_cast<std::size_t>(idx)];
-                    // A node that can fold gets a chevron; leaves keep the
-                    // guide's own connector so the column stays aligned.
-                    std::string chev = kids ? (folded ? "▸ " : "▾ ") : "";
-                    std::string pre = guide + chev;
-                    if (!pre.empty()) {
-                        clip_bytes(pre, budget);
-                        runs.push_back({0, pre.size(),
-                                        Style{}.with_fg(selected ? mix(pal::proc_ac, pal::white, 0.3)
-                                                                 : mix(pal::dim, pal::bg_panel, 0.2))});
-                        content += pre;
+                    // Guide rails first, in quiet ink (structure, not signal).
+                    Color guide_c = selected ? mix(pal::proc_ac, pal::white, 0.3)
+                                             : mix(pal::dim, pal::bg_panel, 0.2);
+                    if (!guide.empty()) {
+                        std::string g = guide;
+                        clip_bytes(g, budget);
+                        runs.push_back({0, g.size(), Style{}.with_fg(guide_c)});
+                        content += g;
+                    }
+                    // ── The ACTIVITY RAIL ──────────────────────────────────
+                    // A COLLAPSED parent's fold marker is not a dead chevron:
+                    // it's a heat cell whose block-glyph HEIGHT and COLOR track
+                    // the rolled-up CPU of everything hidden beneath it. Scan
+                    // the column and the tall, bright marks are exactly where
+                    // the machine's work is buried — you read the load before
+                    // you ever expand a subtree. No other monitor does this.
+                    if (kids && content.size() < budget) {
+                        std::string mark;
+                        Style mst;
+                        if (folded) {
+                            // subtree CPU rollup (this row already carries it).
+                            double sc = idx < static_cast<int>(view_.sub_cpu.size())
+                                        ? view_.sub_cpu[static_cast<std::size_t>(idx)] : 0.0;
+                            static const char* kBlocks[] =
+                                {"▁","▂","▃","▄","▅","▆","▇","█"};
+                            // 0..~1 core saturates the ramp; log-ish knee so a
+                            // little activity is already visible.
+                            double t = std::clamp(sc / 80.0, 0.0, 1.0);
+                            int lvl = std::clamp(static_cast<int>(t * 7.999), 0, 7);
+                            const bool idle = sc < 0.5;
+                            mark = idle ? "▁ " : std::string(kBlocks[lvl]) + " ";
+                            Color hc = idle
+                                ? (selected ? pal::label : mix(pal::dim, pal::bg_panel, 0.35))
+                                : lift(load_color(std::clamp(sc / 100.0, 0.0, 1.0)));
+                            mst = Style{}.with_fg(hc);
+                            if (!idle && sc > 40) mst = mst.with_bold();
+                        } else {
+                            mark = "▾ ";
+                            mst = Style{}.with_fg(guide_c);
+                        }
+                        std::string mk = mark;
+                        clip_bytes(mk, budget - content.size());
+                        if (!mk.empty()) {
+                            runs.push_back({content.size(), mk.size(), mst});
+                            content += mk;
+                        }
                     }
                 }
 
