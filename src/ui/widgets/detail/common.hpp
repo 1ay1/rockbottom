@@ -40,6 +40,7 @@ struct Ctx {
     int  scroll = 0;
     // Derived responsive flags, filled by make().
     bool wide = true;      // room for multi-column / side-by-side layouts
+    bool ultrawide = false;// room to lay the WHOLE pane out in two columns
     bool tall = true;      // room for the big graphs
     int  graph_h = 8;      // rows available for the hero graph
     int  body_h = 30;      // scrollable viewport height
@@ -48,10 +49,18 @@ struct Ctx {
         Ctx c;
         c.w = w; c.h = h; c.scroll = std::max(0, scroll);
         c.wide = w >= 84;
+        // On a big monitor a single tall column wastes 2/3 of the width and
+        // leaves the hero graph a thin line in an empty sky. Panes that opt in
+        // reflow into two side-by-side columns above this width.
+        c.ultrawide = w >= 170;
         c.tall = h >= 30;
         // Frame chrome: panel border(2) + panel padding(2) + hint(1) = 5 rows.
         c.body_h = std::max(3, h - 5);
-        c.graph_h = std::clamp(h - 20, 4, 12);
+        // Hero graph height: keep it MODERATE so a low-load trace still reads.
+        // In two-column mode the columns share the height, so the graph can be
+        // a touch shorter; either way it never balloons to fill a tall screen.
+        c.graph_h = c.ultrawide ? std::clamp(h - 24, 5, 9)
+                                : std::clamp(h - 22, 5, 10);
         return c;
     }
 };
@@ -354,6 +363,25 @@ inline std::array<float, 48> norm_unit(const float* h, int len, float floor,
 inline Element gap_row() {
     using namespace maya; using namespace maya::dsl;
     return blank();
+}
+
+// ── TWO-COLUMN BODY ──────────────────────────────────────────────────
+// Compose two independent row-lists side by side, each in its own vertical
+// stack, with a gutter between. Used by panes in ultrawide mode to spend the
+// horizontal room instead of scrolling a single tall column. The taller list
+// sets the row height; the shorter one just leaves space below it. Returns a
+// SINGLE body row (the h-stack) so the scroller treats the whole split as one
+// unit — panes stay scroll-safe because two_col output is short by design.
+inline std::vector<Element> two_col(std::vector<Element> left,
+                                    std::vector<Element> right) {
+    using namespace maya; using namespace maya::dsl;
+    std::vector<Element> out;
+    out.push_back((h(
+        v(std::move(left))  | grow(1),
+        text("  ") | nowrap,
+        v(std::move(right)) | grow(1)
+    ) | gap(2)).build());
+    return out;
 }
 
 // ── SCROLLER ───────────────────────────────────────────────────────────────
