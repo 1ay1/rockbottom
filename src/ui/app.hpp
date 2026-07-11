@@ -1377,13 +1377,16 @@ struct App {
             const bool graph_fill = graph_pool >= 16;
             // Height-responsive FILL: the four graph heights SUM to graph_pool
             // so the four panels stack to EXACTLY band_h — no grow(), so no
-            // empty space inside any panel and no gap under DISK. CPU gets the
-            // largest slice; net takes the exact remainder so the sum closes.
-            int cpu_graph_h  = graph_fill ? std::max(6, graph_pool * 32 / 100) : 0;
-            int mem_graph_h  = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
-            int disk_graph_h = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
+            // empty space inside any panel and no gap under DISK. NETWORK is
+            // the star — it gets the LARGEST slice (the mountain fills its
+            // panel instead of sitting under an empty sky); CPU next, then
+            // MEM and DISK share what's left. net takes the exact remainder so
+            // the sum closes.
+            int cpu_graph_h  = graph_fill ? std::max(5, graph_pool * 26 / 100) : 0;
+            int mem_graph_h  = graph_fill ? std::max(4, graph_pool * 18 / 100) : 0;
+            int disk_graph_h = graph_fill ? std::max(4, graph_pool * 18 / 100) : 0;
             int net_graph_h  = graph_fill
-                ? std::max(4, graph_pool - cpu_graph_h - mem_graph_h - disk_graph_h) : 0;
+                ? std::max(6, graph_pool - cpu_graph_h - mem_graph_h - disk_graph_h) : 0;
             const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
