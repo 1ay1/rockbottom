@@ -1297,7 +1297,13 @@ struct App {
         // the two in sync — both read m.width.)
         const bool wide2_pv = m.width >= 200;
         const int inner_pv = std::max(20, m.width - 2);
-        const int col1_pv  = wide2_pv ? std::clamp(inner_pv * 40 / 100, 72, 110) : 0;
+        // Mirror the col1_w formula below: on ultra-wide screens col 1 widens
+        // to absorb the excess so the table doesn't leave a gap on the right.
+        const int proc_useful_pv = 150;
+        const int col1_floor_pv  = std::clamp(inner_pv * 40 / 100, 72, 110);
+        const int col1_excess_pv = std::max(0, inner_pv - 1 - proc_useful_pv - col1_floor_pv);
+        const int col1_pv  = wide2_pv
+            ? std::min(col1_floor_pv + col1_excess_pv, inner_pv - 1 - 60) : 0;
         const int proc_inner_w = wide2_pv
             ? std::max(40, inner_pv - col1_pv - 1 - 4)   // minus gap + panel border/pad
             : std::max(20, m.width - 6);
@@ -1331,9 +1337,17 @@ struct App {
         // (proc table) takes the rest. Otherwise the classic CPU|stats split.
         const int inner = std::max(20, m.width - 2);      // minus outer padding
         const int gap_w = 1;
-        // Stats column width: wide enough for the CPU cores + graphs to breathe
-        // but leaving the majority to the process table on an ultra-wide screen.
-        const int col1_w = wide2 ? std::clamp(inner * 40 / 100, 72, 110) : 0;
+        // Stats column width: wide enough for the CPU cores + graphs to
+        // breathe. On a normal wide screen it's ~40% of the frame; on an
+        // ULTRA-wide screen the process table only needs so much width before
+        // its columns leave a gap on the right (the circled dead space), so
+        // any excess beyond the table's useful width goes to col 1 — it
+        // widens instead of leaving a void. proc_useful caps the table.
+        const int proc_useful = 150;                    // table width past which it just pads
+        const int col1_floor  = std::clamp(inner * 40 / 100, 72, 110);
+        const int col1_excess = std::max(0, inner - gap_w - proc_useful - col1_floor);
+        const int col1_w = wide2 ? std::min(col1_floor + col1_excess, inner - gap_w - 60)
+                                 : 0;
         const int band_inner = wide2 ? col1_w : inner;
         const int right_w = std::clamp((band_inner - gap_w) * 42 / 100, 34, 56);
         const int left_w  = band_inner - gap_w - right_w;
