@@ -77,26 +77,9 @@ public:
         int start = std::clamp(view_.scroll, 0, std::max(0, n - body_rows));
 
         std::vector<Element> body;
-        // NAME cell width, computed analytically from the same tier flags the
-        // row uses — a flex cell whose content is wide (cmd trail) bullies the
-        // fixed columns out of alignment, so nothing here is left to flex.
-        const int row_w = view_.width - (scrolling ? 2 : 0);
-        const int name_w = [&] {
-            const int w = view_.width;
-            const bool show_port = w >= 92;
-            const bool show_thr  = w >= 70;
-            const bool show_memp = w >= 62;
-            const bool show_mem  = w >= 54;
-            const bool show_io   = w >= 84;
-            int ncols = 6;                       // pid, user, name, meter, cpu, mem
-            int fixed = 8 + 8 + (show_mem ? 14 : 8) + 6 + 8 + 2;  // + S dot
-            ncols += 1;                          // S
-            if (show_port) { fixed += 9; ++ncols; }
-            if (show_memp) { fixed += 5; ++ncols; }
-            if (show_io)   { fixed += 8; ++ncols; }
-            if (show_thr)  { fixed += 4; ++ncols; }
-            return std::max(8, row_w - fixed - (ncols - 1));
-        }();
+        // NAME cell width from the shared analytic helper — the header uses the
+        // exact same width, so labels and values hang on one rail.
+        const int name_w = name_cell_w(rgutter);
         for (int i = start; i < n && i < start + body_rows; ++i)
             body.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                     i == view_.selected,
@@ -195,12 +178,35 @@ private:
         )).build();
     }
 
+    // The analytic NAME cell width — shared by the header and the rows so
+    // both hang the fixed columns on the same rail (a flex NAME in the header
+    // drifts out of alignment with a fixed-width NAME in the rows on a wide
+    // screen). `rgutter` is the scrollbar gutter reserved on the right.
+    [[nodiscard]] int name_cell_w(int rgutter) const {
+        const int w = view_.width;
+        const bool show_port = w >= 92;
+        const bool show_thr  = w >= 70;
+        const bool show_memp = w >= 62;
+        const bool show_mem  = w >= 54;
+        const bool show_io   = w >= 84;
+        int ncols = 6;                       // pid, user, name, meter, cpu, mem
+        int fixed = 8 + 8 + (show_mem ? 14 : 8) + 6 + 8 + 2;  // + S dot
+        ncols += 1;                          // S
+        if (show_port) { fixed += 9; ++ncols; }
+        if (show_memp) { fixed += 5; ++ncols; }
+        if (show_io)   { fixed += 8; ++ncols; }
+        if (show_thr)  { fixed += 4; ++ncols; }
+        if (rgutter > 0) { fixed += rgutter; ++ncols; }
+        return std::max(8, w - fixed - (ncols - 1));
+    }
+
     [[nodiscard]] maya::Element header_row(int rgutter = 0) const {
         using namespace maya;
         using namespace maya::dsl;
         const int w = view_.width;
-        // Drop optional columns as width shrinks; NAME is the flex column so
-        // it always soaks up the remainder (never overflows, never starves).
+        // Drop optional columns as width shrinks; NAME is a FIXED analytic
+        // width (name_cell_w) — identical to the rows — so header labels hang
+        // on the same rail as their values even on a wide screen.
         const bool show_port = w >= 92;
         const bool show_thr  = w >= 70;
         const bool show_memp = w >= 62;
@@ -235,7 +241,7 @@ private:
         std::vector<Element> cols;
         cols.push_back((hdr("  PID", SortKey::Pid) | w_<8>).build());
         cols.push_back((plain("USER") | w_<8>).build());
-        cols.push_back((hdr("NAME", SortKey::Name) | grow(1)).build());
+        cols.push_back((hdr("NAME", SortKey::Name) | width(name_cell_w(rgutter))).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
@@ -464,7 +470,7 @@ private:
                     }
                 }
 
-                std::string nm = std::string(fmt::clip(p.name, 32));
+                std::string nm = std::string(fmt::clip(p.name, 64));
                 const std::size_t off0 = content.size();
                 if (off0 < budget) {
                     clip_bytes(nm, budget - off0);
@@ -486,7 +492,7 @@ private:
                     }
                 }
 
-                if (!cmd_trail.empty() && content.size() + 4 < budget && !tree_row) {
+                if (!cmd_trail.empty() && content.size() + 4 < budget) {
                     std::size_t off = content.size();
                     std::string t = "  " + cmd_trail;
                     if (clip_bytes(t, budget - off - 3)) t += "…";

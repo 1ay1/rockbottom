@@ -49,7 +49,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         ss >> state;                                // field 3
         int ppid = 0; ss >> ppid;                   // field 4
         std::string skip;
-        for (int i = 0; i < 9; ++i) ss >> skip;      // fields 5..13
+        // fields 5..9: pgrp session tty_nr tpgid flags
+        for (int i = 0; i < 5; ++i) ss >> skip;
+        std::uint64_t minflt = 0, cminflt = 0, majflt = 0, cmajflt = 0;
+        ss >> minflt >> cminflt >> majflt >> cmajflt;   // 10 11 12 13
         std::uint64_t utime = 0, stime = 0;
         ss >> utime >> stime;                        // 14, 15
         ss >> skip >> skip;                          // 16, 17 (cutime, cstime)
@@ -101,6 +104,34 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         cur[pid].io_read = io_r;
         cur[pid].io_write = io_w;
 
+        // Context switches from /proc/pid/status (voluntary + involuntary).
+        std::uint64_t csw_total = 0;
+        {
+            std::ifstream stf(base + "/status");
+            std::string line;
+            while (std::getline(stf, line)) {
+                if (line.rfind("voluntary_ctxt_switches:", 0) == 0 ||
+                    line.rfind("nonvoluntary_ctxt_switches:", 0) == 0) {
+                    csw_total += std::strtoull(line.c_str() + line.find(':') + 1, nullptr, 10);
+                }
+            }
+        }
+
+        // Page-fault + context-switch RATES: cumulative counters (majflt is
+        // the honest "had to hit disk" fault; total faults = min+maj) diffed
+        // across the tick. Stashed into ProcPrev so next sample can diff again.
+        const std::uint64_t faults_total = minflt + majflt;
+        double faults_ps = 0, csw_ps = 0;
+        if (!first_ && prev_proc_.count(pid) && dt > 0) {
+            const auto& pp = prev_proc_[pid];
+            if (faults_total >= pp.faults)
+                faults_ps = static_cast<double>(faults_total - pp.faults) / dt;
+            if (csw_total >= pp.csw)
+                csw_ps = static_cast<double>(csw_total - pp.csw) / dt;
+        }
+        cur[pid].faults = faults_total;
+        cur[pid].csw = csw_total;
+
         // Rolling per-process cpu% ring — carry the prior history forward
         // (cur[pid] was aggregate-reset above), push this interval's clamped
         // sample, so the detail pane can graph the process like htop's meter.
@@ -137,6 +168,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.mem_share = Ratio::of(rss, ram_total_);
         p.io_read = ior;
         p.io_write = iow;
+        p.faults_ps = faults_ps;
+        p.csw_ps = csw_ps;
+        p.pageins = majflt;   // lifetime major faults = blocking disk pageins
         p.cpu_history = cur[pid].cpu_hist;
         p.hist_len = cur[pid].cpu_hist_len;
 

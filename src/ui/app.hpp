@@ -1322,21 +1322,26 @@ struct App {
             // room around the (capped) graphs — so col 1 fills top-to-bottom
             // without any single mountain ballooning.
             const bool graph_fill = graph_pool >= 16;
-            int cpu_graph_h  = graph_fill ? std::clamp(graph_pool * 30 / 100, 6, 10) : 0;
-            int mem_graph_h  = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
-            int net_graph_h  = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
-            int disk_graph_h = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
+            // Height-responsive FILL: the four graph heights SUM to graph_pool
+            // so the four panels stack to EXACTLY band_h — no grow(), so no
+            // empty space inside any panel and no gap under DISK. CPU gets the
+            // largest slice; net takes the exact remainder so the sum closes.
+            int cpu_graph_h  = graph_fill ? std::max(6, graph_pool * 32 / 100) : 0;
+            int mem_graph_h  = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
+            int disk_graph_h = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
+            int net_graph_h  = graph_fill
+                ? std::max(4, graph_pool - cpu_graph_h - mem_graph_h - disk_graph_h) : 0;
             const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
                 Element{CpuPanel{s.cpu, cpu_cols, cpu_gw, cpu_graph_h, &s.mem}}
-                    | grow(3) | hit(ui::hit_band(ui::Detail::Cpu)),
+                    | hit(ui::hit_band(ui::Detail::Cpu)),
                 Element{MemPanel{s.mem, mem_graph_h}}
-                    | grow(2) | hit(ui::hit_band(ui::Detail::Mem)),
+                    | hit(ui::hit_band(ui::Detail::Mem)),
                 Element{NetPanel{s.nets, net_graph_h}}
-                    | grow(2) | hit(ui::hit_band(ui::Detail::Net)),
+                    | hit(ui::hit_band(ui::Detail::Net)),
                 Element{DiskPanel{s.disks, s.disk_io, false, disk_graph_h}}
-                    | grow(2) | hit(ui::hit_band(ui::Detail::Disk))
+                    | grow(1) | hit(ui::hit_band(ui::Detail::Disk))
             ).build();
 
             Element body = (h(

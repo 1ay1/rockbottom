@@ -41,18 +41,31 @@ void Sampler::sample_mem_rates(MemInfo& m, double dt) {
     // 60% swap harmlessly for weeks; it cannot page 50MB/s harmlessly.
     std::ifstream vs("/proc/vmstat");
     std::string key;
-    std::uint64_t val, in = 0, out = 0;
+    std::uint64_t val, in = 0, out = 0, pgin = 0, pgout = 0, faults = 0;
     while (vs >> key >> val) {
         if (key == "pswpin") in = val;
         else if (key == "pswpout") out = val;
+        else if (key == "pgpgin") pgin = val;      // file-backed page-ins (kB units)
+        else if (key == "pgpgout") pgout = val;
+        else if (key == "pgfault") faults = val;   // all minor+major faults
     }
     const std::uint64_t page = 4096;   // vmstat counts are in pages
     std::uint64_t di = in > prev_pswpin_ ? in - prev_pswpin_ : 0;
     std::uint64_t dout = out > prev_pswpout_ ? out - prev_pswpout_ : 0;
     m.swap_in  = first_ ? ByteRate{0} : rate(Bytes{di * page}, dt);
     m.swap_out = first_ ? ByteRate{0} : rate(Bytes{dout * page}, dt);
+    // pgpgin/pgpgout are in KILOBYTES (not pages) per the kernel's vmstat.
+    std::uint64_t dpi = pgin > prev_pgin_ ? pgin - prev_pgin_ : 0;
+    std::uint64_t dpo = pgout > prev_pgout_ ? pgout - prev_pgout_ : 0;
+    m.page_in  = first_ ? ByteRate{0} : rate(Bytes{dpi * 1024}, dt);
+    m.page_out = first_ ? ByteRate{0} : rate(Bytes{dpo * 1024}, dt);
+    std::uint64_t df = faults > prev_faults_ ? faults - prev_faults_ : 0;
+    m.faults_ps = first_ || dt <= 0 ? 0.0 : static_cast<double>(df) / dt;
     prev_pswpin_ = in;
     prev_pswpout_ = out;
+    prev_pgin_ = pgin;
+    prev_pgout_ = pgout;
+    prev_faults_ = faults;
 }
 
 }  // namespace rockbottom
