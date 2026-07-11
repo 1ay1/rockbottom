@@ -13,6 +13,8 @@
 
 #include "common.hpp"
 
+#include <unordered_map>
+
 namespace rockbottom::ui::detail {
 
 inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const ProcInfo* proc) {
@@ -138,6 +140,105 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         b.push_back(verdict("▲ context-switching very hard — lock contention or chatty IPC", pal::hot));
     b.push_back(gap_row());
 
+    // ── family & children ─────────────────────────────────────────────
+    // The whole point of drilling into a process: see and steer its subtree
+    // without leaving the pane. Ancestry breadcrumb up top, then the direct
+    // children ranked by CPU with the same meter grid the "top" lists use, and
+    // a rolled-up subtree total so you know the true cost of the whole family.
+    {
+        // Index the snapshot by pid for O(1) parent/child walks.
+        std::unordered_map<int, const ProcInfo*> by_pid;
+        by_pid.reserve(s.procs.size() * 2);
+        for (const auto& q : s.procs) by_pid[q.pid] = &q;
+
+        // Direct children, busiest first.
+        std::vector<const ProcInfo*> kids;
+        for (const auto& q : s.procs)
+            if (q.ppid == p.pid && q.pid != p.pid) kids.push_back(&q);
+        std::stable_sort(kids.begin(), kids.end(),
+                         [](const ProcInfo* a, const ProcInfo* b) { return a->cpu > b->cpu; });
+
+        // Subtree rollup: BFS down from this node summing cpu/mem/count.
+        std::unordered_map<int, std::vector<const ProcInfo*>> kids_of;
+        for (const auto& q : s.procs)
+            if (q.ppid != q.pid) kids_of[q.ppid].push_back(&q);
+        int sub_n = 0; double sub_cpu = p.cpu; std::uint64_t sub_rss = p.rss.value;
+        {
+            std::vector<int> stk{p.pid};
+            while (!stk.empty()) {
+                int cur = stk.back(); stk.pop_back();
+                if (auto it = kids_of.find(cur); it != kids_of.end())
+                    for (const ProcInfo* c : it->second) {
+                        ++sub_n; sub_cpu += c->cpu; sub_rss += c->rss.value;
+                        stk.push_back(c->pid);
+                    }
+            }
+        }
+
+        // Siblings (share this node's parent) — context for "is this one of many?"
+        int siblings = 0;
+        if (p.ppid > 0)
+            for (const auto& q : s.procs)
+                if (q.ppid == p.ppid && q.pid != p.pid) ++siblings;
+
+        b.push_back(section("FAMILY", pal::proc_ac,
+                            std::to_string(kids.size()) +
+                            (kids.size() == 1 ? " child" : " children")));
+
+        // Ancestry breadcrumb: walk ppid up to 4 hops. "launchd › bash › THIS".
+        {
+            std::vector<std::string> chain;
+            const ProcInfo* cur = &p;
+            for (int hop = 0; hop < 5 && cur; ++hop) {
+                chain.push_back(std::string(fmt::clip(cur->name, 20)) +
+                                " (" + std::to_string(cur->pid) + ")");
+                auto it = by_pid.find(cur->ppid);
+                cur = (cur->ppid > 0 && it != by_pid.end() && it->second != cur)
+                          ? it->second : nullptr;
+            }
+            std::string crumb;
+            for (std::size_t i = chain.size(); i-- > 0;)
+                crumb += chain[i] + (i ? "  ›  " : "");
+            b.push_back(kv("lineage", crumb, pal::label, 14));
+        }
+
+        // Subtree rollup line: the true cost of the whole family.
+        if (sub_n > 0) {
+            b.push_back(kv3(
+                "subtree", std::to_string(sub_n + 1) + " procs", pal::text,
+                "subtree cpu", fmt::fixed1(sub_cpu) + "%", sub_cpu > 50 ? pal::hot : pal::label,
+                "subtree mem", humanize_bytes(sub_rss), pal::mem_ac));
+        }
+        if (siblings > 0 && sub_n == 0)
+            b.push_back(kv("siblings", std::to_string(siblings) + " share this parent",
+                           pal::dim, 14));
+
+        // The children themselves, ranked by CPU with the shared meter grid.
+        if (!kids.empty()) {
+            b.push_back(gap_row());
+            // Biggest-child normalizer so the meters are comparable within the
+            // family (a 3%-of-core child still shows visible bar shape).
+            double kmax = 0.01;
+            for (const ProcInfo* c : kids) kmax = std::max(kmax, c->cpu / 100.0);
+            const int shown = std::min<int>(static_cast<int>(kids.size()), cx.wide ? 10 : 6);
+            for (int i = 0; i < shown; ++i) {
+                const ProcInfo* c = kids[static_cast<std::size_t>(i)];
+                const double f = std::clamp((c->cpu / 100.0) / kmax, 0.0, 1.0);
+                b.push_back(rank_row(
+                    i + 1, std::to_string(c->pid), std::string(fmt::clip(c->name, 22)),
+                    f, load_color(std::clamp(c->cpu / 100.0, 0.0, 1.0)),
+                    fmt::fixed1(c->cpu) + "%", c->cpu > 25 ? pal::hot : pal::label, 8,
+                    humanize_bytes(c->rss), pal::mem_ac, 10));
+            }
+            if (static_cast<int>(kids.size()) > shown)
+                b.push_back((text("   +" + std::to_string(static_cast<int>(kids.size()) - shown) +
+                                  " more children") | fgc(pal::dim)).build());
+        } else {
+            b.push_back(verdict("no children — this is a leaf process", pal::dim));
+        }
+        b.push_back(gap_row());
+    }
+
     // ── state ────────────────────────────────────────────────────────────────
     b.push_back(section("STATE", pal::proc_ac));
     const char* st = p.state == 'R' ? "running — on a core right now"
@@ -170,13 +271,18 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         b.push_back(verdict("this process is accepting connections — it's a server", pal::dim));
     }
 
-    // ── kill hints ───────────────────────────────────────────────────────────
+    // ── manage hints ─────────────────────────────────────────────────────
     b.push_back(gap_row());
     b.push_back((h(
-        text("  x") | nowrap | Bold | fgc(pal::warn), text("·ask it to stop (SIGTERM)   ") | nowrap | fgc(pal::dim),
-        text("K") | nowrap | Bold | fgc(pal::crit), text("·force-kill (SIGKILL)   ") | nowrap | fgc(pal::dim),
-        text("l") | nowrap | Bold | fgc(pal::hot), text("·send any signal   ") | nowrap | fgc(pal::dim),
-        text("X") | nowrap | Bold | fgc(pal::crit), text("·end all with this name   ") | nowrap | fgc(pal::dim),
+        text("  x") | nowrap | Bold | fgc(pal::warn), text("·stop   ") | nowrap | fgc(pal::dim),
+        text("K") | nowrap | Bold | fgc(pal::crit), text("·kill   ") | nowrap | fgc(pal::dim),
+        text("l") | nowrap | Bold | fgc(pal::hot), text("·signal   ") | nowrap | fgc(pal::dim),
+        text("r") | nowrap | Bold | fgc(pal::sky), text("·renice   ") | nowrap | fgc(pal::dim),
+        text("X") | nowrap | Bold | fgc(pal::crit), text("·end-all-by-name   ") | nowrap | fgc(pal::dim),
+        text("T") | nowrap | Bold | fgc(pal::crit), text("·end whole subtree") | nowrap | fgc(pal::dim)
+    )).build());
+    b.push_back((h(
+        text("  ←→") | nowrap | Bold | fgc(pal::sky), text("·walk to parent / busiest child   ") | nowrap | fgc(pal::dim),
         text("↑↓") | nowrap | Bold | fgc(pal::sky), text("·walk the list") | nowrap | fgc(pal::dim)
     )).build());
 

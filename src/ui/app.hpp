@@ -40,6 +40,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -576,6 +577,11 @@ struct App {
                 // drifts on its own when the table resorts under it.
                 if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
+                // ←/→ walk the FAMILY: up to the parent, down into the busiest
+                // child — turning the detail pane into a tree explorer you never
+                // have to leave. Re-pins pane + table selection together.
+                if (key(ev, maya::SpecialKey::Left)  || key(ev, 'h')) return nav_family(std::move(m), /*to_parent=*/true);
+                if (key(ev, maya::SpecialKey::Right) || key(ev, 'l')) return nav_family(std::move(m), /*to_parent=*/false);
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
                     return {std::move(m), C{}};
@@ -583,7 +589,11 @@ struct App {
                 if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
                 if (key(ev, 'X')) return arm_kill_all(std::move(m), SIGTERM);
+                if (key(ev, 'T')) return arm_kill_subtree(std::move(m), SIGTERM);
                 if (key(ev, 'l')) return open_sigmenu(std::move(m));
+                if (key(ev, 'r')) return open_nicemenu(std::move(m));
+                if (key(ev, maya::SpecialKey::PageDown)) { m.detail_scroll += 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
             } else {
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0;
@@ -866,6 +876,67 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
+    // Arm a kill of the WHOLE subtree under the pinned process (this + every
+    // descendant), pid-collected by walking the parent map. The "reap this
+    // process group" move — one confirm, the strip shows the count. Targets
+    // m.detail_pid so it works from the pane regardless of table selection.
+    static std::pair<Model, maya::Cmd<Msg>> arm_kill_subtree(Model m, int sig) {
+        const int root = m.detail == ui::Detail::Proc ? m.detail_pid : selected_pid(m);
+        if (root <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        const ProcInfo* rp = nullptr;
+        std::unordered_map<int, std::vector<int>> kids_of;
+        for (const auto& q : m.snap.procs) {
+            if (q.pid == root) rp = &q;
+            if (q.ppid != q.pid) kids_of[q.ppid].push_back(q.pid);
+        }
+        std::vector<int> pids{root};
+        {
+            std::vector<int> stk{root};
+            while (!stk.empty()) {
+                int cur = stk.back(); stk.pop_back();
+                if (auto it = kids_of.find(cur); it != kids_of.end())
+                    for (int c : it->second) { pids.push_back(c); stk.push_back(c); }
+            }
+        }
+        std::string name = rp ? rp->name : ("pid " + std::to_string(root));
+        // The confirm strip's group-wording keys off pids.size()>1, so a
+        // subtree of one (a leaf) still reads as a single-target kill.
+        m.pending = PendingKill{root, name + " +subtree", sig, std::move(pids)};
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Walk the FAMILY from the detail pane: to_parent hops up to the ppid, else
+    // down into the busiest child. Re-pins m.detail_pid and best-effort syncs
+    // m.sel so leaving the pane lands the cursor on the same process.
+    static std::pair<Model, maya::Cmd<Msg>> nav_family(Model m, bool to_parent) {
+        const int cur = m.detail_pid;
+        if (cur <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        const ProcInfo* self = nullptr;
+        for (const auto& q : m.snap.procs) if (q.pid == cur) { self = &q; break; }
+        if (!self) return {std::move(m), maya::Cmd<Msg>{}};
+
+        int target = 0;
+        if (to_parent) {
+            if (self->ppid > 0 && self->ppid != self->pid)
+                for (const auto& q : m.snap.procs)
+                    if (q.pid == self->ppid) { target = q.pid; break; }
+        } else {
+            // Busiest direct child by cpu.
+            double best = -1;
+            for (const auto& q : m.snap.procs)
+                if (q.ppid == cur && q.pid != cur && q.cpu > best) { best = q.cpu; target = q.pid; }
+        }
+        if (target <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        m.detail_pid = target;
+        m.detail_scroll = 0;
+        // If the target is visible in the current ordered list, move the cursor
+        // there too; if it's folded away, at least the pane follows.
+        auto view = filtered(m);
+        for (std::size_t i = 0; i < view.size(); ++i)
+            if (view[i]->pid == target) { m.sel = static_cast<int>(i); break; }
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
     static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
         // Sort changed: re-sample in the background rather than blocking the
         // keystroke. The list keeps showing the old order for one frame, then
@@ -982,7 +1053,8 @@ struct App {
 
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
-            return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
+            return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
+                              m.pending ? &*m.pending : nullptr};
         }
 
         const Snapshot& s = m.snap;

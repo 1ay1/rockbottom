@@ -16,6 +16,7 @@
 
 #include "../../core/metrics.hpp"
 #include "../fmt.hpp"
+#include "../state.hpp"
 #include "../theme.hpp"
 #include "detail_kind.hpp"
 #include "hit_ids.hpp"
@@ -42,11 +43,14 @@ class DetailPane {
     Detail which_;
     const ProcInfo* proc_;   // for Detail::Proc
     int w_, h_, scroll_;
+    const PendingKill* pending_ = nullptr;  // in-pane kill confirmation
 
 public:
     DetailPane(const Snapshot& s, Detail which, const ProcInfo* proc = nullptr,
-               int w = 100, int h = 40, int scroll = 0)
-        : s_(s), which_(which), proc_(proc), w_(w), h_(h), scroll_(scroll) {}
+               int w = 100, int h = 40, int scroll = 0,
+               const PendingKill* pending = nullptr)
+        : s_(s), which_(which), proc_(proc), w_(w), h_(h), scroll_(scroll),
+          pending_(pending) {}
 
     operator maya::Element() const { return build(); }
 
@@ -77,7 +81,7 @@ public:
         std::vector<Element> framed;
         framed.push_back(sysbar());
         framed.push_back(detail::scroller(std::move(rows), cx.scroll, cx.body_h, ac));
-        framed.push_back(hint());
+        framed.push_back(pending_ ? confirm_strip() : hint());
 
         Element card = Panel(glyph, title, ac).grow(1)(std::move(framed));
         return (v(std::move(card) | grow(1)) | grow(1)).build();
@@ -189,6 +193,35 @@ private:
             row.push_back((text("·scroll") | nowrap | fgc(pal::dim)).build());
         }
         return (h(std::move(row))).build();
+    }
+
+    // In-pane kill confirmation — the same y/n contract the process table uses,
+    // surfaced at the foot of the detail pane so a kill armed from here (x / K
+    // / X / T) shows its prompt instead of silently waiting.
+    Element confirm_strip() const {
+        using namespace maya; using namespace maya::dsl;
+        const auto& p = *pending_;
+        const bool hard = p.sig == SIGKILL;
+        const bool group = p.pids.size() > 1;
+        const bool lethal = p.sig == SIGKILL || p.sig == SIGTERM ||
+                            p.sig == SIGQUIT || p.sig == SIGABRT || p.sig == SIGINT;
+        maya::Color c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
+        std::string what = group
+            ? std::to_string(p.pids.size()) + " procs · " + p.name
+            : p.name + " (" + std::to_string(p.pid) + ")";
+        std::string verb =
+              p.sig == SIGKILL ? "force-kill "
+            : p.sig == SIGTERM ? "end "
+            : (p.sig == SIGSTOP) ? "suspend "
+            : p.sig == SIGCONT ? "resume "
+            : "send " + sig_name(p.sig) + " to ";
+        return (h(
+            text(" " + verb + what + "? ") | nowrap | Bold | fgc(pal::bg) | bgc(c),
+            text("  y") | nowrap | Bold | fgc(pal::good),
+            text("·confirm  ") | nowrap | fgc(pal::dim),
+            text("n") | nowrap | Bold | fgc(pal::crit),
+            text("·cancel") | nowrap | fgc(pal::dim)
+        )).build();
     }
 };
 

@@ -55,7 +55,11 @@ public:
             {"DETAIL", {
                 {"1 2 3 4 5 6", "cpu · mem · net · gpu · disk · proc"},
                 {"Enter", "open selected process detail"},
-                {"↑↓ / PgUp PgDn", "scroll the detail pane"},
+                {"↑↓ / PgUp PgDn", "walk the list / scroll the pane"},
+                {"← →", "proc pane: walk to parent / busiest child"},
+                {"r", "proc pane: renice this process"},
+                {"T", "proc pane: end this process + its whole subtree"},
+                {"x K l X", "proc pane: stop · kill · signal · end-all-by-name"},
                 {"g / G", "jump to top / bottom of pane"},
                 {"Esc", "close detail / help"},
             }},
