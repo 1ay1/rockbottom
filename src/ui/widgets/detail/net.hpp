@@ -160,6 +160,19 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // Who is talking to whom — the ss / lsof -i / nethogs answer, attributed to
     // owning processes. Established connections first, then listeners. This is
     // the network view every process monitor should have and almost none do.
+    //
+    // Split geometry is computed HERE (before the rows are built) so the socket
+    // table's columns can FILL the right column instead of leaving dead space
+    // at the far edge on a wide terminal. The interface roster only needs ~52
+    // cols (name rule + spark + rate + peak); everything beyond that goes to
+    // the denser CONNECTIONS table, which is the part that wants width.
+    const int split_gap   = 2;
+    const int split_inner = std::max(40, cx.w - 6);   // pane chrome slack
+    const int split_left  = split
+        ? std::clamp(52, 40, std::max(40, split_inner - split_gap - 40))  // ~52 roster, ≥40 conns
+        : 0;
+    const int split_right = split ? split_inner - split_gap - split_left : split_inner;
+
     std::vector<Element> concol;
     std::vector<Element>& cc = split ? concol : b;
     if (!s.connections.empty()) {
@@ -172,17 +185,24 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                             std::to_string(established) + " active · " +
                             std::to_string(listen) + " listening"));
 
-        // Column widths. Full-width (stacked) shows the roomy 5-column table;
-        // the split right column drops `proto` and tightens local/remote so
-        // "who am I talking to" still reads at ~half screen.
-        const int la_w = split ? 18 : 22;
-        const int ra_w = split ? 18 : 22;
-        const int st_w = split ? 11 : 13;
+        // Column widths that FILL the available width. The `proto` column only
+        // shows in the roomy stacked layout; state is fixed (LISTEN/ESTABLISHED
+        // etc.), and local/remote/process split the remainder so nothing is
+        // wasted at the right edge no matter how wide the terminal is.
+        const int avail   = split ? split_right : std::max(40, cx.w - 4);
+        const int proto_w = split ? 2 : 8;   // 2-space indent when split (no proto)
+        const int st_w    = split ? 11 : 13;
+        const int rest    = std::max(24, avail - proto_w - st_w - 4);  // gaps
+        // local / remote / process each get a share; remote (who you're talking
+        // to) gets the most, then process, then local.
+        const int ra_w    = std::clamp(rest * 36 / 100, 16, 40);
+        const int proc_w  = std::clamp(rest * 34 / 100, 14, 34);
+        const int la_w    = std::max(14, rest - ra_w - proc_w);
 
         // Column header for the socket table.
         std::vector<Element> hdr;
-        if (!split) hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(8)).build());
-        else        hdr.push_back((text("  ") | nowrap | width(2)).build());
+        if (!split) hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(proto_w)).build());
+        else        hdr.push_back((text("  ") | nowrap | width(proto_w)).build());
         hdr.push_back((text("local") | nowrap | fgc(pal::faint) | width(la_w)).build());
         hdr.push_back((text("remote") | nowrap | fgc(pal::faint) | width(ra_w)).build());
         hdr.push_back((text("state") | nowrap | fgc(pal::faint) | width(st_w)).build());
@@ -198,12 +218,13 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             Color st_c = est ? pal::good : lis ? pal::sky
                        : c.state.empty() ? pal::dim : pal::hot;
             std::string who = c.pid > 0
-                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname, split ? 12 : 20)) +
+                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname,
+                                        static_cast<std::size_t>(std::max(6, proc_w - 8)))) +
                   " (" + std::to_string(c.pid) + ")"
                 : "—";
             std::vector<Element> row;
-            if (!split) row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(8)).build());
-            else        row.push_back((text("  ") | nowrap | width(2)).build());
+            if (!split) row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(proto_w)).build());
+            else        row.push_back((text("  ") | nowrap | width(proto_w)).build());
             row.push_back((text(fmt::clip(c.laddr, static_cast<std::size_t>(la_w - 1))) | nowrap | fgc(est ? pal::text : pal::label) | width(la_w)).build());
             row.push_back((text(fmt::clip(c.raddr, static_cast<std::size_t>(ra_w - 1))) | nowrap | fgc(est ? pal::sky : pal::dim) | width(ra_w)).build());
             row.push_back((text(c.state.empty() ? "·" : c.state) | nowrap | Bold | fgc(st_c) | width(st_w)).build());
@@ -222,18 +243,14 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // frame. Instead we ZIP the columns row-for-row into 1-row-tall pairs,
     // padding the shorter column with blanks, so scroll math stays exact.
     if (split) {
-        const int gap_w   = 2;
-        const int inner   = std::max(40, cx.w - 6);      // pane chrome slack
-        const int left_w  = std::clamp((inner - gap_w) * 52 / 100, 34, inner - gap_w - 30);
-        const int right_w = inner - gap_w - left_w;
         const std::size_t n = std::max(ifcol.size(), concol.size());
         for (std::size_t i = 0; i < n; ++i) {
             Element l = i < ifcol.size() ? std::move(ifcol[i]) : gap_row();
             Element r = i < concol.size() ? std::move(concol[i]) : gap_row();
             b.push_back((h(
-                std::move(l) | width(left_w),
-                std::move(r) | width(right_w)
-            ) | gap(gap_w)).build());
+                std::move(l) | width(split_left),
+                std::move(r) | width(split_right)
+            ) | gap(split_gap)).build());
         }
     }
 
