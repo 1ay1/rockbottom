@@ -52,7 +52,9 @@ public:
             rows.push_back((text("no active interfaces") | fgc(pal::dim)).build());
 
         // Wide/graph mode: a throughput mountain (busiest iface's rx as the
-        // fill, tx as an overlay line) above the per-iface rate rows.
+        // fill, tx as an overlay line) above the per-iface rate rows. The
+        // y-axis is labelled with the window PEAK so the mountain's height is
+        // an actual rate, not an unreadable normalized squiggle.
         if (graph_h_ >= 2 && !nets_.empty()) {
             const NetIface* busy = &nets_.front();
             double best = -1;
@@ -70,10 +72,21 @@ public:
                 rxn[static_cast<std::size_t>(i)] = busy->rx_history[static_cast<std::size_t>(i)] / peak;
                 txn[static_cast<std::size_t>(i)] = busy->tx_history[static_cast<std::size_t>(i)] / peak;
             }
+            // y-axis: peak rate at top (right-aligned to 5 cells), 0 at floor.
+            std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
+            std::vector<Element> axis;
+            for (int r = 0; r < graph_h_; ++r) {
+                std::string lbl = r == 0 ? peak_lbl : r == graph_h_ - 1 ? "0" : "";
+                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
+                                | w_<6> | justify(Justify::End)).build());
+            }
             Graph g{rxn.data(), busy->hist_len};
             g.fill().rows(graph_h_).color(pal::good)
              .overlay(txn.data(), busy->hist_len, pal::hot);
-            rows.push_back(Element{g} | height(graph_h_));
+            rows.push_back((h(
+                v(std::move(axis)) | w_<6>,
+                Element{g} | grow(1)
+            ) | gap(1) | height(graph_h_)).build());
         }
 
         std::vector<const NetIface*> live;

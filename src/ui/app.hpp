@@ -1308,7 +1308,6 @@ struct App {
             // shared: each panel keeps its fixed content (border + meter/rate
             // rows) and the LEFTOVER is split across the four graphs so the
             // column fills top-to-bottom with no trailing gap.
-            const int cpu_gw = std::max(8, col1_w - 4 - 4);
             // Fixed (non-graph) rows each panel needs:
             const int cpu_fixed  = 2 + 1 + cores_rows;   // border + ALL hdr + cores
             const int mem_fixed  = mem_h;                // border + RAM(+SWP) rows
@@ -1316,16 +1315,16 @@ struct App {
             const int disk_fixed = disk_h;               // border + I/O + mounts
             const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
             int graph_pool = std::max(8, band_h - all_fixed);
-            // Weight the split: CPU gets the tallest mountain, the rest share
-            // the remainder evenly. (CPU is the headline metric.)
-            int cpu_graph_h  = std::max(3, graph_pool * 40 / 100);
-            int rest_pool    = std::max(6, graph_pool - cpu_graph_h);
-            int rest_each    = std::max(2, rest_pool / 3);
-            int mem_graph_h  = rest_each;
-            int net_graph_h  = rest_each;
-            // The last panel absorbs the integer-division remainder so col 1
-            // fills the band exactly with no trailing gap.
-            int disk_graph_h = std::max(2, rest_pool - 2 * rest_each);
+            // A graph reads best at a MODERATE height — a 6% line drawn over 30
+            // rows is a tiny thread in an empty sky. Give the stat graphs a
+            // capped, comfortable height; CPU (the headline) absorbs whatever
+            // vertical slack is left so col 1 still fills top-to-bottom without
+            // stretching the small graphs into unreadable whitespace.
+            int mem_graph_h  = std::clamp(graph_pool / 5, 4, 7);
+            int net_graph_h  = std::clamp(graph_pool / 5, 4, 7);
+            int disk_graph_h = std::clamp(graph_pool / 5, 4, 8);
+            int cpu_graph_h  = std::max(6, graph_pool - mem_graph_h - net_graph_h - disk_graph_h);
+            const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
                 Element{CpuPanel{s.cpu, cpu_cols, cpu_gw, cpu_graph_h, &s.mem}}

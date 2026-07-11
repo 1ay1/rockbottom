@@ -40,7 +40,8 @@ public:
         std::vector<Element> rows;
 
         // Wide/graph mode: a system I/O mountain (read fill + write overlay)
-        // above the live rate row and the mount meters.
+        // above the live rate row and the mount meters. A peak-labelled y-axis
+        // gives the mountain height a real magnitude.
         if (graph_h_ >= 2) {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
@@ -52,10 +53,20 @@ public:
                 rn[static_cast<std::size_t>(i)] = io_.read_history[static_cast<std::size_t>(i)] / peak;
                 wn[static_cast<std::size_t>(i)] = io_.write_history[static_cast<std::size_t>(i)] / peak;
             }
+            std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
+            std::vector<Element> axis;
+            for (int r = 0; r < graph_h_; ++r) {
+                std::string lbl = r == 0 ? peak_lbl : r == graph_h_ - 1 ? "0" : "";
+                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
+                                | w_<6> | justify(Justify::End)).build());
+            }
             Graph g{rn.data(), io_.hist_len};
             g.fill().rows(graph_h_).color(pal::sky)
              .overlay(wn.data(), io_.hist_len, pal::pink);
-            rows.push_back(Element{g} | height(graph_h_));
+            rows.push_back((h(
+                v(std::move(axis)) | w_<6>,
+                Element{g} | grow(1)
+            ) | gap(1) | height(graph_h_)).build());
         }
 
         // ── Row 1: live whole-system I/O rates ── rendered exactly like a
