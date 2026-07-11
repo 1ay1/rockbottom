@@ -56,6 +56,18 @@ public:
             return body;
         };
 
+        // GROW mode: the panel fills its flex slot (its inner content, e.g. a
+        // fill() graph, expands into the slack). The outermost element MUST
+        // stay a BOX so `| grow` / `| hit` piped by the caller land on it
+        // in-place (WrappedNode's as_box path) instead of wrapping it in a
+        // non-growing box that would leave the panel parked at natural height
+        // inside its taller slot — the "still space" gap. A growing panel is
+        // by construction roomy, so the chip always fits; skip the
+        // width-responsive chip-drop (that path returns a component, which
+        // can't carry grow/hit in-place).
+        if (grow_ > 0)
+            return make(true);
+
         if (chip_.empty())
             return make(false);
 

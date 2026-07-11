@@ -1251,33 +1251,16 @@ struct App {
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
 
-        // ── Classic right column: 50 / 50 split, balanced graphs ──
+        // ── Classic right column: 40 / 60 split, self-filling panels ──
         // The CPU column establishes the band height (rc_target). The right
-        // column fills exactly that height in two EQUAL halves (each grows to
-        // rc_target/2), and MEMORY and NETWORK carry the SAME-height mountain
-        // so neither reads bigger than the other — the graphs are balanced,
-        // height-responsive (they scale with the band), and the halves are a
-        // strict 50 / 50.
-        //   TOP half (50%) = MEMORY
-        //   BOT half (50%) = NETWORK + DISK
-        // Bias the split so the bottom (NET+DISK) half is TALLER than the top
-        // (MEMORY) half: this keeps the NETWORK mountain bigger than the memory
-        // one WHILE both halves fill completely (no dead space). MEM gets ~40%
-        // of the band, NET+DISK ~60%.
-        const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
-        const int rc_top_h    = std::max(mem_h, rc_target * 32 / 100);  // MEMORY half
-        const int rc_bot_h    = rc_target - rc_top_h;                   // NET+DISK half
-        // Each half FILLS with its graph — no caps, no dead space:
-        //   MEM graph  = top half minus MEM's meter rows (fills the top half)
-        //   DISK graph = a small slice of the bottom half
-        //   NET graph  = the rest of the bottom half (the tallest mountain)
-        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
-        const int bot_spare = std::max(0, rc_bot_h - net_h - disk_h);
-        int rc_disk_graph = std::min({bot_spare / 4, 4});
-        int rc_net_graph  = std::max(0, bot_spare - rc_disk_graph);
-        if (rc_mem_graph  < 3) rc_mem_graph  = 0;
-        if (rc_net_graph  < 3) rc_net_graph  = 0;
-        if (rc_disk_graph < 3) rc_disk_graph = 0;
+        // column fills exactly that height; its panels use maya's fill()
+        // primitive so each panel's mountain graph expands to consume the
+        // real height its flex slot receives. NO hand-computed graph_h is
+        // threaded down — there is no estimate left to drift from what the
+        // layout engine actually allocates (the whole "still space" class).
+        //   TOP  (grow 40) = MEMORY
+        //   BOT  (grow 60) = NETWORK (fills) + DISK (natural mount rows)
+        const int rc_target = std::max(cpu_h, right_stack_h);  // band height
 
         // ── Wide 2-column body ──
         // On a big screen the whole thing flips: col 1 stacks EVERY stat panel
@@ -1424,27 +1407,23 @@ struct App {
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
-                  // The two halves each grow(1): maya's flex distributes the
-                  // band's REAL height (forced definite on this column by the
-                  // outer row's height(rc_target) + cross-stretch) into two
-                  // exact halves, integer-remainder-safe — a true 50/50 at any
-                  // terminal size, no hand arithmetic that can drift from the
-                  // height maya actually lays the column out at. The graph row
-                  // counts (rc_*_graph) are only an ESTIMATE of each half's
-                  // interior; grow enforces the split regardless.
-                  // Weighted grow splits the band's REAL height 40 / 60
-                  // (MEM / NET+DISK) — matching the graph row estimates below
-                  // — so the NETWORK mountain is bigger than MEMORY's while
-                  // both halves fill with no dead space. maya distributes free
-                  // space by grow weight, integer-remainder-safe, at any size.
-                  v(v(Element{MemPanel{s.mem, rc_mem_graph}}
-                          | hit(ui::hit_band(ui::Detail::Mem)))
-                        | grow(32),
-                    v(Element{NetPanel{s.nets, rc_net_graph}}
+                  // Self-filling right column. Each panel carries an intrinsic
+                  // grow weight (MemPanel.grow / NetPanel.grow) so it lands as
+                  // a growing BOX in the column and stretches to its slot;
+                  // inside, a maya fill() graph consumes whatever height is
+                  // left after the meters/iface rows. maya divides the band's
+                  // REAL height 40 / 60 (MEM / NET+DISK) by grow weight and
+                  // hands each panel its true height at paint — no rc_*_graph
+                  // estimate, so no drift and no trailing "still space".
+                  //   TOP  (grow 40) MEMORY fills
+                  //   BOT  (grow 60) NETWORK fills, DISK sits at natural height
+                  v(Element{MemPanel{s.mem}.expand(40)}
+                        | hit(ui::hit_band(ui::Detail::Mem)),
+                    v(Element{NetPanel{s.nets}.expand(1)}
                           | hit(ui::hit_band(ui::Detail::Net)),
-                      Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
-                          | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
-                        | grow(68))
+                      Element{DiskPanel{s.disks, s.disk_io, false}}
+                          | hit(ui::hit_band(ui::Detail::Disk)))
+                        | grow(60))
                     | width(right_w)
               ) | gap(gap_w) | height(rc_target)).build();
 

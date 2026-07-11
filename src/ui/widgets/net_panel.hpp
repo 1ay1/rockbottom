@@ -22,10 +22,16 @@ namespace rockbottom::ui {
 class NetPanel {
     const std::vector<NetIface>& nets_;
     int graph_h_ = 0;   // >0: draw a throughput area-graph this tall on top
+    float grow_ = 0;    // >0: panel fills its flex slot; graph fills the slack
 
 public:
     explicit NetPanel(const std::vector<NetIface>& n, int graph_h = 0)
         : nets_(n), graph_h_(std::max(0, graph_h)) {}
+
+    // Fill mode: the panel grows to its flex slot and the throughput mountain
+    // fills whatever height is left after the iface rows. (Named `expand`, not
+    // `grow`, so it doesn't shadow dsl::grow inside build().)
+    NetPanel& expand(float g) { grow_ = g; return *this; }
 
     // The pane always shows the top 4 interfaces (the sampler sorts by
     // traffic rate, name as tiebreak) — a stable roster that never grows a
@@ -51,17 +57,60 @@ public:
         if (nets_.empty())
             rows.push_back((text("no active interfaces") | fgc(pal::dim)).build());
 
-        // Wide/graph mode: a throughput mountain (busiest iface's rx as the
-        // fill, tx as an overlay line) above the per-iface rate rows. The
-        // y-axis is labelled with the window PEAK so the mountain's height is
-        // an actual rate, not an unreadable normalized squiggle.
-        if (graph_h_ >= 2 && !nets_.empty()) {
-            const NetIface* busy = &nets_.front();
+        // Pick the busiest interface for the mountain (shared by fill mode
+        // and the fixed-height graph mode below).
+        const NetIface* busy = nets_.empty() ? nullptr : &nets_.front();
+        if (busy) {
             double best = -1;
             for (const auto& n : nets_) {
                 double r = n.rx.per_sec + n.tx.per_sec;
                 if (r > best) { best = r; busy = &n; }
             }
+        }
+
+        // Fill mode: a throughput mountain that expands to consume the height
+        // left after the iface rows. fill() hands the render the REAL (w, h)
+        // so the graph is exactly as tall as its slot — no estimate to drift.
+        if (grow_ > 0 && busy) {
+            float peak = 1.0f;
+            for (int i = 0; i < busy->hist_len; ++i)
+                peak = std::max({peak,
+                                 busy->rx_history[static_cast<std::size_t>(i)],
+                                 busy->tx_history[static_cast<std::size_t>(i)]});
+            const float* rxh = busy->rx_history.data();
+            const float* txh = busy->tx_history.data();
+            const int hl = busy->hist_len;
+            rows.push_back(fill([rxh, txh, hl, peak](int w, int ah) -> Element {
+                using namespace maya;
+                using namespace maya::dsl;
+                if (ah < 2) return blank().build();
+                // Normalize into a per-thread scratch; build_fixed() bakes the
+                // glyphs immediately so the buffer needn't outlive this call.
+                static thread_local std::array<float, 48> rxn{}, txn{};
+                for (int i = 0; i < hl && i < 48; ++i) {
+                    rxn[static_cast<std::size_t>(i)] = rxh[static_cast<std::size_t>(i)] / peak;
+                    txn[static_cast<std::size_t>(i)] = txh[static_cast<std::size_t>(i)] / peak;
+                }
+                std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
+                std::vector<Element> axis;
+                for (int r = 0; r < ah; ++r) {
+                    std::string lbl = r == 0 ? peak_lbl : r == ah - 1 ? "0" : "";
+                    axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
+                                    | w_<6> | justify(Justify::End)).build());
+                }
+                const int cells = std::max(1, w - 6 - 1);   // axis(6) + gap(1)
+                Graph g{rxn.data(), hl};
+                g.cells(cells).rows(ah).color(pal::good)
+                 .overlay(txn.data(), hl, pal::hot);
+                return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
+                        | gap(1)).build();
+            }, 0, 2));
+        }
+        // Wide/graph mode: a throughput mountain (busiest iface's rx as the
+        // fill, tx as an overlay line) above the per-iface rate rows. The
+        // y-axis is labelled with the window PEAK so the mountain's height is
+        // an actual rate, not an unreadable normalized squiggle.
+        else if (graph_h_ >= 2 && busy) {
             float peak = 1.0f;
             for (int i = 0; i < busy->hist_len; ++i)
                 peak = std::max({peak,
@@ -184,7 +233,7 @@ public:
             }});
         }
 
-        return Panel("⇅", "NETWORK", pal::net_ac)(std::move(rows));
+        return Panel("⇅", "NETWORK", pal::net_ac).grow(grow_)(std::move(rows));
     }
 };
 

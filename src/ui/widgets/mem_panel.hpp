@@ -22,10 +22,17 @@ namespace rockbottom::ui {
 class MemPanel {
     const MemInfo& mem_;
     int graph_h_ = 0;   // >0: draw a usage area-graph this tall above the meters
+    float grow_ = 0;    // >0: panel fills its flex slot; graph fills the slack
 
 public:
     explicit MemPanel(const MemInfo& m, int graph_h = 0)
         : mem_(m), graph_h_(std::max(0, graph_h)) {}
+
+    // Fill mode: the panel grows to its flex slot and the usage mountain
+    // fills whatever height is left after the meters — no graph_h estimate
+    // threaded down from the layout, so nothing can drift. (Named `expand`,
+    // not `grow`, so it doesn't shadow dsl::grow inside build().)
+    MemPanel& expand(float g) { grow_ = g; return *this; }
 
     operator maya::Element() const { return build(); }
 
@@ -67,11 +74,29 @@ public:
         std::vector<Element> rows;
         const double mf = mem_.usage().v;
 
+        // Fill mode: a usage mountain that expands to consume the height left
+        // after the meters. fill() hands the render the REAL allocated (w, h),
+        // so the graph is exactly as tall as its slot — the app never has to
+        // estimate a graph_h that then drifts from the real box.
+        if (grow_ > 0) {
+            const float* hist = mem_.usage_history.data();
+            const int hlen = mem_.hist_len;
+            rows.push_back(fill([hist, hlen](int w, int ah) -> Element {
+                using namespace maya;
+                using namespace maya::dsl;
+                if (ah < 2) return blank().build();
+                const int cells = std::max(1, w - 3 - 1);   // y-axis(3) + gap(1)
+                Graph g{hist, hlen};
+                g.cells(cells).rows(ah).color(pal::mem_ac);
+                return (h(y_axis(ah, 100.0, 3), Element{g.build_fixed()})
+                        | gap(1)).build();
+            }, 0, 2));
+        }
         // Wide/graph mode: a usage-over-time mountain above the meters, so a
         // slow leak is visible as a rising trend, not just a single number.
         // A left y-axis (100 at top, 0 at the floor) makes the height mean
         // something instead of being an unlabelled squiggle.
-        if (graph_h_ >= 2) {
+        else if (graph_h_ >= 2) {
             Graph g{mem_.usage_history.data(), mem_.hist_len};
             g.fill().rows(graph_h_).color(pal::mem_ac);
             rows.push_back((h(
@@ -102,6 +127,7 @@ public:
         }
 
         return Panel("▤", "MEMORY", pal::mem_ac)
+            .grow(grow_)
             .chip("cache " + humanize_bytes(mem_.cached)
                   + "  free " + humanize_bytes(mem_.available)
                   + "  ·  " + fmt::pct(mf) + " used")(std::move(rows));
