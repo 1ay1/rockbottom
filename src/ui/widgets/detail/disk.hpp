@@ -27,12 +27,14 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         text("  ▼ read") | nowrap | fgc(pal::teal) | width(10),
         Element{Spark{rdn.data(), s.disk_io.hist_len}.fill().color(pal::teal).baseline(true)} | grow(1),
         text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(10) | justify(Justify::End),
+        text(fmt::count(s.disk_io.read_iops) + " iops") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End),
         text("pk " + std::string(humanize_rate(ByteRate{rpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     b.push_back((h(
         text("  ▲ write") | nowrap | fgc(pal::hot) | width(10),
         Element{Spark{wrn.data(), s.disk_io.hist_len}.fill().color(pal::hot).baseline(true)} | grow(1),
         text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(10) | justify(Justify::End),
+        text(fmt::count(s.disk_io.write_iops) + " iops") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End),
         text("pk " + std::string(humanize_rate(ByteRate{wpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
     ) | gap(1)).build());
     if (s.psi.io.available) {

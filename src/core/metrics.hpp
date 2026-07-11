@@ -144,6 +144,7 @@ struct Psi {
 // System-wide block-device I/O rates from /proc/diskstats deltas.
 struct DiskIO {
     ByteRate read{}, write{};
+    double   read_iops = 0, write_iops = 0;   // read/write OPERATIONS per second
     std::array<float, 48> read_history{}, write_history{};
     int hist_len = 0;
 };
@@ -192,6 +193,17 @@ struct GpuInfo {
     std::vector<GpuProc>  procs;          // top VRAM consumers
 };
 
+// A hardware temperature sensor (or fan). Populated from Linux /sys/class/hwmon
+// (coretemp, nvme, drivetemp, acpitz, chipset, battery, …); empty where the
+// platform has no clean public API (macOS CPU/NVMe temps need private SMC).
+struct Sensor {
+    std::string label;      // "Package", "nvme0", "Core 0", "battery", …
+    std::string zone;       // grouping: "cpu" / "nvme" / "drive" / "acpi" / …
+    float       temp_c = 0; // current temperature, °C
+    float       high_c = 0; // manufacturer high/target threshold, 0 if unknown
+    float       crit_c = 0; // critical threshold, 0 if unknown
+};
+
 struct Snapshot {
     std::string           hostname, kernel;
     std::uint64_t         uptime_sec = 0;
@@ -204,6 +216,7 @@ struct Snapshot {
     std::vector<NetIface> nets;
     std::vector<Connection> connections;   // active sockets + owning pids
     std::vector<GpuInfo>  gpus;
+    std::vector<Sensor>   sensors;   // hwmon temps (Linux); empty on macOS
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
     Psi                   psi;
     Battery               battery;

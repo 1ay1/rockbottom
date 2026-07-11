@@ -31,7 +31,7 @@ std::uint64_t cf_u64(CFDictionaryRef d, CFStringRef key) {
 }  // namespace
 
 void Sampler::sample_disk_io(DiskIO& io, double dt) {
-    std::uint64_t rd = 0, wr = 0;
+    std::uint64_t rd = 0, wr = 0, rops = 0, wops = 0;
 
     io_iterator_t it = MACH_PORT_NULL;
     if (::IOServiceGetMatchingServices(kIOMainPortDefault,
@@ -45,6 +45,8 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
                 if (stats) {
                     rd += cf_u64(stats, CFSTR(kIOBlockStorageDriverStatisticsBytesReadKey));
                     wr += cf_u64(stats, CFSTR(kIOBlockStorageDriverStatisticsBytesWrittenKey));
+                    rops += cf_u64(stats, CFSTR(kIOBlockStorageDriverStatisticsReadsKey));
+                    wops += cf_u64(stats, CFSTR(kIOBlockStorageDriverStatisticsWritesKey));
                 }
                 CFRelease(props);
             }
@@ -57,8 +59,15 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
     std::uint64_t dw = wr > prev_io_write_ ? wr - prev_io_write_ : 0;
     io.read  = first_ ? ByteRate{0} : rate(Bytes{dr}, dt);
     io.write = first_ ? ByteRate{0} : rate(Bytes{dw}, dt);
+    // IOPS: operation-count deltas over dt (reuses the ops-prev members).
+    std::uint64_t dro = rops > prev_io_rops_ ? rops - prev_io_rops_ : 0;
+    std::uint64_t dwo = wops > prev_io_wops_ ? wops - prev_io_wops_ : 0;
+    io.read_iops  = (!first_ && dt > 0) ? static_cast<double>(dro) / dt : 0;
+    io.write_iops = (!first_ && dt > 0) ? static_cast<double>(dwo) / dt : 0;
     prev_io_read_ = rd;
     prev_io_write_ = wr;
+    prev_io_rops_ = rops;
+    prev_io_wops_ = wops;
 
     sys::push_hist(io_read_hist_, io_hist_len_, static_cast<float>(io.read.per_sec));
     for (int i = 1; i < io_hist_len_; ++i)

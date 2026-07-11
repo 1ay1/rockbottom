@@ -63,6 +63,7 @@ private:
     void    sample_disk_io(DiskIO&, double dt);
     void    sample_net(std::vector<NetIface>&, double dt);
     void    sample_gpu(std::vector<GpuInfo>&);
+    void    sample_sensors(std::vector<Sensor>&);
     void    sample_procs(Snapshot&, SortKey, int top_n, double dt);
     void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
@@ -77,6 +78,7 @@ private:
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_pkts_;  // rx,tx packets
     std::unordered_map<int, ProcPrev>     prev_proc_;
     std::uint64_t                         prev_io_read_ = 0, prev_io_write_ = 0;  // sectors
+    std::uint64_t                         prev_io_rops_ = 0, prev_io_wops_ = 0;   // op counts (IOPS)
     std::uint64_t                         prev_pswpin_ = 0, prev_pswpout_ = 0;    // pages
     std::uint64_t                         prev_pgin_ = 0, prev_pgout_ = 0;        // file page io
     std::uint64_t                         prev_faults_ = 0;                       // page faults

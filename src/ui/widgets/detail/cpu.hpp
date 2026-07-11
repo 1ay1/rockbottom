@@ -170,6 +170,37 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
+    // ── sensors ───────────────────────────────────────────────────
+    // Hardware temperatures from hwmon (Linux): CPU package/cores, NVMe drives,
+    // chipset, battery, wifi — the readings you'd otherwise shell out to
+    // `sensors` for. Grouped by zone, each with a small heat bar. Empty on
+    // macOS (no public temperature API), so the section just doesn't appear.
+    if (!s.sensors.empty()) {
+        b.push_back(gap_row());
+        b.push_back(section("SENSORS", pal::cpu_ac,
+                            std::to_string(s.sensors.size()) + " probes"));
+        std::string cur_zone = "\x01";   // sentinel so the first row prints its zone
+        for (const Sensor& sn : s.sensors) {
+            if (sn.zone != cur_zone) {
+                cur_zone = sn.zone;
+                b.push_back((text("  " + cur_zone) | nowrap | fgc(pal::faint)).build());
+            }
+            // Heat fraction: 30°C floor → crit (or 95°C) ceiling on the load ramp.
+            const float ceil = sn.crit_c > 40 ? sn.crit_c : 95.0f;
+            const double frac = std::clamp((sn.temp_c - 30.0) / (ceil - 30.0), 0.0, 1.0);
+            char t[16]; std::snprintf(t, sizeof t, "%.0f°C", sn.temp_c);
+            std::string tail = sn.high_c > 40
+                ? ("high " + std::to_string(static_cast<int>(sn.high_c)) + "°")
+                : (sn.crit_c > 40 ? "crit " + std::to_string(static_cast<int>(sn.crit_c)) + "°" : "");
+            b.push_back((h(
+                text("    " + std::string(fmt::clip(sn.label, 18))) | nowrap | fgc(pal::label) | width(20),
+                Element{Meter{frac}.fill().groove(false).color(load_color(frac))} | grow(1),
+                text(t) | nowrap | Bold | fgc(load_color(frac)) | width(7) | justify(Justify::End),
+                text(tail) | nowrap | fgc(pal::faint) | width(11) | justify(Justify::End)
+            ) | gap(1)).build());
+        }
+    }
+
     return b;
 }
 

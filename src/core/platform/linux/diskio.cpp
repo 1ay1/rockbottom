@@ -18,7 +18,7 @@ using namespace procfs;
 void Sampler::sample_disk_io(DiskIO& io, double dt) {
     std::ifstream ds("/proc/diskstats");
     std::string line;
-    std::uint64_t rd_sectors = 0, wr_sectors = 0;
+    std::uint64_t rd_sectors = 0, wr_sectors = 0, rd_ops = 0, wr_ops = 0;
 
     while (std::getline(ds, line)) {
         std::istringstream ss(line);
@@ -27,7 +27,8 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
         std::uint64_t f[11] = {};
         ss >> major >> minor >> name;
         for (auto& v : f) ss >> v;
-        // f[2] = sectors read, f[6] = sectors written (Documentation/iostats)
+        // f[0] = reads completed, f[2] = sectors read, f[4] = writes completed,
+        // f[6] = sectors written (Documentation/iostats).
 
         // Whole devices only: skip partitions (name ends in a digit for
         // sdaN/vdaN; nvme partitions are nvmeXnYpZ), loop/ram/zram/dm.
@@ -42,6 +43,8 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
 
         rd_sectors += f[2];
         wr_sectors += f[6];
+        rd_ops += f[0];
+        wr_ops += f[4];
     }
 
     constexpr std::uint64_t kSector = 512;
@@ -49,8 +52,14 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
     std::uint64_t dw = wr_sectors > prev_io_write_ ? wr_sectors - prev_io_write_ : 0;
     io.read  = first_ ? ByteRate{0} : rate(Bytes{dr * kSector}, dt);
     io.write = first_ ? ByteRate{0} : rate(Bytes{dw * kSector}, dt);
+    std::uint64_t dro = rd_ops > prev_io_rops_ ? rd_ops - prev_io_rops_ : 0;
+    std::uint64_t dwo = wr_ops > prev_io_wops_ ? wr_ops - prev_io_wops_ : 0;
+    io.read_iops  = (!first_ && dt > 0) ? static_cast<double>(dro) / dt : 0;
+    io.write_iops = (!first_ && dt > 0) ? static_cast<double>(dwo) / dt : 0;
     prev_io_read_ = rd_sectors;
     prev_io_write_ = wr_sectors;
+    prev_io_rops_ = rd_ops;
+    prev_io_wops_ = wr_ops;
 
     push_hist(io_read_hist_, io_hist_len_, static_cast<float>(io.read.per_sec));
     for (int i = 1; i < io_hist_len_; ++i)
