@@ -14,6 +14,8 @@
 
 #include "common.hpp"
 
+#include <maya/widget/table.hpp>
+
 namespace rockbottom::ui::detail {
 
 // Peak of a rolling history buffer — raw B/s samples.
@@ -29,84 +31,93 @@ inline bool net_is_split(const Snapshot& s, const Ctx& cx) {
     return cx.wide && !s.connections.empty();
 }
 
-// ── connections table ────────────────────────────────────────────────────
-// A tidy monospace table: proto · local → remote · state chip · owner. Column
-// widths are computed from the available width so the row FILLS its column and
-// the state chip / owner never float away from the addresses. `avail` is the
-// width the table gets; `with_proto` shows the proto column (stacked layout)
-// vs a 2-space indent (split, where width is tighter).
-struct ConnCols { int indent, la, ra, st, proc; };
+// ── connections table ────────────────────────────────────────────────────────────────────────
+// The socket list is maya::Table — measured column plan (solve_columns),
+// header rail, zebra stripes, span-exact … truncation, and (split mode)
+// the host-scrolled window + scrollbar are all the framework's. This
+// file supplies only the domain: which columns, their ink, and an owner
+// cell built at the SOLVED width so the pid tail never falls off.
 
-inline ConnCols conn_cols(int avail, bool with_proto) {
-    ConnCols c;
-    c.indent = with_proto ? 8 : 2;                 // "  proto" vs bare indent
-    c.st     = with_proto ? 12 : 11;
-    const int gaps = 4;                            // inter-column gap(1) ×4
-    const int rest = std::max(30, avail - c.indent - c.st - gaps);
-    // remote (who you're talking to) gets the most, then owner, then local.
-    c.ra   = std::clamp(rest * 38 / 100, 16, 42);
-    c.proc = std::clamp(rest * 32 / 100, 14, 34);
-    c.la   = std::max(14, rest - c.ra - c.proc);
-    return c;
+inline std::vector<maya::ColumnDef> conn_columns(bool with_proto) {
+    using namespace maya;
+    // The address pair never sheds; when the pane is tight PROTO goes
+    // first, then STATE, then PROCESS. REMOTE (who you're talking to)
+    // breathes the most, PROCESS next, LOCAL takes whatever is left once
+    // the capped two stop growing — the same shares the old hand solver
+    // dealt in percentages, now solved against measured floors instead
+    // of guessed ones.
+    std::vector<ColumnDef> cols;
+    cols.push_back({.header = "", .width = 2, .keep = kKeepAlways});  // pane indent
+    if (with_proto)
+        cols.push_back({.header = "PROTO", .keep = 1});
+    cols.push_back({.header = "LOCAL",   .keep = kKeepAlways,
+                    .weight = 3.0f, .min_width = 14});
+    cols.push_back({.header = "REMOTE",  .keep = kKeepAlways,
+                    .weight = 3.8f, .min_width = 16, .max_width = 42});
+    cols.push_back({.header = "STATE",   .keep = 2});
+    cols.push_back({.header = "PROCESS", .keep = 3,
+                    .weight = 3.2f, .min_width = 14, .max_width = 34});
+    return cols;
 }
 
-// A single formatted socket row. `zebra` tints alternate rows for readability.
-inline Element conn_row(const Connection& c, const ConnCols& cols, bool with_proto,
-                        bool zebra) {
-    using namespace maya; using namespace maya::dsl;
+inline maya::TableRow conn_table_row(const Connection& c, bool with_proto) {
+    using namespace maya;
     const bool est = c.state == "ESTABLISHED";
     const bool lis = c.state == "LISTEN";
     const Color st_c = est ? pal::good : lis ? pal::sky
                      : c.state.empty() ? pal::dim : pal::hot;
-    const Color la_c = est ? pal::text : pal::label;
-    const Color ra_c = est ? pal::sky  : pal::dim;
-    // Owner: name + (pid). The name is clipped to the owner column minus the
-    // "(12345)" tail so the pid always stays visible.
-    const int name_room = std::max(6, cols.proc - 8);
-    std::string who = c.pid > 0
-        ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname,
-                                static_cast<std::size_t>(name_room))) +
-          " (" + std::to_string(c.pid) + ")"
-        : "—";
-    std::string state = c.state.empty() ? "·" : c.state;
-
-    std::vector<Element> row;
-    if (with_proto)
-        row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(cols.indent)).build());
-    else
-        row.push_back((text("  ") | nowrap | width(cols.indent)).build());
-    row.push_back((text(std::string(fmt::clip(c.laddr, static_cast<std::size_t>(cols.la - 1))))
-                   | nowrap | fgc(la_c) | width(cols.la)).build());
-    row.push_back((text(std::string(fmt::clip(c.raddr, static_cast<std::size_t>(cols.ra - 1))))
-                   | nowrap | fgc(ra_c) | width(cols.ra)).build());
-    row.push_back((text(state) | nowrap | Bold | fgc(st_c) | width(cols.st)).build());
-    row.push_back((text(who) | nowrap | fgc(pal::label) | grow(1)).build());
-    Element line = (h(std::move(row)) | gap(1)).build();
-    if (zebra) line = std::move(line) | bgc(mix(pal::bg_panel, pal::net_ac, 0.06));
-    return line.build();
+    TableRow row;
+    row.style = Style{}.with_fg(pal::label);   // base ink; spans override
+    row.cells.emplace_back("");                // indent
+    if (with_proto) row.cells.emplace_back(c.proto);
+    row.cells.push_back(TableCell{}.span(c.laddr,
+        Style{}.with_fg(est ? pal::text : pal::label)));
+    row.cells.push_back(TableCell{}.span(c.raddr,
+        Style{}.with_fg(est ? pal::sky : pal::dim)));
+    row.cells.push_back(TableCell{}.span(c.state.empty() ? "\xc2\xb7" : c.state,
+        Style{}.with_bold().with_fg(st_c)));
+    // Owner: name + (pid), built AT the solved column width — the name
+    // gives way first, the pid tail always survives. (The old code
+    // clipped the name to a guessed budget; this one measures.)
+    if (c.pid > 0) {
+        row.cells.push_back(TableCell::dyn(
+            [name = c.pname.empty() ? std::string{"?"} : c.pname,
+             pid = c.pid](int w) -> TableCell {
+                const std::string tail = " (" + std::to_string(pid) + ")";
+                const int room = std::max(2, w - static_cast<int>(tail.size()));
+                return {fmt::clip(name, static_cast<std::size_t>(room)) + tail};
+            }));
+    } else {
+        row.cells.emplace_back("\xe2\x80\x94");   // —
+    }
+    return row;
 }
 
-inline Element conn_header(const ConnCols& cols, bool with_proto) {
-    using namespace maya; using namespace maya::dsl;
-    // A real table header: bold, accent-tinted labels sitting on a subtle
-    // header bar so the column titles read as a heading, not another data row.
-    const Color hc  = mix(pal::net_ac, pal::text, 0.15);   // bright accent label
-    const Color bar = mix(pal::bg_panel, pal::net_ac, 0.14); // header-row tint
-    auto col = [&](const char* label, int w, bool grow_it = false) {
-        auto e = text(label) | nowrap | Bold | fgc(hc);
-        return grow_it ? (std::move(e) | grow(1)).build()
-                       : (std::move(e) | width(w)).build();
-    };
-    std::vector<Element> hdr;
-    if (with_proto)
-        hdr.push_back(col("PROTO", cols.indent));
-    else
-        hdr.push_back((text("  ") | nowrap | width(cols.indent)).build());
-    hdr.push_back(col("LOCAL", cols.la));
-    hdr.push_back(col("REMOTE", cols.ra));
-    hdr.push_back(col("STATE", cols.st));
-    hdr.push_back(col("PROCESS", 0, /*grow_it=*/true));
-    return ((h(std::move(hdr)) | gap(1)) | bgc(bar)).build();
+// One configured Table over the snapshot's socket list. Callers pick the
+// windowing: the stacked pane FLOWS rows into its own element scroller
+// (flow_rows), the split pane renders the block with visible_rows +
+// window_top so the framework windows the body and draws the scrollbar.
+inline maya::Table conn_table(const Snapshot& s, bool with_proto, int max_rows = 0) {
+    using namespace maya;
+    Table tbl(conn_columns(with_proto));
+    auto& cfg = tbl.config();
+    cfg.cell_padding   = 0;
+    cfg.column_gap     = 1;
+    cfg.show_separator = false;               // the header rail IS the rule
+    cfg.header_style   = Style{}.with_bold().with_fg(mix(pal::net_ac, pal::text, 0.15));
+    cfg.header_bg      = mix(pal::bg_panel, pal::net_ac, 0.14);
+    cfg.stripe_rows    = true;                // zebra: quiet accent tint
+    cfg.alt_row_style  = Style{}.with_bg(mix(pal::bg_panel, pal::net_ac, 0.06));
+    cfg.scrollbar_thumb_color = pal::net_ac;
+    cfg.scrollbar_track_color = pal::faint;
+    const int total = static_cast<int>(s.connections.size());
+    const int n = max_rows > 0 ? std::min(total, max_rows) : total;
+    std::vector<TableRow> rows;
+    rows.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i)
+        rows.push_back(conn_table_row(s.connections[static_cast<std::size_t>(i)], with_proto));
+    tbl.set_rows(std::move(rows));
+    return tbl;
 }
 
 inline std::string conn_summary(const Snapshot& s, int& established, int& listen) {
@@ -300,13 +311,15 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         if (!s.connections.empty()) {
             int est = 0, lis = 0;
             b.push_back(section("CONNECTIONS", pal::net_ac, conn_summary(s, est, lis)));
-            const ConnCols cols = conn_cols(std::max(40, cx.w - 4), /*with_proto=*/true);
-            b.push_back(conn_header(cols, true));
-            const int shown = std::min<int>(static_cast<int>(s.connections.size()), 40);
-            for (int i = 0; i < shown; ++i)
-                b.push_back(conn_row(s.connections[static_cast<std::size_t>(i)], cols, true, i & 1));
-            if (static_cast<int>(s.connections.size()) > shown)
-                b.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
+            // The pane scrolls element-by-element, so the table joins the
+            // flow as one-row Elements sharing one solved plan (flow_rows).
+            const int total = static_cast<int>(s.connections.size());
+            const int shown = std::min(total, 40);
+            for (auto& e : conn_table(s, /*with_proto=*/true, shown)
+                               .flow_rows(std::max(40, cx.w - 4)))
+                b.push_back(std::move(e));
+            if (total > shown)
+                b.push_back((text("   +" + std::to_string(total - shown) +
                                   " more sockets") | fgc(pal::dim)).build());
             b.push_back(gap_row());
         }
@@ -333,51 +346,21 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     while (static_cast<int>(left.size()) < band_h) left.push_back(gap_row());
     if (static_cast<int>(left.size()) > band_h) left.resize(static_cast<std::size_t>(band_h));
 
-    // Right column: CONNECTIONS with its own header + windowed body + scrollbar.
+    // Right column: CONNECTIONS as a windowed maya::Table — the pane's
+    // scroll offset drives window_top, the framework draws the ▍ thumb.
     int est = 0, lis = 0;
     const std::string summ = conn_summary(s, est, lis);
-    const ConnCols cols = conn_cols(right_w - 1, /*with_proto=*/false);  // -1 for scrollbar
-
-    const int total = static_cast<int>(s.connections.size());
     const int table_view = std::max(1, band_h - 1);       // minus header row
-    const int max_scroll = std::max(0, total - table_view);
-    const int scroll = std::clamp(cx.scroll, 0, max_scroll);
 
-    std::vector<Element> tbody;
-    tbody.push_back(conn_header(cols, false));
-    for (int i = scroll; i < scroll + table_view && i < total; ++i)
-        tbody.push_back(conn_row(s.connections[static_cast<std::size_t>(i)], cols, false, i & 1));
-    while (static_cast<int>(tbody.size()) < band_h) tbody.push_back(gap_row());
-
-    // Scrollbar for the connections column (matches the pane scroller idiom).
-    Element right_col;
-    if (total > table_view) {
-        const int thumb = std::max(1, table_view * table_view / total);
-        const int track = table_view - thumb;
-        const int pos   = max_scroll > 0 ? scroll * track / max_scroll : 0;
-        std::vector<Element> bar;
-        bar.push_back((text(" ") | nowrap).build());     // align with header row
-        for (int r = 0; r < table_view; ++r) {
-            const bool on = r >= pos && r < pos + thumb;
-            const char* g = r == 0 && scroll > 0 ? "▲"
-                          : r == table_view - 1 && scroll < max_scroll ? "▼"
-                          : on ? "█" : "│";
-            bar.push_back((text(g) | nowrap | fgc(on ? pal::net_ac : pal::faint)).build());
-        }
-        while (static_cast<int>(bar.size()) < band_h) bar.push_back((text(" ") | nowrap).build());
-        right_col = (h(
-            v(std::move(tbody)) | grow(1),
-            v(std::move(bar)) | width(1)
-        )).build();
-    } else {
-        right_col = (v(std::move(tbody))).build();
-    }
+    Table tbl = conn_table(s, /*with_proto=*/false);
+    tbl.config().visible_rows = table_view;
+    tbl.config().window_top   = cx.scroll;                // Table clamps
 
     // The CONNECTIONS section rule sits ABOVE the band (full right-column
     // width) so the header of what's scrolling is clearly labelled.
     std::vector<Element> right_stack;
     right_stack.push_back(section("CONNECTIONS", pal::net_ac, summ));
-    right_stack.push_back(std::move(right_col));
+    right_stack.push_back(tbl.build());
 
     // Left column also gets a matching section-height offset so its first
     // interface rule lines up with the connections body, not the rule.
