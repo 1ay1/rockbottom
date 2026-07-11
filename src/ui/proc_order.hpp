@@ -92,6 +92,17 @@ struct OrderedProcs {
     return desc ? desc_order : !desc_order;
 }
 
+// A node's OWN magnitude on the active sort key (self value, not subtree).
+// Used as the tiebreak within a sibling group after the subtree rollup.
+[[nodiscard]] inline double proc_self_metric(const ProcInfo& p, SortKey key) {
+    switch (key) {
+        case SortKey::Cpu: return p.cpu;
+        case SortKey::Mem: return static_cast<double>(p.rss.value);
+        case SortKey::Io:  return p.io_read.per_sec + p.io_write.per_sec;
+        default:           return p.cpu;
+    }
+}
+
 // Build the flat sorted list (filter applied by the caller).
 inline OrderedProcs order_flat(std::vector<const ProcInfo*> procs,
                                SortKey key, bool desc) {
@@ -168,19 +179,13 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
         else             roots.push_back(p);   // pid1 / orphan / filtered-out parent
     }
 
-    auto sib_sort = [&](std::vector<const ProcInfo*>& v) {
-        std::stable_sort(v.begin(), v.end(),
-                         [&](const ProcInfo* a, const ProcInfo* b) {
-                             return proc_less(*a, *b, key, desc);
-                         });
-    };
-    sib_sort(roots);
-    for (auto& [_, v] : kids) sib_sort(v);
-
-    // Post-order DFS: fill descendant count AND the CPU/MEM subtree rollups in
-    // one pass (self + children's already-computed sums).
+    // Post-order DFS: fill descendant count AND the CPU/MEM/IO subtree rollups
+    // in one pass (self + children's already-computed sums). This runs BEFORE
+    // the sibling sort because "smart" tree order ranks a branch by its WHOLE
+    // subtree's weight, not the parent's own thread — a low-CPU shell that
+    // fathers the real hog must still sort to the top.
     std::unordered_map<int, int>    subtree_n;
-    std::unordered_map<int, double> sub_cpu, sub_mem;
+    std::unordered_map<int, double> sub_cpu, sub_mem, sub_io;
     {
         std::vector<std::pair<const ProcInfo*, bool>> st;
         for (auto it = roots.rbegin(); it != roots.rend(); ++it) st.push_back({*it, false});
@@ -196,17 +201,53 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
             int n = 0;
             double cpu = node->cpu;
             double mem = static_cast<double>(node->rss.value);
+            double io  = node->io_read.per_sec + node->io_write.per_sec;
             if (auto k = kids.find(node->pid); k != kids.end())
                 for (const ProcInfo* c : k->second) {
                     n   += 1 + subtree_n[c->pid];
                     cpu += sub_cpu[c->pid];
                     mem += sub_mem[c->pid];
+                    io  += sub_io[c->pid];
                 }
             subtree_n[node->pid] = n;
             sub_cpu[node->pid]   = cpu;
             sub_mem[node->pid]   = mem;
+            sub_io[node->pid]    = io;
         }
     }
+
+    // SMART SIBLING ORDER. For magnitude keys (cpu/mem/io) rank siblings by
+    // their SUBTREE rollup — the branch that CONTAINS the hog floats up even
+    // when its head process is idle — then break ties by the node's own value
+    // and finally by pid, so the order is total and stable frame-to-frame
+    // (equal subtrees never jitter as samples wobble). Pid/Name/Port stay
+    // identity-based via proc_less: a subtree sum is meaningless there.
+    const bool magnitude_key = key == SortKey::Cpu || key == SortKey::Mem ||
+                               key == SortKey::Io;
+    auto subtree_metric = [&](const ProcInfo* p) -> double {
+        switch (key) {
+            case SortKey::Cpu: return sub_cpu[p->pid];
+            case SortKey::Mem: return sub_mem[p->pid];
+            case SortKey::Io:  return sub_io[p->pid];
+            default:           return 0.0;
+        }
+    };
+    auto sib_sort = [&](std::vector<const ProcInfo*>& v) {
+        std::stable_sort(v.begin(), v.end(),
+            [&](const ProcInfo* a, const ProcInfo* b) {
+                if (magnitude_key) {
+                    const double sa = subtree_metric(a), sb = subtree_metric(b);
+                    if (sa != sb) return desc ? sa > sb : sa < sb;
+                    const double ma = proc_self_metric(*a, key),
+                                 mb = proc_self_metric(*b, key);
+                    if (ma != mb) return desc ? ma > mb : ma < mb;
+                    return a->pid < b->pid;   // stable, total tiebreak
+                }
+                return proc_less(*a, *b, key, desc);
+            });
+    };
+    sib_sort(roots);
+    for (auto& [_, v] : kids) sib_sort(v);
 
     // FLOW TREE: for each sibling group (roots + each parent's kids) find the
     // busiest subtree so a node's bar reads as its share of the heaviest
