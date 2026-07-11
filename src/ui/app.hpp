@@ -1315,15 +1315,15 @@ struct App {
             const int disk_fixed = disk_h;               // border + I/O + mounts
             const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
             int graph_pool = std::max(8, band_h - all_fixed);
-            // A graph reads best at a MODERATE height — a 6% line drawn over 30
-            // rows is a tiny thread in an empty sky. Give the stat graphs a
-            // capped, comfortable height; CPU (the headline) absorbs whatever
-            // vertical slack is left so col 1 still fills top-to-bottom without
-            // stretching the small graphs into unreadable whitespace.
+            // A graph reads best at a MODERATE height. Give EVERY graph a
+            // capped, comfortable height — CPU is the headline so it's a little
+            // taller, but it must NOT balloon to fill a tall screen (a 7% line
+            // over 30 rows is unreadable). Any height the caps don't consume
+            // becomes a small trailing gap under DISK, which is fine.
             int mem_graph_h  = std::clamp(graph_pool / 5, 4, 7);
             int net_graph_h  = std::clamp(graph_pool / 5, 4, 7);
             int disk_graph_h = std::clamp(graph_pool / 5, 4, 8);
-            int cpu_graph_h  = std::max(6, graph_pool - mem_graph_h - net_graph_h - disk_graph_h);
+            int cpu_graph_h  = std::clamp(graph_pool / 4, 6, 12);
             const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
