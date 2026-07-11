@@ -67,12 +67,21 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // state riding the rule. Peak / lifetime figures live on the data rows
     // so every column aligns. Sparks are peak-normalized per interface
     // (Spark clamps to [0,1]; raw B/s renders a solid wall).
+    //
+    // WIDE layout: interfaces build into their own column so the CONNECTIONS
+    // table can ride ALONGSIDE them instead of scrolling far below. Narrow
+    // keeps the classic single stack.
+    const bool split = cx.wide && !s.connections.empty();
+    std::vector<Element> ifcol;   // per-interface rows (left column when split)
+
+    // In split mode the per-interface figures lose the wide tail columns
+    // (peak / lifetime) so the left column stays readable at ~half width.
     for (const NetIface& ni : s.nets) {
         auto rxn = norm48(ni.rx_history.data(), ni.hist_len);
         auto txn = norm48(ni.tx_history.data(), ni.hist_len);
         const double rxpk = hist_peak(ni.rx_history.data(), ni.hist_len);
         const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
-        b.push_back(section(std::string(fmt::clip(ni.name, 14)), pal::net_ac,
+        ifcol.push_back(section(std::string(fmt::clip(ni.name, 14)), pal::net_ac,
                             ni.up ? "● up" : "○ down"));
         // Identity row: address / MAC / MTU — the "which network am I on"
         // facts every other monitor makes you shell out to ifconfig for.
@@ -105,49 +114,80 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 idr.push_back((text(fmt::count(static_cast<double>(ni.drops)))
                                | nowrap | Bold | fgc(pal::hot)).build());
             }
-            b.push_back((h(std::move(idr))).build());
+            ifcol.push_back((h(std::move(idr))).build());
         }
-        b.push_back((h(
-            text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
-            Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
-            text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
-            text(fmt::count(ni.rx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
-            text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-            text("↓ " + std::string(humanize_bytes(ni.rx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
-        ) | gap(1)).build());
-        b.push_back((h(
-            text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
-            Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
-            text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
-            text(fmt::count(ni.tx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
-            text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-            text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
-        ) | gap(1)).build());
-        b.push_back(gap_row());
+        if (split) {
+            // Compact rx/tx: spark + rate + peak only (drops p/s + lifetime).
+            ifcol.push_back((h(
+                text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
+                Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
+                text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
+                text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
+            ) | gap(1)).build());
+            ifcol.push_back((h(
+                text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
+                Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
+                text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
+                text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
+            ) | gap(1)).build());
+        } else {
+            ifcol.push_back((h(
+                text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
+                Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
+                text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
+                text(fmt::count(ni.rx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
+                text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+                text("↓ " + std::string(humanize_bytes(ni.rx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
+            ) | gap(1)).build());
+            ifcol.push_back((h(
+                text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
+                Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
+                text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
+                text(fmt::count(ni.tx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
+                text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+                text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
+            ) | gap(1)).build());
+        }
+        ifcol.push_back(gap_row());
     }
+
+    // Stacked layout appends the interface column straight into the body;
+    // split layout holds it for the side-by-side compose below.
+    if (!split)
+        for (auto& e : ifcol) b.push_back(std::move(e));
 
     // ── connections ───────────────────────────────────────────────
     // Who is talking to whom — the ss / lsof -i / nethogs answer, attributed to
     // owning processes. Established connections first, then listeners. This is
     // the network view every process monitor should have and almost none do.
+    std::vector<Element> concol;
+    std::vector<Element>& cc = split ? concol : b;
     if (!s.connections.empty()) {
         int established = 0, listen = 0;
         for (const auto& c : s.connections) {
             if (c.state == "ESTABLISHED") ++established;
             else if (c.state == "LISTEN") ++listen;
         }
-        b.push_back(section("CONNECTIONS", pal::net_ac,
+        cc.push_back(section("CONNECTIONS", pal::net_ac,
                             std::to_string(established) + " active · " +
                             std::to_string(listen) + " listening"));
 
+        // Column widths. Full-width (stacked) shows the roomy 5-column table;
+        // the split right column drops `proto` and tightens local/remote so
+        // "who am I talking to" still reads at ~half screen.
+        const int la_w = split ? 18 : 22;
+        const int ra_w = split ? 18 : 22;
+        const int st_w = split ? 11 : 13;
+
         // Column header for the socket table.
-        b.push_back((h(
-            text("  proto") | nowrap | fgc(pal::faint) | width(8),
-            text("local") | nowrap | fgc(pal::faint) | width(22),
-            text("remote") | nowrap | fgc(pal::faint) | width(22),
-            text("state") | nowrap | fgc(pal::faint) | width(13),
-            text("process") | nowrap | fgc(pal::faint) | grow(1)
-        ) | gap(1)).build());
+        std::vector<Element> hdr;
+        if (!split) hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(8)).build());
+        else        hdr.push_back((text("  ") | nowrap | width(2)).build());
+        hdr.push_back((text("local") | nowrap | fgc(pal::faint) | width(la_w)).build());
+        hdr.push_back((text("remote") | nowrap | fgc(pal::faint) | width(ra_w)).build());
+        hdr.push_back((text("state") | nowrap | fgc(pal::faint) | width(st_w)).build());
+        hdr.push_back((text("process") | nowrap | fgc(pal::faint) | grow(1)).build());
+        cc.push_back((h(std::move(hdr)) | gap(1)).build());
 
         const int shown = std::min<int>(static_cast<int>(s.connections.size()),
                                         cx.wide ? 40 : 24);
@@ -158,21 +198,43 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             Color st_c = est ? pal::good : lis ? pal::sky
                        : c.state.empty() ? pal::dim : pal::hot;
             std::string who = c.pid > 0
-                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname, 20)) +
+                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname, split ? 12 : 20)) +
                   " (" + std::to_string(c.pid) + ")"
                 : "—";
-            b.push_back((h(
-                text("  " + c.proto) | nowrap | fgc(pal::label) | width(8),
-                text(fmt::clip(c.laddr, 21)) | nowrap | fgc(est ? pal::text : pal::label) | width(22),
-                text(fmt::clip(c.raddr, 21)) | nowrap | fgc(est ? pal::sky : pal::dim) | width(22),
-                text(c.state.empty() ? "·" : c.state) | nowrap | Bold | fgc(st_c) | width(13),
-                text(who) | nowrap | fgc(pal::label) | grow(1)
-            ) | gap(1)).build());
+            std::vector<Element> row;
+            if (!split) row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(8)).build());
+            else        row.push_back((text("  ") | nowrap | width(2)).build());
+            row.push_back((text(fmt::clip(c.laddr, static_cast<std::size_t>(la_w - 1))) | nowrap | fgc(est ? pal::text : pal::label) | width(la_w)).build());
+            row.push_back((text(fmt::clip(c.raddr, static_cast<std::size_t>(ra_w - 1))) | nowrap | fgc(est ? pal::sky : pal::dim) | width(ra_w)).build());
+            row.push_back((text(c.state.empty() ? "·" : c.state) | nowrap | Bold | fgc(st_c) | width(st_w)).build());
+            row.push_back((text(who) | nowrap | fgc(pal::label) | grow(1)).build());
+            cc.push_back((h(std::move(row)) | gap(1)).build());
         }
         if (static_cast<int>(s.connections.size()) > shown)
-            b.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
+            cc.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
                               " more sockets") | fgc(pal::dim)).build());
-        b.push_back(gap_row());
+        cc.push_back(gap_row());
+    }
+
+    // Compose: side-by-side in wide mode. The scroller slices the body vector
+    // by ELEMENT (one entry == one screen row), so we can't hand it a single
+    // tall two-column block — that would render unclipped and overflow the
+    // frame. Instead we ZIP the columns row-for-row into 1-row-tall pairs,
+    // padding the shorter column with blanks, so scroll math stays exact.
+    if (split) {
+        const int gap_w   = 2;
+        const int inner   = std::max(40, cx.w - 6);      // pane chrome slack
+        const int left_w  = std::clamp((inner - gap_w) * 52 / 100, 34, inner - gap_w - 30);
+        const int right_w = inner - gap_w - left_w;
+        const std::size_t n = std::max(ifcol.size(), concol.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            Element l = i < ifcol.size() ? std::move(ifcol[i]) : gap_row();
+            Element r = i < concol.size() ? std::move(concol[i]) : gap_row();
+            b.push_back((h(
+                std::move(l) | width(left_w),
+                std::move(r) | width(right_w)
+            ) | gap(gap_w)).build());
+        }
     }
 
     return b;

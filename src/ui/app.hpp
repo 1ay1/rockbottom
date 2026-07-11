@@ -1233,14 +1233,14 @@ struct App {
             ? (v(Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
                      | hit(ui::hit_band(ui::Detail::Cpu)),
                  Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                 Element{NetPanel{s.nets, s.connections}} | hit(ui::hit_band(ui::Detail::Net)),
+                 Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
                  Element{DiskPanel{s.disks, s.disk_io, false}}
                      | hit(ui::hit_band(ui::Detail::Disk)))).build()
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
                   v(Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                    Element{NetPanel{s.nets, s.connections}} | hit(ui::hit_band(ui::Detail::Net)),
+                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
                     Element{DiskPanel{s.disks, s.disk_io, false}}
                         | hit(ui::hit_band(ui::Detail::Disk))) | width(right_w)
               ) | gap(gap_w)).build();
