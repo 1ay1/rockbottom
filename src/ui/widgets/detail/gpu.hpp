@@ -65,18 +65,13 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
-            std::vector<Element> axis;
-            for (int r = 0; r < gh; ++r) {
-                std::string lbl = r == 0 ? "100" : r == gh - 1 ? "  0" : r == gh / 2 ? " 50" : "   ";
-                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
-            }
             Graph gr{g.util_history.data(), g.hist_len};
             gr.fill().rows(gh).color(pal::proc_ac)
               .overlay(g.mem_history.data(), g.mem_hist_len, pal::mem_ac);
             L.push_back((h(
                 stat_card(g.usage.v, load_color(g.usage.v), "gpu busy",
                           g.util_history.data(), g.hist_len, gh),
-                v(std::move(axis)) | width(3),
+                y_axis(gh, 100.0, 3),
                 Element{std::move(gr)} | grow(1)
             ) | gap(1) | height(gh)).build());
         }

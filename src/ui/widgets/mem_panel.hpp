@@ -72,15 +72,10 @@ public:
         // A left y-axis (100 at top, 0 at the floor) makes the height mean
         // something instead of being an unlabelled squiggle.
         if (graph_h_ >= 2) {
-            std::vector<Element> axis;
-            for (int r = 0; r < graph_h_; ++r) {
-                const char* lbl = r == 0 ? "100" : r == graph_h_ - 1 ? "  0" : "   ";
-                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
-            }
             Graph g{mem_.usage_history.data(), mem_.hist_len};
             g.fill().rows(graph_h_).color(pal::mem_ac);
             rows.push_back((h(
-                v(std::move(axis)) | w_<3>,
+                y_axis(graph_h_, 100.0, 3),
                 Element{g} | grow(1)
             ) | gap(1) | height(graph_h_)).build());
         }

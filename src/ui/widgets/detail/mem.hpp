@@ -30,15 +30,10 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     L.push_back(section("USAGE TREND", pal::mem_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
-        std::vector<Element> axis;
-        for (int r = 0; r < gh; ++r) {
-            std::string lbl = r == 0 ? "100" : r == gh - 1 ? "  0" : r == gh / 2 ? " 50" : "   ";
-            axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
-        }
         L.push_back((h(
             stat_card(m.usage().v, pal::mem_ac, "ram used",
                       m.usage_history.data(), m.hist_len, gh),
-            v(std::move(axis)) | width(3),
+            y_axis(gh, 100.0, 3),
             Element{Graph{m.usage_history.data(), m.hist_len}.fill().rows(gh).color(pal::mem_ac)} | grow(1)
         ) | gap(1) | height(gh)).build());
     }

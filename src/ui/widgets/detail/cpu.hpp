@@ -33,18 +33,10 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     L.push_back(section("LOAD OVER TIME", pal::cpu_ac));
     {
         const int gh = cx.graph_h;
-        std::vector<Element> axis;
-        for (int r = 0; r < gh; ++r) {
-            std::string lbl = "   ";
-            if (r == 0) lbl = "100";
-            else if (r == gh - 1) lbl = "  0";
-            else if (r == gh / 2) lbl = " 50";
-            axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
-        }
         L.push_back((h(
             stat_card(c.total.v, load_color(c.total.v), "cpu load",
                       c.total_history.data(), c.total_hist_len, gh),
-            v(std::move(axis)) | width(3),
+            y_axis(gh, 100.0, 3),
             Element{Graph{c.total_history.data(), c.total_hist_len}.fill().rows(gh)} | grow(1)
         ) | gap(1) | height(gh)).build());
     }

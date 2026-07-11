@@ -62,17 +62,12 @@ public:
                 hdr.push_back((text(fmt::pct_pad(mem_->usage().v)) | nowrap | fgc(pal::mem_ac)).build());
             }
             rows.push_back((h(std::move(hdr)) | gap(1)).build());
-            // Graph with a tiny left y-axis: 100 at top, 0 at the floor.
-            std::vector<Element> axis;
-            for (int r = 0; r < graph_h_; ++r) {
-                const char* lbl = r == 0 ? "100" : r == graph_h_ - 1 ? "  0" : "   ";
-                axis.push_back((text(lbl) | nowrap | fgc(pal::faint)).build());
-            }
+            // Graph with a labelled left y-axis: 100/75/50/25/0 down the side.
             Graph g{cpu_.total_history.data(), cpu_.total_hist_len};
             g.cells(graph_w_).rows(graph_h_);
             if (mem_) g.overlay(mem_->usage_history.data(), mem_->hist_len, pal::mem_ac);
             rows.push_back((h(
-                v(std::move(axis)) | w_<3>,
+                y_axis(graph_h_, 100.0, 3),
                 std::move(g)
             ) | gap(1) | height(graph_h_)).build());
         } else {

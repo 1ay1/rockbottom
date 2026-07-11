@@ -16,10 +16,12 @@
 #include <maya/maya.hpp>
 
 #include "../theme.hpp"
+#include "../../core/units.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <vector>
@@ -213,5 +215,42 @@ public:
         return maya::dsl::v(out).build();
     }
 };
+
+// A labelled y-axis column for a graph of `rows` height. Draws a tick label
+// at the top, bottom, and the quarter lines in between (so the scale reads
+// 100 / 75 / 50 / 25 / 0, not just the two ends). `top_val` is the value at
+// the crest; format() turns a fraction-of-top into its label (percent by
+// default). The column is `w` cells wide, right-aligned, in faint ink so it
+// frames the graph without competing with the trace.
+inline maya::Element y_axis(int rows, double top_val = 100.0, int w = 4,
+                           bool percent = true) {
+    using namespace maya; using namespace maya::dsl;
+    std::vector<Element> col;
+    // Tick at each row whose position lands on a quarter of the height. With
+    // few rows only 0/50/100 fit; taller graphs get 25 and 75 too.
+    auto label_for = [&](int r) -> std::string {
+        if (rows <= 1) return "";
+        const double frac = 1.0 - static_cast<double>(r) / (rows - 1);  // 1 at top → 0 at floor
+        // Which quarter tick (if any) is this row closest to?
+        const double q = frac * 4.0;
+        const int qi = static_cast<int>(std::lround(q));
+        if (std::abs(q - qi) > 0.5 / (rows - 1) * 4.0 + 1e-9) return "";
+        // Only label ends when the graph is short; add 25/75 when tall enough.
+        if (rows < 6 && qi != 0 && qi != 2 && qi != 4) return "";
+        const double val = top_val * qi / 4.0;
+        char buf[16];
+        if (percent) std::snprintf(buf, sizeof buf, "%d", static_cast<int>(std::lround(val)));
+        else {
+            // Byte-ish rate: humanize compactly for the axis.
+            std::string h = humanize_bytes(static_cast<std::uint64_t>(val));
+            std::snprintf(buf, sizeof buf, "%s", h.c_str());
+        }
+        return buf;
+    };
+    for (int r = 0; r < rows; ++r)
+        col.push_back((text(label_for(r)) | nowrap | fgc(pal::faint)
+                       | width(w) | justify(Justify::End)).build());
+    return (v(std::move(col)) | width(w)).build();
+}
 
 }  // namespace rockbottom::ui
