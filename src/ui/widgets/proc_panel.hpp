@@ -229,6 +229,16 @@ private:
         auto plain = [&](const char* name) {
             return text(name) | nowrap | fgc(pal::dim);
         };
+        // A sortable header that never carries the ▾/▴ arrow — used where the
+        // column is too narrow to hold label + arrow (e.g. MEM% shares
+        // SortKey::Mem with MEM; only MEM shows the indicator so MEM% doesn't
+        // overflow its 5-wide cell and shove every following column right).
+        auto hdr_bare = [&](const char* name, SortKey self) {
+            const bool on = view_.sort == self;
+            Style st = Style{}.with_fg(on ? pal::proc_ac : pal::label);
+            if (on) st = st.with_bold();
+            return text(name, st) | nowrap | hit(hit_sort(self));
+        };
         // A numeric header sits RIGHT-aligned over the number it labels, so it
         // lines up with the right-aligned values in the rows below (the meter
         // to its left is spanned by a blank).
@@ -245,7 +255,7 @@ private:
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
         cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
-        if (show_memp) cols.push_back((hdr("MEM%", SortKey::Mem) | w_<5> | justify(Justify::End)).build());
+        if (show_memp) cols.push_back((hdr_bare("MEM%", SortKey::Mem) | w_<5> | justify(Justify::End)).build());
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
         cols.push_back((plain("S") | w_<2> | justify(Justify::Center)).build());
         if (show_thr) cols.push_back((plain("THR") | w_<4> | justify(Justify::End)).build());
