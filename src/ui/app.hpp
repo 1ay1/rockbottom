@@ -1254,23 +1254,22 @@ struct App {
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
 
-        // ── Classic right column: 50 / 50 vertical split ──
-        // The CPU column on the left establishes the band height (cpu_h). The
-        // right column must fill that SAME height instead of leaving dead sky
-        // under DISK, so: MEMORY owns the TOP half, NETWORK + DISK share the
-        // BOTTOM half. Any height beyond each panel's fixed rows becomes a
-        // mountain graph, so all three panels carry a live trend and the
-        // column stacks to exactly the band with no trailing gap.
-        //   top half  = mem_fixed + mem_graph
-        //   bot half  = net_fixed + net_graph + disk_fixed + disk_graph
+        // ── Classic right column: MEMORY compact, NETWORK gets the height ──
+        // The CPU column on the left establishes the band height (rc_target).
+        // The right column must fill that same height instead of leaving dead
+        // sky under DISK. MEMORY carries only a SHORT trend (a mem line is
+        // slow-moving — a tall one is empty sky); the bulk of the surplus goes
+        // to NETWORK (bursty, the most interesting trend), with DISK taking a
+        // moderate slice. All three still stack to exactly the band.
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
-        const int rc_top_h    = rc_target / 2;                   // MEMORY half
-        const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
-        // A graph is only worth drawing with a few rows to breathe; below that
-        // the panel stays compact (legacy meter-only) and just grows to fill.
-        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
-        int rc_net_graph  = std::max(0, (rc_bot_h - net_h - disk_h) / 2);
-        int rc_disk_graph = std::max(0, rc_bot_h - net_h - disk_h - rc_net_graph);
+        const int rc_surplus  = std::max(0, rc_target - mem_h - net_h - disk_h);
+        // MEMORY: a small capped graph (slow signal, no need for a tall sky).
+        int rc_mem_graph  = std::min(rc_surplus, 5);
+        // DISK: a moderate slice of what's left after MEM.
+        int rc_disk_graph = std::min(std::max(0, rc_surplus - rc_mem_graph), 6);
+        // NETWORK: the LION'S SHARE — all remaining surplus so its bursty trend
+        // reads clearly and the column stacks to exactly the band.
+        int rc_net_graph  = std::max(0, rc_surplus - rc_mem_graph - rc_disk_graph);
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
         if (rc_disk_graph < 3) rc_disk_graph = 0;
