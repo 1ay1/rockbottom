@@ -87,6 +87,9 @@ struct ProcView {
     std::vector<bool> has_kids;       // row heads a subtree (can be collapsed)
     std::vector<bool> collapsed_row;  // row's subtree is currently collapsed
     std::vector<int>  hidden_count;   // descendants folded under a collapsed row
+    std::vector<bool> context_row;    // kept only as ancestor of a match → dim
+    std::vector<double> sub_cpu;      // subtree CPU% rollup (self + descendants)
+    std::vector<double> sub_mem;      // subtree RSS-bytes rollup
     int follow_pid = 0;               // PID locked with * (badge in the chip)
 };
 

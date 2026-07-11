@@ -37,6 +37,7 @@ public:
                 {"/", "filter by name or pid"},
                 {"t", "toggle process tree"},
                 {"← →", "collapse / expand subtree (tree)"},
+                {"= / +", "collapse-all / expand-all (tree)"},
                 {"*", "follow: lock cursor to this process"},
                 {"x / Del", "end process (SIGTERM)"},
                 {"K", "force-kill (SIGKILL)"},

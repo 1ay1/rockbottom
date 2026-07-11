@@ -617,6 +617,8 @@ struct App {
         if (key(ev, '*')) return toggle_follow(std::move(m));
         if (m.tree && (key(ev, maya::SpecialKey::Left)  || key(ev, 'h'))) return set_collapse(std::move(m), true);
         if (m.tree && (key(ev, maya::SpecialKey::Right) || key(ev, 'l'))) return set_collapse(std::move(m), false);
+        if (m.tree && key(ev, '=')) return collapse_all(std::move(m));
+        if (m.tree && key(ev, '+')) return expand_all(std::move(m));
 
         // Selection.
         if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
@@ -716,6 +718,35 @@ struct App {
         if (pid <= 0) return {std::move(m), maya::Cmd<Msg>{}};
         if (m.collapsed.count(pid)) m.collapsed.erase(pid);
         else                        m.collapsed.insert(pid);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Fold EVERY subtree to its roots (btop/broot "fit to screen"): collapse
+    // every process that has children in the current view. The cursor stays on
+    // its process — if that row got folded away under an ancestor, select_pid
+    // resolves to the nearest visible row.
+    static std::pair<Model, maya::Cmd<Msg>> collapse_all(Model m) {
+        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+        const int keep = selected_pid(m);
+        // Build the parent set from the UNFILTERED, UNCOLLAPSED tree so we fold
+        // every real parent, not just the ones currently expanded/visible.
+        std::set<int> empty;
+        ui::OrderedProcs full = ui::order_procs(m.snap.procs, m.filter, m.sort,
+                                                m.sort_desc, true, empty);
+        m.collapsed.clear();
+        for (std::size_t i = 0; i < full.procs.size(); ++i)
+            if (i < full.has_kids.size() && full.has_kids[i])
+                m.collapsed.insert(full.procs[i]->pid);
+        select_pid(m, keep);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Expand everything: clear the fold set so the whole tree is open.
+    static std::pair<Model, maya::Cmd<Msg>> expand_all(Model m) {
+        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+        const int keep = selected_pid(m);
+        m.collapsed.clear();
+        select_pid(m, keep);
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
@@ -991,6 +1022,9 @@ struct App {
             .has_kids     = ord.has_kids,
             .collapsed_row = ord.collapsed,
             .hidden_count = ord.hidden,
+            .context_row  = ord.context,
+            .sub_cpu      = ord.sub_cpu,
+            .sub_mem      = ord.sub_mem,
             .follow_pid   = m.follow_pid,
         };
 

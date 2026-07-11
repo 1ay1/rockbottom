@@ -254,6 +254,27 @@ private:
         const double cpu_frac = std::clamp(p.cpu / 100.0, 0.0, 1.0);
         const double mem_frac = p.mem_share.v;
 
+        // Tree rollup / context lookups (index-aligned to the ordered view).
+        // A COLLAPSED parent surfaces its whole subtree's CPU%/RSS instead of
+        // just its own, so a folded node still shows what it's hiding (btop
+        // idiom). A CONTEXT row (kept only as an ancestor of a filter match)
+        // is dimmed so the matched leaf's lineage reads as scaffolding.
+        const bool row_collapsed = view_.tree && idx >= 0
+            && idx < static_cast<int>(view_.collapsed_row.size())
+            && view_.collapsed_row[static_cast<std::size_t>(idx)];
+        const bool row_context = view_.tree && idx >= 0
+            && idx < static_cast<int>(view_.context_row.size())
+            && view_.context_row[static_cast<std::size_t>(idx)];
+        double disp_cpu = p.cpu;
+        double disp_rss = static_cast<double>(p.rss.value);
+        if (row_collapsed) {
+            if (idx < static_cast<int>(view_.sub_cpu.size()))
+                disp_cpu = view_.sub_cpu[static_cast<std::size_t>(idx)];
+            if (idx < static_cast<int>(view_.sub_mem.size()))
+                disp_rss = view_.sub_mem[static_cast<std::size_t>(idx)];
+        }
+        const double disp_cpu_frac = std::clamp(disp_cpu / 100.0, 0.0, 1.0);
+
         // The cursor row rides a bg strip (bgc on the row's h-container;
         // maya's ambient-bg inheritance carries it under every glyph) with a
         // solid accent EDGE BAR on the left — the modern list-selection
@@ -269,8 +290,12 @@ private:
 
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();
-        Style cpu_st = cell_st(load_color(cpu_frac));
-        if (p.cpu > 50) cpu_st = cpu_st.with_bold();
+        // Context rows (kept only to keep a matched leaf's lineage) recede: no
+        // bold, muted ink — they're scaffolding, not results.
+        if (row_context && !selected && !culprit)
+            name_st = Style{}.with_fg(mix(pal::dim, pal::bg_panel, 0.15));
+        Style cpu_st = cell_st(load_color(disp_cpu_frac));
+        if (disp_cpu > 50) cpu_st = cpu_st.with_bold();
 
         const char* dot = p.state == 'R' ? "●" : p.state == 'D' ? "◆" : "·";
         Color dot_c = lift(p.state == 'R' ? pal::good
@@ -290,12 +315,12 @@ private:
         Color gutter_c = selected ? pal::proc_ac : culprit ? pal::crit : pal::dim;
 
         char cpu_txt[16];
-        std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", p.cpu);
+        std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", disp_cpu);
         char memp_txt[16];
         std::snprintf(memp_txt, sizeof memp_txt, "%4.1f", p.mem_share.percent());
         // Zero reads as silence: idle figures drop to faint ink so the
         // columns aren't a wall of identical 0.0s and live rows pop.
-        const bool cpu_zero  = p.cpu < 0.05;
+        const bool cpu_zero  = disp_cpu < 0.05;
         const bool memp_zero = p.mem_share.percent() < 0.05;
         if (cpu_zero) cpu_st = cell_st(hushed);
 
@@ -425,9 +450,9 @@ private:
                 cols.push_back((text(port_txt, sk == SortKey::Port ? cell_st(pal::sky).with_bold()
                                                                    : cell_st(pal::sky))
                                 | nowrap | w_<9> | justify(Justify::End)).build());
-            cols.push_back(Meter{cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
+            cols.push_back(Meter{disp_cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
-            cols.push_back((text(humanize_bytes(p.rss),
+            cols.push_back((text(humanize_bytes(static_cast<std::uint64_t>(disp_rss)),
                                  sk == SortKey::Mem ? cell_st(pal::white).with_bold()
                                                     : cell_st(pal::text))
                             | nowrap | w_<8> | justify(Justify::End)).build());

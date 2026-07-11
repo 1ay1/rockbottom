@@ -38,6 +38,15 @@ struct OrderedProcs {
     std::vector<bool>            has_kids;   // row heads a subtree
     std::vector<bool>            collapsed;  // row's subtree is folded
     std::vector<int>             hidden;     // descendants hidden under a collapsed row
+    // Filter-in-tree: a row kept ONLY because a descendant matched (it doesn't
+    // match the filter itself) is CONTEXT — the renderer dims it so the matched
+    // leaf's lineage stays legible without pretending the ancestor is a hit.
+    std::vector<bool>            context;
+    // Rollup: CPU% / RSS bytes summed over each row's WHOLE subtree (self +
+    // all descendants). The renderer surfaces these on collapsed rows so a
+    // folded parent still shows what its hidden children are costing.
+    std::vector<double>          sub_cpu;
+    std::vector<double>          sub_mem;
     bool                         tree = false;
 };
 
@@ -89,10 +98,15 @@ inline OrderedProcs order_flat(std::vector<const ProcInfo*> procs,
     return out;
 }
 
-// Build the parent→child tree. `visible` is the already-filtered pointer set;
+// Build the parent→child tree. `all` is the FULL process list; `filter` (name
+// or pid substring) selects the MATCH set but the tree keeps every ancestor of
+// a match so the matched leaf's lineage stays intact — broot's signature move.
+// Ancestors kept only for context are flagged so the renderer can dim them.
 // `collapsed` holds pids whose subtree is folded. The active sort orders
-// siblings so the tree still ranks by the hot column.
-inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
+// siblings so the tree still ranks by the hot column. Each row also carries its
+// subtree CPU%/RSS rollup so collapsed parents show what they're hiding.
+inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
+                               const std::string& filter,
                                SortKey key, bool desc,
                                const std::set<int>& collapsed) {
     OrderedProcs out;
@@ -100,13 +114,49 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
 
     // Index by pid and bucket children under their parent.
     std::unordered_map<int, const ProcInfo*> by_pid;
-    by_pid.reserve(visible.size() * 2);
-    for (const ProcInfo* p : visible) by_pid[p->pid] = p;
+    by_pid.reserve(all.size() * 2);
+    for (const ProcInfo* p : all) by_pid[p->pid] = p;
+
+    // Match predicate: empty filter matches everything.
+    auto matches = [&](const ProcInfo* p) {
+        return filter.empty() ||
+               p->name.find(filter) != std::string::npos ||
+               std::to_string(p->pid).find(filter) != std::string::npos;
+    };
+
+    // Keep-set: every match PLUS every ancestor of a match (walk ppid links up
+    // through the pid index). `is_match` distinguishes real hits from the
+    // ancestor rows kept only as context. With no filter, keep == all.
+    std::unordered_map<int, bool> is_match;   // pid -> matched the filter itself
+    std::set<int> keep;
+    if (filter.empty()) {
+        for (const ProcInfo* p : all) { keep.insert(p->pid); is_match[p->pid] = true; }
+    } else {
+        for (const ProcInfo* p : all) {
+            if (!matches(p)) continue;
+            is_match[p->pid] = true;
+            // Walk up, adding ancestors as context (unless they too matched).
+            int pid = p->pid;
+            while (keep.insert(pid).second || pid == p->pid) {
+                const ProcInfo* node = by_pid.count(pid) ? by_pid[pid] : nullptr;
+                if (pid != p->pid) is_match.try_emplace(pid, false);
+                if (!node || node->ppid <= 0 || node->ppid == node->pid
+                    || !by_pid.count(node->ppid)) break;
+                pid = node->ppid;
+            }
+        }
+    }
+
+    // Restrict the working set to kept nodes.
+    std::vector<const ProcInfo*> visible;
+    visible.reserve(keep.size());
+    for (const ProcInfo* p : all)
+        if (keep.count(p->pid)) visible.push_back(p);
 
     std::unordered_map<int, std::vector<const ProcInfo*>> kids;
     std::vector<const ProcInfo*> roots;
     for (const ProcInfo* p : visible) {
-        const bool parent_here = p->ppid > 0 && by_pid.count(p->ppid) && p->ppid != p->pid;
+        const bool parent_here = p->ppid > 0 && keep.count(p->ppid) && p->ppid != p->pid;
         if (parent_here) kids[p->ppid].push_back(p);
         else             roots.push_back(p);   // pid1 / orphan / filtered-out parent
     }
@@ -120,9 +170,10 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
     sib_sort(roots);
     for (auto& [_, v] : kids) sib_sort(v);
 
-    // Count all descendants of a node (for the "+N" collapsed badge).
-    std::unordered_map<int, int> subtree_n;
-    // Post-order DFS to fill subtree_n without recursion depth worries.
+    // Post-order DFS: fill descendant count AND the CPU/MEM subtree rollups in
+    // one pass (self + children's already-computed sums).
+    std::unordered_map<int, int>    subtree_n;
+    std::unordered_map<int, double> sub_cpu, sub_mem;
     {
         std::vector<std::pair<const ProcInfo*, bool>> st;
         for (auto it = roots.rbegin(); it != roots.rend(); ++it) st.push_back({*it, false});
@@ -136,10 +187,17 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
         }
         for (const ProcInfo* node : post) {
             int n = 0;
+            double cpu = node->cpu;
+            double mem = static_cast<double>(node->rss.value);
             if (auto k = kids.find(node->pid); k != kids.end())
-                for (const ProcInfo* c : k->second)
-                    n += 1 + subtree_n[c->pid];
+                for (const ProcInfo* c : k->second) {
+                    n   += 1 + subtree_n[c->pid];
+                    cpu += sub_cpu[c->pid];
+                    mem += sub_mem[c->pid];
+                }
             subtree_n[node->pid] = n;
+            sub_cpu[node->pid]   = cpu;
+            sub_mem[node->pid]   = mem;
         }
     }
 
@@ -168,6 +226,9 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
         out.has_kids.push_back(kids_exist);
         out.collapsed.push_back(kids_exist && is_collapsed);
         out.hidden.push_back(kids_exist && is_collapsed ? subtree_n[node->pid] : 0);
+        out.context.push_back(!is_match[node->pid]);
+        out.sub_cpu.push_back(sub_cpu[node->pid]);
+        out.sub_mem.push_back(sub_mem[node->pid]);
 
         if (kids_exist && !is_collapsed) {
             // Children inherit this node's rail: a vertical bar if we're not
@@ -184,11 +245,19 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
     return out;
 }
 
-// Top-level: filter → order. `filter` matches name OR pid substring.
+// Top-level: filter → order. `filter` matches name OR pid substring. Flat mode
+// pre-filters to matches; tree mode receives the FULL list + filter and does
+// its own ancestor-preserving keep pass (so a matched leaf keeps its lineage).
 inline OrderedProcs order_procs(const std::vector<ProcInfo>& all,
                                 const std::string& filter,
                                 SortKey key, bool desc, bool tree,
                                 const std::set<int>& collapsed) {
+    if (tree) {
+        std::vector<const ProcInfo*> ptrs;
+        ptrs.reserve(all.size());
+        for (const auto& p : all) ptrs.push_back(&p);
+        return order_tree(ptrs, filter, key, desc, collapsed);
+    }
     std::vector<const ProcInfo*> vis;
     vis.reserve(all.size());
     for (const auto& p : all) {
@@ -197,8 +266,7 @@ inline OrderedProcs order_procs(const std::vector<ProcInfo>& all,
             std::to_string(p.pid).find(filter) != std::string::npos)
             vis.push_back(&p);
     }
-    return tree ? order_tree(vis, key, desc, collapsed)
-                : order_flat(std::move(vis), key, desc);
+    return order_flat(std::move(vis), key, desc);
 }
 
 }  // namespace rockbottom::ui
