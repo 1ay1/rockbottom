@@ -131,7 +131,7 @@ public:
                     std::vector<Element> cc;
                     cc.push_back((text(id_s) | nowrap | fgc(pal::cpu_ac) | w_<3>).build());
                     cc.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>).build());
-                    cc.push_back(Element{Meter{f}.fill().groove(false)} | grow(1));
+                    cc.push_back(Element{Meter{f}.fill()} | grow(1));
                     if (show_spark)
                         cc.push_back(Spark{hist.data(), hl}.cells(spark_w)
                                          .color(spark_c).baseline(true).build_fixed());
