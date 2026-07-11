@@ -257,6 +257,23 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
 
     // ── STACKED (narrow): interfaces then the full connections table ──
     if (!split) {
+        // On an ultrawide terminal with no connections table to scroll (the
+        // bespoke wide split above only fires when there ARE sockets), spend
+        // the horizontal room by laying the interface roster out in two
+        // side-by-side columns instead of one tall stack. `L`/`R` alias the
+        // single vector in normal mode so everything stacks as before.
+        const bool uw = cx.ultrawide && s.connections.empty() && s.nets.size() > 1;
+        std::vector<Element> uw_left, uw_right;
+        std::vector<Element>& L = uw ? uw_left : b;
+        std::vector<Element>& R = uw ? uw_right : b;
+        if (uw) {
+            // Split the roster near the vertical midpoint: each interface owns
+            // a fixed run of rows in ifcol, so cut on interface boundaries.
+            const std::size_t half = (ifcol.size() + 1) / 2;
+            for (std::size_t i = 0; i < ifcol.size(); ++i)
+                (i < half ? L : R).push_back(std::move(ifcol[i]));
+            return two_col(std::move(uw_left), std::move(uw_right));
+        }
         for (auto& e : ifcol) b.push_back(std::move(e));
         if (!s.connections.empty()) {
             int est = 0, lis = 0;
