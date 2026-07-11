@@ -85,6 +85,7 @@ private:
     std::array<float, 120>                mem_hist_{};
     int                                   mem_hist_len_ = 0;
     std::unordered_map<int, std::vector<std::uint16_t>> pid_ports_;  // per tick
+    std::vector<Connection> connections_;   // active sockets (filled by sample_ports)
     std::unordered_map<int, std::string> cmd_cache_;   // argv by pid (immutable after exec)
 
     std::chrono::steady_clock::time_point last_time_{};

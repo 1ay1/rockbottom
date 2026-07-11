@@ -81,6 +81,18 @@ struct NetIface {
     bool        up = false;
 };
 
+// One active network socket, attributed to its owning process. The connection
+// table (nethogs / lsof -i / ss territory) answers "who is talking to whom":
+// local and remote endpoints, TCP state, and the pid/name that owns it.
+struct Connection {
+    std::string proto;      // "tcp" / "tcp6" / "udp"
+    std::string laddr;      // local  ip:port
+    std::string raddr;      // remote ip:port ("*" for listeners / unbound udp)
+    std::string state;      // LISTEN / ESTABLISHED / TIME_WAIT / … ("" for udp)
+    int         pid = 0;    // owning process, 0 if unknown
+    std::string pname;      // its name, for the table
+};
+
 // One process row. `cpu` is a Ratio of *one core* (so it can exceed 1.0 across
 // cores, matching top's per-core percentage convention when multiplied out).
 struct ProcInfo {
@@ -190,6 +202,7 @@ struct Snapshot {
     std::vector<DiskInfo> disks;
     DiskIO                disk_io;
     std::vector<NetIface> nets;
+    std::vector<Connection> connections;   // active sockets + owning pids
     std::vector<GpuInfo>  gpus;
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
     Psi                   psi;

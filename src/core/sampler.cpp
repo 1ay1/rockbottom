@@ -75,6 +75,15 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     // reuse the cached pid_ports_ map in between. First sample always runs it.
     if (first_ || (ports_tick_++ % 4) == 0) sample_ports();
     sample_procs(s, sort, top_n, dt);
+    // Attach the connection table (collected during the throttled ports scan)
+    // and stamp each row with its owning process's name for the UI.
+    {
+        std::unordered_map<int, const std::string*> name_of;
+        for (const auto& p : s.procs) name_of[p.pid] = &p.name;
+        s.connections = connections_;
+        for (auto& c : s.connections)
+            if (auto it = name_of.find(c.pid); it != name_of.end()) c.pname = *it->second;
+    }
     sample_psi(s.psi);
     sample_battery(s.battery);
     s.verdict = judge(s);

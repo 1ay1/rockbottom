@@ -126,6 +126,55 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         b.push_back(gap_row());
     }
 
+    // ── connections ───────────────────────────────────────────────
+    // Who is talking to whom — the ss / lsof -i / nethogs answer, attributed to
+    // owning processes. Established connections first, then listeners. This is
+    // the network view every process monitor should have and almost none do.
+    if (!s.connections.empty()) {
+        int established = 0, listen = 0;
+        for (const auto& c : s.connections) {
+            if (c.state == "ESTABLISHED") ++established;
+            else if (c.state == "LISTEN") ++listen;
+        }
+        b.push_back(section("CONNECTIONS", pal::net_ac,
+                            std::to_string(established) + " active · " +
+                            std::to_string(listen) + " listening"));
+
+        // Column header for the socket table.
+        b.push_back((h(
+            text("  proto") | nowrap | fgc(pal::faint) | width(8),
+            text("local") | nowrap | fgc(pal::faint) | width(22),
+            text("remote") | nowrap | fgc(pal::faint) | width(22),
+            text("state") | nowrap | fgc(pal::faint) | width(13),
+            text("process") | nowrap | fgc(pal::faint) | grow(1)
+        ) | gap(1)).build());
+
+        const int shown = std::min<int>(static_cast<int>(s.connections.size()),
+                                        cx.wide ? 40 : 24);
+        for (int i = 0; i < shown; ++i) {
+            const Connection& c = s.connections[static_cast<std::size_t>(i)];
+            const bool est = c.state == "ESTABLISHED";
+            const bool lis = c.state == "LISTEN";
+            Color st_c = est ? pal::good : lis ? pal::sky
+                       : c.state.empty() ? pal::dim : pal::hot;
+            std::string who = c.pid > 0
+                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname, 20)) +
+                  " (" + std::to_string(c.pid) + ")"
+                : "—";
+            b.push_back((h(
+                text("  " + c.proto) | nowrap | fgc(pal::label) | width(8),
+                text(fmt::clip(c.laddr, 21)) | nowrap | fgc(est ? pal::text : pal::label) | width(22),
+                text(fmt::clip(c.raddr, 21)) | nowrap | fgc(est ? pal::sky : pal::dim) | width(22),
+                text(c.state.empty() ? "·" : c.state) | nowrap | Bold | fgc(st_c) | width(13),
+                text(who) | nowrap | fgc(pal::label) | grow(1)
+            ) | gap(1)).build());
+        }
+        if (static_cast<int>(s.connections.size()) > shown)
+            b.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
+                              " more sockets") | fgc(pal::dim)).build());
+        b.push_back(gap_row());
+    }
+
     return b;
 }
 
