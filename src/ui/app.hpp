@@ -35,11 +35,13 @@
 #include "widgets/detail.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -70,9 +72,9 @@ struct App {
         int         sel = 0;             // index into the *filtered* view
         std::string filter;              // active name filter ("" = off)
         bool        filtering = false;   // '/' typing mode
-        bool        sort_desc = true;    // sort direction (▼ default, ▲ reversed)
-        bool        tree = true;          // process-tree view (DEFAULT) vs flat list
-        bool        auto_folded = false;  // did we seed the initial collapse-to-roots?
+        bool     sort_desc = true;    // sort direction (▼ default, ▲ reversed)
+        bool        tree = false;         // flat sorted list (DEFAULT) vs process tree
+        bool        auto_folded = false;  // (unused with expand-default tree; kept for compat)
         std::set<int> collapsed;         // pids whose subtree is folded (tree mode)
         int         follow_pid = 0;      // keep this pid selected as the list moves (* toggles)
         std::optional<PendingKill> pending;
@@ -349,26 +351,23 @@ struct App {
         // The very first sample runs synchronously: there is no event loop yet
         // to block, and the first frame should paint with real data instead of
         // an empty snapshot. Every sample AFTER this is a background effect.
-        m.snap = m.sampler->sample(m.sort, 400);
-        // rockbottom opens on the TREE, folded to roots — the process hierarchy
-        // as a scannable overview, not a 400-row wall. The activity rail (see
-        // proc_panel) lets you read where the load hides before drilling in.
-        seed_fold(m);
+        //
+        // SNAPPY: CPU% and per-process CPU% are DELTAS across two readings, so a
+        // single first sample would paint a full second of zeros. We prime the
+        // deltas with a throwaway read + a short (~90ms) settle + the real read,
+        // so the very first painted frame already shows true CPU load. ~90ms is
+        // imperceptible at launch but turns "1s of zeros" into "instant data".
+        m.sampler->sample(m.sort, kTopN);                 // prime delta baselines
+        std::this_thread::sleep_for(std::chrono::milliseconds(90));
+        m.snap = m.sampler->sample(m.sort, kTopN);        // real, populated frame
+        // rockbottom opens on the flat sorted list — the fastest thing to read
+        // at a glance; press t for the tree (which opens fully expanded).
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // Fold every parent to its root, ONCE, seeding the default overview. Marks
-    // auto_folded so we don't re-fold subtrees the user has since opened.
-    static void seed_fold(Model& m) {
-        if (m.auto_folded || !m.tree) return;
-        std::set<int> empty;
-        ui::OrderedProcs full = ui::order_procs(m.snap.procs, m.filter, m.sort,
-                                                m.sort_desc, true, empty);
-        for (std::size_t i = 0; i < full.procs.size(); ++i)
-            if (i < full.has_kids.size() && full.has_kids[i])
-                m.collapsed.insert(full.procs[i]->pid);
-        m.auto_folded = true;
-    }
+    // Cap on processes carried from the sampler into the UI per tick. 400 is
+    // plenty for a fullscreen table + tree; the walk touches every pid anyway.
+    static constexpr int kTopN = 400;
 
     // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
     // runs on a dedicated detached thread; when it finishes it dispatches a
@@ -383,7 +382,7 @@ struct App {
         SortKey sort = m.sort;
         return maya::Cmd<Msg>::task_isolated(
             [sampler, sort](std::function<void(Msg)> dispatch) {
-                dispatch(Sampled{sampler->sample(sort, 400)});
+                dispatch(Sampled{sampler->sample(sort, kTopN)});
             });
     }
 
@@ -721,8 +720,9 @@ struct App {
     static std::pair<Model, maya::Cmd<Msg>> toggle_tree(Model m) {
         const int keep = selected_pid(m);
         m.tree = !m.tree;
-        if (!m.tree) { m.collapsed.clear(); m.auto_folded = false; }  // fresh slate
-        else seed_fold(m);   // re-entering tree re-folds to the root overview
+        // Tree opens FULLY EXPANDED (collapsed set stays empty); leaving tree
+        // clears any folds so re-entry is a clean, fully-open slate.
+        if (!m.tree) m.collapsed.clear();
         select_pid(m, keep);
         return {std::move(m), maya::Cmd<Msg>{}};
     }

@@ -212,18 +212,34 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // prefer argv (distinguishes two `python` rows by their script) via
         // KERN_PROCARGS2, falling back to the executable path when the args
         // aren't readable (privilege / SIP-protected binaries).
-        std::string argv = proc_argv(pid);
-        if (!argv.empty()) {
-            p.cmd = std::move(argv);
+        //
+        // SNAPPY: a process's argv is fixed after exec, and KERN_PROCARGS2 is
+        // the single most expensive per-pid syscall here, so we cache it by pid
+        // and only pay it the first time we see a process. The cache is pruned
+        // to the live pid set below.
+        if (auto it = cmd_cache_.find(pid); it != cmd_cache_.end()) {
+            p.cmd = it->second;
         } else {
-            char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
-            if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) p.cmd = pathbuf;
+            std::string argv = proc_argv(pid);
+            if (argv.empty()) {
+                char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
+                if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) argv = pathbuf;
+            }
+            cmd_cache_[pid] = argv;
+            p.cmd = std::move(argv);
         }
 
         if (auto it = pid_ports_.find(pid); it != pid_ports_.end())
             p.ports = it->second;
 
         out.push_back(std::move(p));
+    }
+
+    // Prune the argv cache to processes still alive this tick, so a long-running
+    // session doesn't accumulate the cmdlines of every process that ever ran.
+    if (cmd_cache_.size() > cur.size() * 2 + 64) {
+        for (auto it = cmd_cache_.begin(); it != cmd_cache_.end(); )
+            it = cur.count(it->first) ? std::next(it) : cmd_cache_.erase(it);
     }
 
     prev_proc_ = std::move(cur);

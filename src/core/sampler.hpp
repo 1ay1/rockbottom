@@ -85,9 +85,11 @@ private:
     std::array<float, 120>                mem_hist_{};
     int                                   mem_hist_len_ = 0;
     std::unordered_map<int, std::vector<std::uint16_t>> pid_ports_;  // per tick
+    std::unordered_map<int, std::string> cmd_cache_;   // argv by pid (immutable after exec)
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;
+    unsigned                              ports_tick_ = 0;   // gates the ports scan
 
     // ── Static facts (once) ──
     std::string hostname_, kernel_, cpu_model_;

@@ -70,7 +70,10 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     sample_disk_io(s.disk_io, dt);
     sample_net(s.nets, dt);
     sample_gpu(s.gpus);
-    sample_ports();
+    // SNAPPY: the per-fd socket scan is the single most expensive collector and
+    // listening ports change slowly, so we refresh it only every 4th sample and
+    // reuse the cached pid_ports_ map in between. First sample always runs it.
+    if (first_ || (ports_tick_++ % 4) == 0) sample_ports();
     sample_procs(s, sort, top_n, dt);
     sample_psi(s.psi);
     sample_battery(s.battery);
