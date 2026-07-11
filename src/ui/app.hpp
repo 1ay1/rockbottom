@@ -1408,7 +1408,7 @@ struct App {
             Header{s, m.paused},
             VerdictBanner{s, m.verdict_pulse},
             std::move(top),
-            ProcPanel{s, pv},
+            Element{ProcPanel{s, pv}} | grow(1),
             Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                    m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
         ) | padding(0, 1, 0, 1)).build();

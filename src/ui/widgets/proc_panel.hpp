@@ -85,12 +85,14 @@ public:
         // The table draws its own ╭ PROCESSES ─╮ frame now (show_border),
         // so we return it directly instead of wrapping in an app Panel —
         // otherwise the box doubles. The sort/filter chip rides in the
-        // title so the border rail still carries view state.
-        std::vector<Element> kids;
-        if (view_.pending) kids.push_back(confirm_strip());
-        kids.push_back((tbl.build() | grow(1)).build());
-
-        return v(std::move(kids)) | grow(1);
+        // title so the border rail still carries view state. ONE grow only:
+        // the table's own build carries the grow so it fills its slot in the
+        // outer vstack without a second nested grow compounding (which
+        // over-subscribed the band and starved the top stat panels).
+        if (view_.pending) {
+            return v(confirm_strip(), (tbl.build() | grow(1)).build()) | grow(1);
+        }
+        return tbl.build() | grow(1);
     }
 
 private:
@@ -157,6 +159,12 @@ private:
         cfg.selected_bg      = mix(pal::sel_bg, pal::proc_ac, 0.10);
         cfg.cursor_bar_color = pal::proc_ac;
         cfg.window_top   = view_.scroll;          // sticky window: model-owned
+        cfg.visible_rows = view_.max_rows;        // window to the slot the layout
+                                                  // gave us — without this the table
+                                                  // reports its full N-row natural
+                                                  // height as its flex basis and
+                                                  // over-subscribes the outer vstack,
+                                                  // shrinking the top stat band.
         cfg.scrollbar_thumb_color = pal::proc_ac;
         cfg.scrollbar_track_color = pal::faint;
         cfg.row_hit_kind    = HK_ProcRow;
