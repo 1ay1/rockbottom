@@ -16,6 +16,7 @@
 #pragma once
 
 #include <maya/maya.hpp>
+#include <maya/widget/table.hpp>
 
 #include "../theme.hpp"
 
@@ -61,7 +62,36 @@ public:
         return build_fixed();
     }
 
+    // A maya::Table cell: the bar is painted at the column's SOLVED
+    // width every frame (TableCell::dyn), so it breathes with the
+    // column plan exactly like the fill-mode element does with its box.
+    [[nodiscard]] maya::TableCell table_cell() const {
+        Meter self = *this;
+        return maya::TableCell::dyn([self](int w) {
+            Meter m = self;
+            m.width_ = std::max(1, w);
+            auto p = m.paint();
+            return maya::TableCell{std::move(p.content), std::move(p.runs)};
+        });
+    }
+
     [[nodiscard]] maya::Element build_fixed() const {
+        auto p = paint();
+        return maya::Element{maya::TextElement{
+            .content = std::move(p.content),
+            .style   = {},
+            .wrap    = maya::TextWrap::NoWrap,
+            .runs    = std::move(p.runs),
+        }};
+    }
+
+private:
+    struct Painted {
+        std::string content;
+        std::vector<maya::StyledRun> runs;
+    };
+
+    [[nodiscard]] Painted paint() const {
         static constexpr const char* kEighths[] =
             {"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"};
         static constexpr const char* kFull = "█";
@@ -112,12 +142,7 @@ public:
                 runs.push_back({off, content.size() - off, maya::Style{}.with_bg(track_)});
         }
 
-        return maya::Element{maya::TextElement{
-            .content = std::move(content),
-            .style   = {},
-            .wrap    = maya::TextWrap::NoWrap,
-            .runs    = std::move(runs),
-        }};
+        return {std::move(content), std::move(runs)};
     }
 };
 
