@@ -1265,7 +1265,7 @@ struct App {
         // one WHILE both halves fill completely (no dead space). MEM gets ~40%
         // of the band, NET+DISK ~60%.
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
-        const int rc_top_h    = std::max(mem_h, rc_target * 40 / 100);  // MEMORY half
+        const int rc_top_h    = std::max(mem_h, rc_target * 32 / 100);  // MEMORY half
         const int rc_bot_h    = rc_target - rc_top_h;                   // NET+DISK half
         // Each half FILLS with its graph — no caps, no dead space:
         //   MEM graph  = top half minus MEM's meter rows (fills the top half)
@@ -1439,12 +1439,12 @@ struct App {
                   // space by grow weight, integer-remainder-safe, at any size.
                   v(v(Element{MemPanel{s.mem, rc_mem_graph}}
                           | hit(ui::hit_band(ui::Detail::Mem)))
-                        | grow(40),
+                        | grow(32),
                     v(Element{NetPanel{s.nets, rc_net_graph}}
                           | hit(ui::hit_band(ui::Detail::Net)),
                       Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
                           | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
-                        | grow(60))
+                        | grow(68))
                     | width(right_w)
               ) | gap(gap_w) | height(rc_target)).build();
 
