@@ -29,6 +29,9 @@ int main(int argc, char** argv) {
 
     maya::run<rockbottom::App>({
         .title = "rockbottom",
+        .fps   = 30,     // smooth animation ceiling; visual_hash still skips
+                         // unchanged frames, so a static screen renders ~0 fps
+                         // and idle CPU stays near zero.
         .mouse = true,
         .mode  = maya::Mode::Fullscreen,
     });

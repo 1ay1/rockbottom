@@ -122,6 +122,19 @@ struct App {
         bool        sampling = false;
 
         std::shared_ptr<Sampler> sampler = std::make_shared<Sampler>();
+
+        // Memoized ordered view. order_procs() (filter query + sort + tree +
+        // rollups) is the single most expensive UI computation — ~4us flat,
+        // ~40us filtered, ~116us tree — and it was recomputed on EVERY call to
+        // ordered()/filtered()/selected_pid()/clamp_sel() plus once per render,
+        // i.e. several times per frame. We cache the last result keyed by a
+        // hash of its inputs (snap_gen, sort, dir, tree, filter, collapsed set),
+        // so a frame computes it AT MOST ONCE. A shared_ptr keeps the cache
+        // alive across the Model's moves through update() and costs nothing to
+        // copy. `mutable` because ordered() takes a const Model& everywhere.
+        struct OrderedCache { std::uint64_t key = ~0ULL; ui::OrderedProcs value; };
+        mutable std::shared_ptr<OrderedCache> ord_cache =
+            std::make_shared<OrderedCache>();
     };
 
     struct Tick {};
@@ -711,15 +724,38 @@ struct App {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    // The fully-ordered process view (filter → sort/tree). This is the SINGLE
-    // source of row order: the panel renders it and every index-based action
-    // (selection, kill, follow, collapse) resolves against the same vector.
-    static ui::OrderedProcs ordered(const Model& m) {
-        return ui::order_procs(m.snap.procs, m.filter, m.sort, m.sort_desc,
-                               m.tree, m.collapsed);
+    // Hash the inputs order_procs() depends on. Collision would return a stale
+    // view for one frame at worst; the space is astronomically large.
+    static std::uint64_t ordered_key(const Model& m) {
+        std::uint64_t h = 1469598103934665603ULL;
+        auto fold = [&](std::uint64_t v) { h ^= v; h *= 1099511628211ULL; };
+        fold(m.snap_gen);
+        fold(static_cast<std::uint64_t>(m.sort));
+        fold(m.sort_desc ? 1 : 0);
+        fold(m.tree ? 3 : 2);
+        for (unsigned char c : m.filter) fold(c);
+        fold(m.filter.size());
+        if (m.tree) for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid) * 2654435761u);
+        return h;
     }
 
-    static std::vector<const ProcInfo*> filtered(const Model& m) {
+    // The fully-ordered process view (filter → sort/tree). MEMOIZED: recomputes
+    // only when the input hash changes, so a whole frame's worth of
+    // ordered()/filtered()/selected_pid() calls costs one order_procs() at most.
+    // Returns a const reference into the cache — callers must not outlive it,
+    // which they never do (all uses are within one update()/view()).
+    static const ui::OrderedProcs& ordered(const Model& m) {
+        const std::uint64_t key = ordered_key(m);
+        auto& c = *m.ord_cache;
+        if (c.key != key) {
+            c.value = ui::order_procs(m.snap.procs, m.filter, m.sort, m.sort_desc,
+                                      m.tree, m.collapsed);
+            c.key = key;
+        }
+        return c.value;
+    }
+
+    static const std::vector<const ProcInfo*>& filtered(const Model& m) {
         return ordered(m).procs;
     }
 
@@ -730,7 +766,7 @@ struct App {
 
     // The pid under the cursor in the current ordered view, or 0 if none.
     static int selected_pid(const Model& m) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         if (!view.empty() && m.sel >= 0 && m.sel < static_cast<int>(view.size()))
             return view[static_cast<std::size_t>(m.sel)]->pid;
         return 0;
@@ -741,7 +777,7 @@ struct App {
     // the same index, which is the difference between "solid" and "jumpy".
     static void select_pid(Model& m, int pid) {
         if (pid <= 0) return;
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         for (std::size_t i = 0; i < view.size(); ++i)
             if (view[i]->pid == pid) { m.sel = static_cast<int>(i); return; }
         clamp_sel(m);
@@ -763,18 +799,24 @@ struct App {
     // ←/→ feels like real tree navigation (htop idiom).
     static std::pair<Model, maya::Cmd<Msg>> set_collapse(Model m, bool fold) {
         if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
-        ui::OrderedProcs ord = ordered(m);
-        if (m.sel < 0 || m.sel >= static_cast<int>(ord.procs.size()))
-            return {std::move(m), maya::Cmd<Msg>{}};
-        const int pid = ord.procs[static_cast<std::size_t>(m.sel)]->pid;
-        const bool kids = m.sel < static_cast<int>(ord.has_kids.size())
-                          && ord.has_kids[static_cast<std::size_t>(m.sel)];
+        // Snapshot the row's facts out of the (cached) view BEFORE any mutation,
+        // because select_pid() below recomputes the cache and would invalidate
+        // a held reference.
+        int pid = 0, ppid = 0; bool kids = false;
+        {
+            const ui::OrderedProcs& ord = ordered(m);
+            if (m.sel < 0 || m.sel >= static_cast<int>(ord.procs.size()))
+                return {std::move(m), maya::Cmd<Msg>{}};
+            const auto* p = ord.procs[static_cast<std::size_t>(m.sel)];
+            pid = p->pid; ppid = p->ppid;
+            kids = m.sel < static_cast<int>(ord.has_kids.size())
+                   && ord.has_kids[static_cast<std::size_t>(m.sel)];
+        }
         if (fold) {
             if (kids && !m.collapsed.count(pid)) { m.collapsed.insert(pid); }
             else {
                 // Already a leaf or already folded → hop to the parent so a
                 // repeated ← walks up the tree.
-                const int ppid = ord.procs[static_cast<std::size_t>(m.sel)]->ppid;
                 select_pid(m, ppid);
             }
         } else {
@@ -846,7 +888,7 @@ struct App {
     // resorts on every tick (cpu% moves), so an index would silently swap the
     // pane to a different process — the PID pins it to the one you chose.
     static void pin_detail_pid(Model& m) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         m.detail_pid = (!view.empty() && m.sel < static_cast<int>(view.size()))
                            ? view[static_cast<std::size_t>(m.sel)]->pid : 0;
     }
@@ -876,7 +918,7 @@ struct App {
     // Open the signal picker on the selected process (single target). The
     // menu itself arms the PendingKill once a signal is chosen.
     static std::pair<Model, maya::Cmd<Msg>> open_sigmenu(Model m) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.sigmenu = Model::SigMenu{p->pid, p->name, {p->pid}, 0};
@@ -887,7 +929,7 @@ struct App {
     // Open the renice dial on the selected process, seeded with its current
     // nice value so ←→ nudge from where it already is.
     static std::pair<Model, maya::Cmd<Msg>> open_nicemenu(Model m) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.nicemenu = Model::NiceMenu{p->pid, p->name, p->nice, p->nice};
@@ -896,7 +938,7 @@ struct App {
     }
 
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.pending = PendingKill{p->pid, p->name, sig, {p->pid}};
@@ -908,7 +950,7 @@ struct App {
     // "kill all Chrome Helpers" move). Same keyboard-confirm flow — the
     // confirm strip shows the count so there are no surprises.
     static std::pair<Model, maya::Cmd<Msg>> arm_kill_all(Model m, int sig) {
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             std::vector<int> pids;
@@ -975,7 +1017,7 @@ struct App {
         m.detail_scroll = 0;
         // If the target is visible in the current ordered list, move the cursor
         // there too; if it's folded away, at least the pane follows.
-        auto view = filtered(m);
+        const auto& view = filtered(m);
         for (std::size_t i = 0; i < view.size(); ++i)
             if (view[i]->pid == target) { m.sel = static_cast<int>(i); break; }
         return {std::move(m), maya::Cmd<Msg>{}};
@@ -1154,7 +1196,7 @@ struct App {
                                   : std::max(cpu_h, right_stack_h);
         const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
 
-        ui::OrderedProcs ord = ordered(m);
+        const ui::OrderedProcs& ord = ordered(m);
         ProcView pv{
             .procs        = ord.procs,
             .sort         = m.sort,
@@ -1191,14 +1233,14 @@ struct App {
             ? (v(Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
                      | hit(ui::hit_band(ui::Detail::Cpu)),
                  Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                 Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
+                 Element{NetPanel{s.nets, s.connections}} | hit(ui::hit_band(ui::Detail::Net)),
                  Element{DiskPanel{s.disks, s.disk_io, false}}
                      | hit(ui::hit_band(ui::Detail::Disk)))).build()
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
                   v(Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
+                    Element{NetPanel{s.nets, s.connections}} | hit(ui::hit_band(ui::Detail::Net)),
                     Element{DiskPanel{s.disks, s.disk_io, false}}
                         | hit(ui::hit_band(ui::Detail::Disk))) | width(right_w)
               ) | gap(gap_w)).build();
