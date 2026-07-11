@@ -77,6 +77,9 @@ struct App {
 
         // Process interaction state.
         int         sel = 0;             // index into the *filtered* view
+        int         scroll_top = 0;      // first visible row of the proc table
+                                         // (sticky: moves only when the cursor
+                                         //  would cross the scroll margin)
         std::string filter;              // active name filter ("" = off)
         bool        filtering = false;   // '/' typing mode
         bool     sort_desc = true;    // sort direction (▼ default, ▲ reversed)
@@ -221,14 +224,6 @@ struct App {
         return L;
     }
 
-    // First visible process index given the scroll window (mirrors
-    // ProcPanel::build()'s clamp exactly so click→index is never off).
-    static int scroll_start(int sel, int n, int body_rows) {
-        int start = 0;
-        if (sel >= body_rows) start = sel - body_rows + 1;
-        return std::clamp(start, 0, std::max(0, n - body_rows));
-    }
-
     // ── footer action dispatch ─────────────────────────────────────────
     // Clicks resolve to a ui::FooterAct via the paint-time hit registry
     // (see hit_ids.hpp + Footer's hit() tags); this maps the action to a
@@ -239,7 +234,7 @@ struct App {
         using ui::FooterAct;
         switch (a) {
             case FooterAct::Quit:  return {std::move(m), C::quit()};
-            case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}};
+            case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}};
             case FooterAct::End:   return arm_kill(std::move(m), SIGTERM);
             case FooterAct::Kill:  return arm_kill(std::move(m), SIGKILL);
             case FooterAct::Sort:  m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m));
@@ -584,6 +579,7 @@ struct App {
                 m.filter += static_cast<char>(ck->codepoint);
             }
             m.sel = 0;
+            m.scroll_top = 0;
             return {std::move(m), C{}};
         }
 
@@ -655,7 +651,7 @@ struct App {
 
         // 4. Normal mode.
         if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
-            if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+            if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
             save_config(m);
             return {std::move(m), C::quit()};
         }
@@ -673,7 +669,7 @@ struct App {
             return {std::move(m), C{}};
         }
         if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
-        if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+        if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
 
         // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
         // the selected process's detail.
@@ -707,7 +703,7 @@ struct App {
         // Selection.
         if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
         if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
         if (key(ev, maya::SpecialKey::End))  { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
         if (key(ev, maya::SpecialKey::PageDown)) { m.sel += 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
         if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
@@ -762,6 +758,27 @@ struct App {
     static void clamp_sel(Model& m) {
         int n = static_cast<int>(filtered(m).size());
         m.sel = std::clamp(m.sel, 0, std::max(0, n - 1));
+        sync_scroll(m);
+    }
+
+    // Sticky scroll window (vim/htop "scrolloff"). The window top is a
+    // PERSISTED value (m.scroll_top): it only moves when the cursor would come
+    // within `margin` rows of the top or bottom edge, so walking through the
+    // middle of the list leaves the viewport rock-still and the surrounding
+    // rows stay as context — instead of the cursor being glued to the last row
+    // while everything scrolls under it. When the whole list fits, top pins to
+    // 0; a short tail can't scroll past the last full screen.
+    static void sync_scroll(Model& m) {
+        const int n = static_cast<int>(filtered(m).size());
+        const int body_rows = compute_layout(m).body_rows;
+        if (n <= body_rows) { m.scroll_top = 0; return; }
+        // Keep this many rows of context between the cursor and the edge (but
+        // never more than fits either side of centre).
+        const int margin = std::clamp(body_rows / 4, 1, 4);
+        int top = std::clamp(m.scroll_top, 0, std::max(0, n - body_rows));
+        if (m.sel < top + margin)                 top = m.sel - margin;          // scroll up
+        else if (m.sel > top + body_rows - 1 - margin) top = m.sel - body_rows + 1 + margin; // scroll down
+        m.scroll_top = std::clamp(top, 0, std::max(0, n - body_rows));
     }
 
     // The pid under the cursor in the current ordered view, or 0 if none.
@@ -779,7 +796,7 @@ struct App {
         if (pid <= 0) return;
         const auto& view = filtered(m);
         for (std::size_t i = 0; i < view.size(); ++i)
-            if (view[i]->pid == pid) { m.sel = static_cast<int>(i); return; }
+            if (view[i]->pid == pid) { m.sel = static_cast<int>(i); sync_scroll(m); return; }
         clamp_sel(m);
     }
 
@@ -1083,6 +1100,7 @@ struct App {
         fold(static_cast<std::uint64_t>(m.follow_pid));
         for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid));
         fold(static_cast<std::uint64_t>(m.sel));
+        fold(static_cast<std::uint64_t>(m.scroll_top));
         fold(m.paused ? 1 : 0);
         fold(static_cast<std::uint64_t>(m.refresh_ms));
         fold(m.filtering ? 1 : 0);
@@ -1210,6 +1228,7 @@ struct App {
             .sort         = m.sort,
             .sort_desc    = m.sort_desc,
             .selected     = m.sel,
+            .scroll       = m.scroll_top,
             .max_rows     = proc_rows,
             .width        = std::max(20, m.width - 6),
             .filter       = m.filter,

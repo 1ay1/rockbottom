@@ -71,9 +71,10 @@ public:
             ? (hi >= 0 && procs[static_cast<std::size_t>(hi)]->mem_share.percent() > 8)
             : (hi >= 0 && best > 25);
 
-        int start = 0;
-        if (view_.selected >= body_rows) start = view_.selected - body_rows + 1;
-        start = std::clamp(start, 0, std::max(0, n - body_rows));
+        // The window top is maintained in the model (sticky scroll-margin);
+        // clamp it here as a belt-and-braces against a stale value after the
+        // list shrank between the update and this render.
+        int start = std::clamp(view_.scroll, 0, std::max(0, n - body_rows));
 
         std::vector<Element> body;
         // NAME cell width, computed analytically from the same tier flags the
