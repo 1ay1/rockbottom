@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <ctime>
 #include <dirent.h>
 #include <fstream>
 #include <sstream>
@@ -25,6 +26,11 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
     double dt_ticks = dt * static_cast<double>(clk_tck_) * static_cast<double>(ncpu_);
 
+    // Boot epoch (seconds) = now - uptime; a process's start_sec is then
+    // boot_epoch + starttime_ticks/CLK_TCK. Computed once per sample.
+    const std::uint64_t boot_epoch =
+        static_cast<std::uint64_t>(std::time(nullptr)) - uptime_sec();
+
     dirent* e;
     while ((e = ::readdir(proc)) != nullptr) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
@@ -40,13 +46,18 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         std::string comm = stat.substr(lp + 1, rp - lp - 1);
         std::istringstream ss(stat.substr(rp + 2));
         char state = '?';
-        ss >> state;
+        ss >> state;                                // field 3
+        int ppid = 0; ss >> ppid;                   // field 4
         std::string skip;
-        for (int i = 0; i < 10; ++i) ss >> skip;   // fields 4..13
+        for (int i = 0; i < 9; ++i) ss >> skip;      // fields 5..13
         std::uint64_t utime = 0, stime = 0;
-        ss >> utime >> stime;                       // 14, 15
-        for (int i = 0; i < 4; ++i) ss >> skip;     // 16..19
-        int threads = 0; ss >> threads;             // 20
+        ss >> utime >> stime;                        // 14, 15
+        ss >> skip >> skip;                          // 16, 17 (cutime, cstime)
+        long prio = 0, nice = 0;
+        ss >> prio >> nice;                          // 18 priority, 19 nice
+        int threads = 0; ss >> threads;              // 20
+        ss >> skip;                                  // 21 itrealvalue
+        std::uint64_t starttime = 0; ss >> starttime;// 22 starttime (ticks since boot)
 
         ++total_procs;
         total_threads += std::max(1, threads);
@@ -111,10 +122,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
         ProcInfo p;
         p.pid = pid;
+        p.ppid = ppid;
         p.name = comm;
         p.state = state;
         p.threads = std::max(1, threads);
         p.cpu = cpu_pct;
+        p.prio = static_cast<int>(prio);
+        p.nice = static_cast<int>(nice);
+        p.cpu_ms = (utime + stime) * 1000ULL / static_cast<std::uint64_t>(clk_tck_);
+        if (starttime > 0)
+            p.start_sec = boot_epoch + starttime / static_cast<std::uint64_t>(clk_tck_);
         p.rss = rss;
         p.virt = Bytes{total_pages * static_cast<std::uint64_t>(page_size_)};
         p.mem_share = Ratio::of(rss, ram_total_);
@@ -122,6 +139,31 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.io_write = iow;
         p.cpu_history = cur[pid].cpu_hist;
         p.hist_len = cur[pid].cpu_hist_len;
+
+        // Full command line from /proc/pid/cmdline: NUL-separated argv. We keep
+        // the whole thing (NULs → spaces) so the table can distinguish two
+        // `python` rows by their script, and the detail pane shows the invocation
+        // verbatim. Kernel threads have an empty cmdline → fall back to [comm].
+        {
+            std::string raw = slurp(base + "/cmdline");
+            if (!raw.empty()) {
+                for (char& c : raw) if (c == '\0') c = ' ';
+                while (!raw.empty() && raw.back() == ' ') raw.pop_back();
+                p.cmd = std::move(raw);
+            } else {
+                p.cmd = "[" + comm + "]";   // kernel thread
+            }
+        }
+
+        // Open file descriptors: count entries in /proc/pid/fd (readable for our
+        // own procs, or all when privileged; unreadable rows stay at -1).
+        if (DIR* fdd = ::opendir((base + "/fd").c_str())) {
+            int nfd = 0;
+            for (dirent* fe; (fe = ::readdir(fdd)) != nullptr; )
+                if (fe->d_name[0] != '.') ++nfd;
+            ::closedir(fdd);
+            p.fds = nfd;
+        }
 
         struct ::stat stbuf{};
         if (::stat(base.c_str(), &stbuf) == 0) p.user = user_of(stbuf.st_uid);

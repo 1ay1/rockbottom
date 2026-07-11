@@ -52,6 +52,7 @@ struct App {
         Snapshot snap;
         SortKey  sort = SortKey::Cpu;
         bool     paused = false;
+        int      refresh_ms = 1000;              // sample cadence; < > adjust (250–5000)
         bool     show_help = false;
         int      help_scroll = 0;                // scroll offset within help
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
@@ -616,6 +617,18 @@ struct App {
             return {std::move(m), C::quit()};
         }
         if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {std::move(m), C{}}; }
+        // Refresh cadence: < slower, > faster, clamped 250ms–5s. A toast
+        // confirms the new rate; the subscription re-times on next update.
+        if (key(ev, '>') || key(ev, '.')) {
+            m.refresh_ms = std::max(250, m.refresh_ms - 250);
+            m.toast = Toast{"refresh " + refresh_label(m.refresh_ms), false};
+            return {std::move(m), C{}};
+        }
+        if (key(ev, '<') || key(ev, ',')) {
+            m.refresh_ms = std::min(5000, m.refresh_ms + 250);
+            m.toast = Toast{"refresh " + refresh_label(m.refresh_ms), false};
+            return {std::move(m), C{}};
+        }
         if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
 
@@ -937,6 +950,15 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
+    // Human refresh label: "1.0s" / "250ms" for the toast + chip.
+    static std::string refresh_label(int ms) {
+        if (ms % 1000 == 0) return std::to_string(ms / 1000) + "s";
+        if (ms >= 1000) {
+            char b[16]; std::snprintf(b, sizeof b, "%.2gs", ms / 1000.0); return b;
+        }
+        return std::to_string(ms) + "ms";
+    }
+
     static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
         // Sort changed: re-sample in the background rather than blocking the
         // keystroke. The list keeps showing the old order for one frame, then
@@ -981,6 +1003,7 @@ struct App {
         for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid));
         fold(static_cast<std::uint64_t>(m.sel));
         fold(m.paused ? 1 : 0);
+        fold(static_cast<std::uint64_t>(m.refresh_ms));
         fold(m.filtering ? 1 : 0);
         fold_str(m.filter);
         fold(static_cast<std::uint64_t>(m.detail));
@@ -1012,11 +1035,14 @@ struct App {
         return h;
     }
 
-    static maya::Sub<Msg> subscribe(const Model&) {
+    static maya::Sub<Msg> subscribe(const Model& m) {
         using S = maya::Sub<Msg>;
         using namespace std::chrono_literals;
         std::vector<S> subs;
-        subs.push_back(S::every(1s, Tick{}));
+        // Sample cadence is model-driven (< > adjust it); maya re-subscribes
+        // after each update so a changed interval takes effect immediately.
+        subs.push_back(S::every(std::chrono::milliseconds(std::clamp(m.refresh_ms, 250, 5000)),
+                                Tick{}));
         subs.push_back(S::on_resize([](maya::Size sz) -> Msg {
             return Resize{sz.width.value, sz.height.value};
         }));

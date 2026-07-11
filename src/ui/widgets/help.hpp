@@ -65,6 +65,7 @@ public:
             }},
             {"GENERAL", {
                 {"p / Space", "pause / resume"},
+                {"< / >", "slower / faster refresh (250ms–5s)"},
                 {"? / h", "toggle this help"},
                 {"q / Esc", "quit"},
             }},

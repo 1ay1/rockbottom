@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,7 @@
 #include <mach/mach_time.h>
 #include <sys/proc_info.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
 
 namespace rockbottom {
 
@@ -36,6 +38,39 @@ double mach_ns_per_tick() {
         return static_cast<double>(tb.numer) / static_cast<double>(tb.denom);
     }();
     return f;
+}
+
+// Full command line (argv joined by spaces) via sysctl(KERN_PROCARGS2), the
+// only supported way to read another process's arguments on macOS. Layout:
+//   [int argc][exec_path\0][padding\0...][argv[0]\0][argv[1]\0]...[env...]
+// We skip the exec_path, then take argc NUL-terminated strings. Returns "" if
+// unreadable (privilege/SIP) so the caller can fall back to the exe path.
+std::string proc_argv(int pid) {
+    int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid};
+    std::size_t sz = 0;
+    if (::sysctl(mib, 3, nullptr, &sz, nullptr, 0) != 0 || sz == 0) return {};
+    std::string buf(sz, '\0');
+    if (::sysctl(mib, 3, buf.data(), &sz, nullptr, 0) != 0) return {};
+    if (sz < sizeof(int)) return {};
+
+    int argc = 0;
+    std::memcpy(&argc, buf.data(), sizeof(int));
+    std::size_t pos = sizeof(int);
+    // Skip exec_path (NUL-terminated) and any NUL padding that follows it.
+    while (pos < sz && buf[pos] != '\0') ++pos;
+    while (pos < sz && buf[pos] == '\0') ++pos;
+
+    std::string out;
+    for (int a = 0; a < argc && pos < sz; ++a) {
+        std::size_t start = pos;
+        while (pos < sz && buf[pos] != '\0') ++pos;
+        if (pos > start) {
+            if (!out.empty()) out += ' ';
+            out.append(buf, start, pos - start);
+        }
+        ++pos;   // step over the NUL
+    }
+    return out;
 }
 
 }  // namespace
@@ -173,9 +208,17 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         int fdbytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
         p.fds = fdbytes > 0 ? fdbytes / PROC_PIDLISTFD_SIZE : -1;
 
-        // Full command-line path for the process-detail pane, if readable.
-        char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
-        if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) p.cmd = pathbuf;
+        // Full command line for the table's cmd-trail and the detail pane:
+        // prefer argv (distinguishes two `python` rows by their script) via
+        // KERN_PROCARGS2, falling back to the executable path when the args
+        // aren't readable (privilege / SIP-protected binaries).
+        std::string argv = proc_argv(pid);
+        if (!argv.empty()) {
+            p.cmd = std::move(argv);
+        } else {
+            char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
+            if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) p.cmd = pathbuf;
+        }
 
         if (auto it = pid_ports_.find(pid); it != pid_ports_.end())
             p.ports = it->second;
