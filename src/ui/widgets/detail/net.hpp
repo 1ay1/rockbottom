@@ -4,6 +4,11 @@
 // live rx/tx sparklines, the peak rate pulled from its own history, lifetime
 // byte totals, and link state — plus an aggregate throughput line so you see
 // the whole machine's traffic at a glance.
+//
+// WIDE layout is a real two-pane view: the interface roster sits STATIC on the
+// left while the CONNECTIONS table scrolls INDEPENDENTLY on the right (its own
+// window + scrollbar, driven by the pane scroll offset). The interfaces never
+// drift as you page through 40 sockets — the two halves scroll on their own.
 
 #pragma once
 
@@ -18,6 +23,106 @@ inline double hist_peak(const float* h, int len) {
     return mx;
 }
 
+// Does the net pane render as two independent columns? (wide terminal + at
+// least one socket to show on the right).
+inline bool net_is_split(const Snapshot& s, const Ctx& cx) {
+    return cx.wide && !s.connections.empty();
+}
+
+// ── connections table ────────────────────────────────────────────────────
+// A tidy monospace table: proto · local → remote · state chip · owner. Column
+// widths are computed from the available width so the row FILLS its column and
+// the state chip / owner never float away from the addresses. `avail` is the
+// width the table gets; `with_proto` shows the proto column (stacked layout)
+// vs a 2-space indent (split, where width is tighter).
+struct ConnCols { int indent, la, ra, st, proc; };
+
+inline ConnCols conn_cols(int avail, bool with_proto) {
+    ConnCols c;
+    c.indent = with_proto ? 8 : 2;                 // "  proto" vs bare indent
+    c.st     = with_proto ? 12 : 11;
+    const int gaps = 4;                            // inter-column gap(1) ×4
+    const int rest = std::max(30, avail - c.indent - c.st - gaps);
+    // remote (who you're talking to) gets the most, then owner, then local.
+    c.ra   = std::clamp(rest * 38 / 100, 16, 42);
+    c.proc = std::clamp(rest * 32 / 100, 14, 34);
+    c.la   = std::max(14, rest - c.ra - c.proc);
+    return c;
+}
+
+// A single formatted socket row. `zebra` tints alternate rows for readability.
+inline Element conn_row(const Connection& c, const ConnCols& cols, bool with_proto,
+                        bool zebra) {
+    using namespace maya; using namespace maya::dsl;
+    const bool est = c.state == "ESTABLISHED";
+    const bool lis = c.state == "LISTEN";
+    const Color st_c = est ? pal::good : lis ? pal::sky
+                     : c.state.empty() ? pal::dim : pal::hot;
+    const Color la_c = est ? pal::text : pal::label;
+    const Color ra_c = est ? pal::sky  : pal::dim;
+    // Owner: name + (pid). The name is clipped to the owner column minus the
+    // "(12345)" tail so the pid always stays visible.
+    const int name_room = std::max(6, cols.proc - 8);
+    std::string who = c.pid > 0
+        ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname,
+                                static_cast<std::size_t>(name_room))) +
+          " (" + std::to_string(c.pid) + ")"
+        : "—";
+    std::string state = c.state.empty() ? "·" : c.state;
+
+    std::vector<Element> row;
+    if (with_proto)
+        row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(cols.indent)).build());
+    else
+        row.push_back((text("  ") | nowrap | width(cols.indent)).build());
+    row.push_back((text(std::string(fmt::clip(c.laddr, static_cast<std::size_t>(cols.la - 1))))
+                   | nowrap | fgc(la_c) | width(cols.la)).build());
+    row.push_back((text(std::string(fmt::clip(c.raddr, static_cast<std::size_t>(cols.ra - 1))))
+                   | nowrap | fgc(ra_c) | width(cols.ra)).build());
+    row.push_back((text(state) | nowrap | Bold | fgc(st_c) | width(cols.st)).build());
+    row.push_back((text(who) | nowrap | fgc(pal::label) | grow(1)).build());
+    Element line = (h(std::move(row)) | gap(1)).build();
+    if (zebra) line = std::move(line) | bgc(mix(pal::bg_panel, pal::net_ac, 0.06));
+    return line.build();
+}
+
+inline Element conn_header(const ConnCols& cols, bool with_proto) {
+    using namespace maya; using namespace maya::dsl;
+    std::vector<Element> hdr;
+    if (with_proto)
+        hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(cols.indent)).build());
+    else
+        hdr.push_back((text("  ") | nowrap | width(cols.indent)).build());
+    hdr.push_back((text("local") | nowrap | fgc(pal::faint) | width(cols.la)).build());
+    hdr.push_back((text("remote") | nowrap | fgc(pal::faint) | width(cols.ra)).build());
+    hdr.push_back((text("state") | nowrap | fgc(pal::faint) | width(cols.st)).build());
+    hdr.push_back((text("process") | nowrap | fgc(pal::faint) | grow(1)).build());
+    return (h(std::move(hdr)) | gap(1)).build();
+}
+
+inline std::string conn_summary(const Snapshot& s, int& established, int& listen) {
+    established = 0; listen = 0;
+    for (const auto& c : s.connections) {
+        if (c.state == "ESTABLISHED") ++established;
+        else if (c.state == "LISTEN") ++listen;
+    }
+    return std::to_string(established) + " active · " + std::to_string(listen) + " listening";
+}
+
+// How many socket rows the split-mode connections column can scroll past —
+// the app clamps the pane scroll offset to this so ↑↓ never runs off the end.
+// The right column shows a header + a window of `body_h - <band top>` rows.
+inline int net_conn_scroll_max(const Snapshot& s, const Ctx& cx) {
+    if (!net_is_split(s, cx)) return -1;   // not split → let the generic path clamp
+    const int total = static_cast<int>(s.connections.size());
+    // Rows above the table = aggregate block (agg_rows) + the CONNECTIONS rule.
+    const int agg_rows = 5;               // section + 2×kv3 + gap
+    const int band_h = std::max(3, cx.body_h - agg_rows - 1);   // -1 for the rule
+    const int table_view = std::max(1, band_h - 1);   // minus the header row
+    return std::max(0, total - table_view);
+}
+
+// ── the pane body ─────────────────────────────────────────────────────────
 inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
     std::vector<Element> b;
@@ -27,7 +132,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         return b;
     }
 
-    // Aggregate across interfaces first — the headline number.
+    // Aggregate across interfaces first — the headline number. (Kept to a
+    // stable row count so net_conn_scroll_max's agg_rows stays in sync.)
     double agg_rx = 0, agg_tx = 0;
     std::uint64_t agg_rxt = 0, agg_txt = 0;
     int up = 0;
@@ -36,23 +142,27 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         agg_rxt += ni.rx_total.value; agg_txt += ni.tx_total.value;
         if (ni.up) ++up;
     }
-    b.push_back(section("ALL INTERFACES", pal::net_ac));
-    b.push_back(kv3(
-        "download", humanize_rate(ByteRate{agg_rx}), pal::sky,
-        "upload", humanize_rate(ByteRate{agg_tx}), pal::good,
-        "links up", std::to_string(up) + "/" + std::to_string(s.nets.size()),
-        up > 0 ? pal::good : pal::dim));
     double agg_rpps = 0, agg_tpps = 0;
     std::uint64_t agg_errs = 0, agg_drops = 0;
     for (const NetIface& ni : s.nets) {
         agg_rpps += ni.rx_pps; agg_tpps += ni.tx_pps;
         agg_errs += ni.rx_errs + ni.tx_errs; agg_drops += ni.drops;
     }
+    b.push_back(section("ALL INTERFACES", pal::net_ac));
+    b.push_back(kv3(
+        "download", humanize_rate(ByteRate{agg_rx}), pal::sky,
+        "upload", humanize_rate(ByteRate{agg_tx}), pal::good,
+        "links up", std::to_string(up) + "/" + std::to_string(s.nets.size()),
+        up > 0 ? pal::good : pal::dim));
     b.push_back(kv3(
         "lifetime ↓", humanize_bytes(agg_rxt), pal::label,
         "lifetime ↑", humanize_bytes(agg_txt), pal::label,
         "packets", fmt::count(agg_rpps + agg_tpps) + "/s", pal::label));
-    if (agg_errs || agg_drops) {
+    // NOTE: net_conn_scroll_max assumes a FIXED aggregate height, so the
+    // optional error line only shows in the STACKED (non-split) layout, where
+    // scroll math counts rows directly.
+    const bool split = net_is_split(s, cx);
+    if ((agg_errs || agg_drops) && !split) {
         b.push_back(kv3(
             "errors", fmt::count(static_cast<double>(agg_errs)), agg_errs ? pal::hot : pal::dim,
             "dropped", fmt::count(static_cast<double>(agg_drops)), agg_drops ? pal::hot : pal::dim,
@@ -62,20 +172,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     }
     b.push_back(gap_row());
 
-    // Per-interface breakdown. Each interface gets its own labelled section
-    // rule — the same structural grammar as every other pane — with link
-    // state riding the rule. Peak / lifetime figures live on the data rows
-    // so every column aligns. Sparks are peak-normalized per interface
-    // (Spark clamps to [0,1]; raw B/s renders a solid wall).
-    //
-    // WIDE layout: interfaces build into their own column so the CONNECTIONS
-    // table can ride ALONGSIDE them instead of scrolling far below. Narrow
-    // keeps the classic single stack.
-    const bool split = cx.wide && !s.connections.empty();
-    std::vector<Element> ifcol;   // per-interface rows (left column when split)
-
-    // In split mode the per-interface figures lose the wide tail columns
-    // (peak / lifetime) so the left column stays readable at ~half width.
+    // ── per-interface roster (left column when split) ──
+    std::vector<Element> ifcol;
     for (const NetIface& ni : s.nets) {
         auto rxn = norm48(ni.rx_history.data(), ni.hist_len);
         auto txn = norm48(ni.tx_history.data(), ni.hist_len);
@@ -83,8 +181,6 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
         ifcol.push_back(section(std::string(fmt::clip(ni.name, 14)), pal::net_ac,
                             ni.up ? "● up" : "○ down"));
-        // Identity row: address / MAC / MTU — the "which network am I on"
-        // facts every other monitor makes you shell out to ifconfig for.
         if (!ni.ip4.empty() || !ni.mac.empty()) {
             std::vector<Element> idr;
             idr.push_back((text("  ") | nowrap).build());
@@ -117,7 +213,6 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             ifcol.push_back((h(std::move(idr))).build());
         }
         if (split) {
-            // Compact rx/tx: spark + rate + peak only (drops p/s + lifetime).
             ifcol.push_back((h(
                 text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
                 Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
@@ -151,108 +246,101 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         ifcol.push_back(gap_row());
     }
 
-    // Stacked layout appends the interface column straight into the body;
-    // split layout holds it for the side-by-side compose below.
-    if (!split)
+    // ── STACKED (narrow): interfaces then the full connections table ──
+    if (!split) {
         for (auto& e : ifcol) b.push_back(std::move(e));
-
-    // ── connections ───────────────────────────────────────────────
-    // Who is talking to whom — the ss / lsof -i / nethogs answer, attributed to
-    // owning processes. Established connections first, then listeners. This is
-    // the network view every process monitor should have and almost none do.
-    //
-    // Split geometry is computed HERE (before the rows are built) so the socket
-    // table's columns can FILL the right column instead of leaving dead space
-    // at the far edge on a wide terminal. The interface roster only needs ~52
-    // cols (name rule + spark + rate + peak); everything beyond that goes to
-    // the denser CONNECTIONS table, which is the part that wants width.
-    const int split_gap   = 2;
-    const int split_inner = std::max(40, cx.w - 6);   // pane chrome slack
-    const int split_left  = split
-        ? std::clamp(52, 40, std::max(40, split_inner - split_gap - 40))  // ~52 roster, ≥40 conns
-        : 0;
-    const int split_right = split ? split_inner - split_gap - split_left : split_inner;
-
-    std::vector<Element> concol;
-    std::vector<Element>& cc = split ? concol : b;
-    if (!s.connections.empty()) {
-        int established = 0, listen = 0;
-        for (const auto& c : s.connections) {
-            if (c.state == "ESTABLISHED") ++established;
-            else if (c.state == "LISTEN") ++listen;
+        if (!s.connections.empty()) {
+            int est = 0, lis = 0;
+            b.push_back(section("CONNECTIONS", pal::net_ac, conn_summary(s, est, lis)));
+            const ConnCols cols = conn_cols(std::max(40, cx.w - 4), /*with_proto=*/true);
+            b.push_back(conn_header(cols, true));
+            const int shown = std::min<int>(static_cast<int>(s.connections.size()), 40);
+            for (int i = 0; i < shown; ++i)
+                b.push_back(conn_row(s.connections[static_cast<std::size_t>(i)], cols, true, i & 1));
+            if (static_cast<int>(s.connections.size()) > shown)
+                b.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
+                                  " more sockets") | fgc(pal::dim)).build());
+            b.push_back(gap_row());
         }
-        cc.push_back(section("CONNECTIONS", pal::net_ac,
-                            std::to_string(established) + " active · " +
-                            std::to_string(listen) + " listening"));
-
-        // Column widths that FILL the available width. The `proto` column only
-        // shows in the roomy stacked layout; state is fixed (LISTEN/ESTABLISHED
-        // etc.), and local/remote/process split the remainder so nothing is
-        // wasted at the right edge no matter how wide the terminal is.
-        const int avail   = split ? split_right : std::max(40, cx.w - 4);
-        const int proto_w = split ? 2 : 8;   // 2-space indent when split (no proto)
-        const int st_w    = split ? 11 : 13;
-        const int rest    = std::max(24, avail - proto_w - st_w - 4);  // gaps
-        // local / remote / process each get a share; remote (who you're talking
-        // to) gets the most, then process, then local.
-        const int ra_w    = std::clamp(rest * 36 / 100, 16, 40);
-        const int proc_w  = std::clamp(rest * 34 / 100, 14, 34);
-        const int la_w    = std::max(14, rest - ra_w - proc_w);
-
-        // Column header for the socket table.
-        std::vector<Element> hdr;
-        if (!split) hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(proto_w)).build());
-        else        hdr.push_back((text("  ") | nowrap | width(proto_w)).build());
-        hdr.push_back((text("local") | nowrap | fgc(pal::faint) | width(la_w)).build());
-        hdr.push_back((text("remote") | nowrap | fgc(pal::faint) | width(ra_w)).build());
-        hdr.push_back((text("state") | nowrap | fgc(pal::faint) | width(st_w)).build());
-        hdr.push_back((text("process") | nowrap | fgc(pal::faint) | grow(1)).build());
-        cc.push_back((h(std::move(hdr)) | gap(1)).build());
-
-        const int shown = std::min<int>(static_cast<int>(s.connections.size()),
-                                        cx.wide ? 40 : 24);
-        for (int i = 0; i < shown; ++i) {
-            const Connection& c = s.connections[static_cast<std::size_t>(i)];
-            const bool est = c.state == "ESTABLISHED";
-            const bool lis = c.state == "LISTEN";
-            Color st_c = est ? pal::good : lis ? pal::sky
-                       : c.state.empty() ? pal::dim : pal::hot;
-            std::string who = c.pid > 0
-                ? std::string(fmt::clip(c.pname.empty() ? "?" : c.pname,
-                                        static_cast<std::size_t>(std::max(6, proc_w - 8)))) +
-                  " (" + std::to_string(c.pid) + ")"
-                : "—";
-            std::vector<Element> row;
-            if (!split) row.push_back((text("  " + c.proto) | nowrap | fgc(pal::label) | width(proto_w)).build());
-            else        row.push_back((text("  ") | nowrap | width(proto_w)).build());
-            row.push_back((text(fmt::clip(c.laddr, static_cast<std::size_t>(la_w - 1))) | nowrap | fgc(est ? pal::text : pal::label) | width(la_w)).build());
-            row.push_back((text(fmt::clip(c.raddr, static_cast<std::size_t>(ra_w - 1))) | nowrap | fgc(est ? pal::sky : pal::dim) | width(ra_w)).build());
-            row.push_back((text(c.state.empty() ? "·" : c.state) | nowrap | Bold | fgc(st_c) | width(st_w)).build());
-            row.push_back((text(who) | nowrap | fgc(pal::label) | grow(1)).build());
-            cc.push_back((h(std::move(row)) | gap(1)).build());
-        }
-        if (static_cast<int>(s.connections.size()) > shown)
-            cc.push_back((text("   +" + std::to_string(static_cast<int>(s.connections.size()) - shown) +
-                              " more sockets") | fgc(pal::dim)).build());
-        cc.push_back(gap_row());
+        return b;
     }
 
-    // Compose: side-by-side in wide mode. The scroller slices the body vector
-    // by ELEMENT (one entry == one screen row), so we can't hand it a single
-    // tall two-column block — that would render unclipped and overflow the
-    // frame. Instead we ZIP the columns row-for-row into 1-row-tall pairs,
-    // padding the shorter column with blanks, so scroll math stays exact.
-    if (split) {
-        const std::size_t n = std::max(ifcol.size(), concol.size());
-        for (std::size_t i = 0; i < n; ++i) {
-            Element l = i < ifcol.size() ? std::move(ifcol[i]) : gap_row();
-            Element r = i < concol.size() ? std::move(concol[i]) : gap_row();
-            b.push_back((h(
-                std::move(l) | width(split_left),
-                std::move(r) | width(split_right)
-            ) | gap(split_gap)).build());
+    // ── SPLIT (wide): interfaces STATIC left · connections SCROLL right ──
+    // The whole band is a single fixed-height element, so the pane's outer
+    // scroller renders it whole (no outer clipping) while the connections
+    // column windows itself over the pane scroll offset — the two halves
+    // scroll independently: paging sockets never moves the interfaces.
+    const int agg_rows = 5;
+    const int band_h   = std::max(3, cx.body_h - agg_rows - 1);   // -1 for CONNECTIONS rule
+
+    // Geometry: roster capped ~52, the surplus to the denser socket table.
+    const int gap_w   = 2;
+    const int inner   = std::max(40, cx.w - 6);
+    const int left_w  = std::clamp(52, 40, std::max(40, inner - gap_w - 40));
+    const int right_w = inner - gap_w - left_w;
+
+    // Left column: interface roster, top-aligned, padded to the band height so
+    // the two columns are the same height. It does NOT scroll.
+    std::vector<Element> left = std::move(ifcol);
+    while (static_cast<int>(left.size()) < band_h) left.push_back(gap_row());
+    if (static_cast<int>(left.size()) > band_h) left.resize(static_cast<std::size_t>(band_h));
+
+    // Right column: CONNECTIONS with its own header + windowed body + scrollbar.
+    int est = 0, lis = 0;
+    const std::string summ = conn_summary(s, est, lis);
+    const ConnCols cols = conn_cols(right_w - 1, /*with_proto=*/false);  // -1 for scrollbar
+
+    const int total = static_cast<int>(s.connections.size());
+    const int table_view = std::max(1, band_h - 1);       // minus header row
+    const int max_scroll = std::max(0, total - table_view);
+    const int scroll = std::clamp(cx.scroll, 0, max_scroll);
+
+    std::vector<Element> tbody;
+    tbody.push_back(conn_header(cols, false));
+    for (int i = scroll; i < scroll + table_view && i < total; ++i)
+        tbody.push_back(conn_row(s.connections[static_cast<std::size_t>(i)], cols, false, i & 1));
+    while (static_cast<int>(tbody.size()) < band_h) tbody.push_back(gap_row());
+
+    // Scrollbar for the connections column (matches the pane scroller idiom).
+    Element right_col;
+    if (total > table_view) {
+        const int thumb = std::max(1, table_view * table_view / total);
+        const int track = table_view - thumb;
+        const int pos   = max_scroll > 0 ? scroll * track / max_scroll : 0;
+        std::vector<Element> bar;
+        bar.push_back((text(" ") | nowrap).build());     // align with header row
+        for (int r = 0; r < table_view; ++r) {
+            const bool on = r >= pos && r < pos + thumb;
+            const char* g = r == 0 && scroll > 0 ? "▲"
+                          : r == table_view - 1 && scroll < max_scroll ? "▼"
+                          : on ? "█" : "│";
+            bar.push_back((text(g) | nowrap | fgc(on ? pal::net_ac : pal::faint)).build());
         }
+        while (static_cast<int>(bar.size()) < band_h) bar.push_back((text(" ") | nowrap).build());
+        right_col = (h(
+            v(std::move(tbody)) | grow(1),
+            v(std::move(bar)) | width(1)
+        )).build();
+    } else {
+        right_col = (v(std::move(tbody))).build();
     }
+
+    // The CONNECTIONS section rule sits ABOVE the band (full right-column
+    // width) so the header of what's scrolling is clearly labelled.
+    std::vector<Element> right_stack;
+    right_stack.push_back(section("CONNECTIONS", pal::net_ac, summ));
+    right_stack.push_back(std::move(right_col));
+
+    // Left column also gets a matching section-height offset so its first
+    // interface rule lines up with the connections body, not the rule.
+    std::vector<Element> left_stack;
+    left_stack.push_back((text(" ") | nowrap).build());   // spacer to match the CONNECTIONS rule row
+    left_stack.push_back((v(std::move(left))).build());
+
+    b.push_back((h(
+        v(std::move(left_stack))  | width(left_w),
+        v(std::move(right_stack)) | width(right_w)
+    ) | gap(gap_w)).build());
 
     return b;
 }

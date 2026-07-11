@@ -903,6 +903,14 @@ struct App {
     // Clamp the detail-pane scroll offset to [0, content - viewport]. Builds a
     // throwaway DetailPane to ask it how tall its body is at the current size.
     static void clamp_detail_scroll(Model& m) {
+        // The NET pane in wide/split mode scrolls its CONNECTIONS column
+        // independently, so its scroll ceiling is the socket count minus the
+        // table viewport, not the generic body/viewport delta.
+        if (m.detail == ui::Detail::Net) {
+            ui::detail::Ctx cx = ui::detail::Ctx::make(m.width, m.height, 0);
+            int cmax = ui::detail::net_conn_scroll_max(m.snap, cx);
+            if (cmax >= 0) { m.detail_scroll = std::clamp(m.detail_scroll, 0, cmax); return; }
+        }
         const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
         ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, 0};
         int max_scroll = std::max(0, pane.content_rows() - pane.viewport_rows());
