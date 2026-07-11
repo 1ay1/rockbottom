@@ -225,30 +225,42 @@ public:
 inline maya::Element y_axis(int rows, double top_val = 100.0, int w = 4,
                            bool percent = true) {
     using namespace maya; using namespace maya::dsl;
-    std::vector<Element> col;
-    // Tick at each row whose position lands on a quarter of the height. With
-    // few rows only 0/50/100 fit; taller graphs get 25 and 75 too.
-    auto label_for = [&](int r) -> std::string {
-        if (rows <= 1) return "";
-        const double frac = 1.0 - static_cast<double>(r) / (rows - 1);  // 1 at top → 0 at floor
-        // Which quarter tick (if any) is this row closest to?
-        const double q = frac * 4.0;
-        const int qi = static_cast<int>(std::lround(q));
-        if (std::abs(q - qi) > 0.5 / (rows - 1) * 4.0 + 1e-9) return "";
-        // Only label ends when the graph is short; add 25/75 when tall enough.
-        if (rows < 6 && qi != 0 && qi != 2 && qi != 4) return "";
-        const double val = top_val * qi / 4.0;
+    std::vector<std::string> labels(static_cast<std::size_t>(std::max(1, rows)));
+
+    auto fmt_val = [&](double frac) -> std::string {
+        const double val = top_val * frac;
         char buf[16];
         if (percent) std::snprintf(buf, sizeof buf, "%d", static_cast<int>(std::lround(val)));
         else {
-            // Byte-ish rate: humanize compactly for the axis.
             std::string h = humanize_bytes(static_cast<std::uint64_t>(val));
             std::snprintf(buf, sizeof buf, "%s", h.c_str());
         }
         return buf;
     };
+
+    if (rows >= 1) {
+        // Assign each tick to exactly ONE row (the closest), so a tick can
+        // never print on two adjacent rows. Tall graphs get 5 ticks
+        // (100/75/50/25/0), short ones fall back to 3 (100/50/0).
+        // Row 0 is the TOP (frac 1.0), row rows-1 is the floor (frac 0.0).
+        const std::vector<double> ticks = rows >= 6
+            ? std::vector<double>{1.0, 0.75, 0.5, 0.25, 0.0}
+            : std::vector<double>{1.0, 0.5, 0.0};
+        for (double t : ticks) {
+            // frac = 1 - r/(rows-1)  →  r = (1 - frac) * (rows - 1)
+            int r = rows <= 1 ? 0
+                  : static_cast<int>(std::lround((1.0 - t) * (rows - 1)));
+            r = std::clamp(r, 0, rows - 1);
+            // First tick to claim a row wins; a later tick that maps to the
+            // same row is simply dropped (prevents overlap on tiny graphs).
+            if (labels[static_cast<std::size_t>(r)].empty())
+                labels[static_cast<std::size_t>(r)] = fmt_val(t);
+        }
+    }
+
+    std::vector<Element> col;
     for (int r = 0; r < rows; ++r)
-        col.push_back((text(label_for(r)) | nowrap | fgc(pal::faint)
+        col.push_back((text(labels[static_cast<std::size_t>(r)]) | nowrap | fgc(pal::faint)
                        | width(w) | justify(Justify::End)).build());
     return (v(std::move(col)) | width(w)).build();
 }
