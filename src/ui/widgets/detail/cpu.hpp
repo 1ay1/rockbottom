@@ -141,11 +141,17 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                 std::snprintf(id, sizeof id, "%2d", i);
             std::string fq = core.freq.value > 0
                 ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
+            // Per-core load sparkline: the core's own recent history, so you
+            // see WHICH cores have been busy over time, not just this instant.
+            // Shown when the column is wide enough to carry a meter + a spark.
+            const bool room = core_w / cols >= 40;
             line.push_back(Element{(h(
                 text(id) | nowrap | fgc(hetero && i >= c.eff_cores
                                             ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.5))
                     | width(hetero ? 5 : 3),
                 Element{Meter{f}.fill().groove(false)} | grow(1),
+                room ? Spark{core.history.data(), core.hist_len}.cells(12).build_fixed()
+                     : Element{blank()} | width(0),
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | width(5) | justify(Justify::End),
                 text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)
             ) | gap(1)).build()} | grow(1));

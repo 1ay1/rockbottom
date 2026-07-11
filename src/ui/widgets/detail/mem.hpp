@@ -106,7 +106,8 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     // ── VM activity ───────────────────────────────────────────────────
     // How hard the paging machinery is working right now — fault rate plus
     // file-backed page traffic. High pagein = cold starts / cache misses.
-    if (m.faults_ps > 0 || m.page_in.per_sec > 0 || m.page_out.per_sec > 0) {
+    if (m.faults_ps > 0 || m.page_in.per_sec > 0 || m.page_out.per_sec > 0 ||
+        m.swap_in.per_sec > 0 || m.swap_out.per_sec > 0) {
         L.push_back(section("VM ACTIVITY", pal::mem_ac));
         L.push_back(kv3(
             "page faults", fmt::count(m.faults_ps) + "/s",
@@ -115,6 +116,45 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
             m.page_in.per_sec > 1 << 20 ? pal::hot : pal::label,
             "page out", humanize_rate(m.page_out),
             m.page_out.per_sec > 1 << 20 ? pal::hot : pal::label));
+        // Anonymous-page paging traffic — the swap side of the machinery,
+        // surfaced here too so the whole VM picture reads in one block. This
+        // is where thrash shows up before it's visible in swap-used.
+        L.push_back(kv3(
+            "swap in", humanize_rate(m.swap_in),
+            m.swap_in.per_sec > 1024 ? pal::crit : pal::label,
+            "swap out", humanize_rate(m.swap_out),
+            m.swap_out.per_sec > 1024 ? pal::crit : pal::label,
+            "total paging", humanize_rate(ByteRate{m.page_in.per_sec + m.page_out.per_sec +
+                                                   m.swap_in.per_sec + m.swap_out.per_sec}),
+            pal::dim));
+        L.push_back(gap_row());
+    }
+
+    // ── commit / composition detail ──────────────────────────────────
+    // The exact byte figures behind the PHYSICAL bar, spelled out so the
+    // pane fills a tall screen with real numbers instead of empty sky. Every
+    // field here is a live counter (app/wired/compressed vs used, plus the
+    // reclaimable cache+buffers pool), so it reads as an honest accounting.
+    {
+        const std::uint64_t reclaimable = m.cached.value + m.buffers.value;
+        L.push_back(section("COMMIT", pal::mem_ac));
+        if (m.app.value || m.wired.value || m.compressed.value) {
+            // mac / zram shape: apps vs kernel-pinned vs compressed pool.
+            L.push_back(kv3(
+                "app memory", humanize_bytes(m.app), pal::mem_ac,
+                "wired", humanize_bytes(m.wired), m.wired.value ? pal::hot : pal::dim,
+                "compressed", humanize_bytes(m.compressed),
+                m.compressed.value ? pal::pink : pal::dim));
+        } else {
+            L.push_back(kv3(
+                "in use", humanize_bytes(m.used), pal::mem_ac,
+                "cache", humanize_bytes(m.cached), pal::teal,
+                "buffers", humanize_bytes(m.buffers), pal::sky));
+        }
+        L.push_back(kv3(
+            "reclaimable", humanize_bytes(Bytes{reclaimable}), pal::teal,
+            "of total", fmt::pct(Ratio::of(Bytes{reclaimable}, m.total).v), pal::dim,
+            "available", humanize_bytes(m.available), avc));
         L.push_back(gap_row());
     }
 

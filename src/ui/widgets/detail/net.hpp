@@ -252,6 +252,28 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
             ) | gap(1)).build());
         }
+        // Packet-rate + lifetime packet counts — a link can be saturated on
+        // packets-per-second (tiny-packet floods, VoIP) while byte rate looks
+        // idle, so surface pps and the lifetime counters as their own strip.
+        if (ni.rx_pps > 0 || ni.tx_pps > 0 || ni.rx_packets || ni.tx_packets) {
+            ifcol.push_back(kv3(
+                "rx packets", fmt::count(ni.rx_pps) + "/s", pal::sky,
+                "tx packets", fmt::count(ni.tx_pps) + "/s", pal::good,
+                "lifetime pkts", fmt::count(static_cast<double>(ni.rx_packets + ni.tx_packets)),
+                pal::label));
+        }
+        // Errors / drops broken out where the link is actually seeing them —
+        // a healthy interface skips this row entirely, so it only appears as
+        // a warning when there's something to warn about.
+        if (ni.rx_errs || ni.tx_errs || ni.drops) {
+            ifcol.push_back(kv3(
+                "rx errors", fmt::count(static_cast<double>(ni.rx_errs)),
+                ni.rx_errs ? pal::hot : pal::dim,
+                "tx errors", fmt::count(static_cast<double>(ni.tx_errs)),
+                ni.tx_errs ? pal::hot : pal::dim,
+                "dropped in", fmt::count(static_cast<double>(ni.drops)),
+                ni.drops ? pal::crit : pal::dim));
+        }
         ifcol.push_back(gap_row());
     }
 

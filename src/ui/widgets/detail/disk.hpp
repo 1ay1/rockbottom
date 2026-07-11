@@ -26,26 +26,52 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     std::vector<Element>& R = split ? right : single;
 
     // ── system I/O ────────────────────────────────────────────────────────────────────────
-    // Sparks are peak-normalized — Spark clamps to [0,1]; raw B/s histories
-    // would render a solid wall. Peak figures ride the section rule.
+    // A single hero graph carries BOTH directions: read as the filled
+    // mountain, write as an overlaid line on the same peak-normalized grid
+    // (the net-pane idiom). Both series share one peak so their heights are
+    // directly comparable; the y-axis reads that peak as a byte rate.
     float rpk = 1, wpk = 1;
-    auto rdn = norm48(s.disk_io.read_history.data(), s.disk_io.hist_len, &rpk);
-    auto wrn = norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
+    norm48(s.disk_io.read_history.data(), s.disk_io.hist_len, &rpk);
+    norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
+    // Re-normalize both to a SHARED peak so read fill and write overlay are
+    // on the same scale (norm48 peaks each series independently otherwise).
+    const float shared_pk = std::max({rpk, wpk, 1.0f});
+    std::array<float, 48> rds{}, wrs{};
+    for (int i = 0; i < s.disk_io.hist_len && i < 48; ++i) {
+        rds[static_cast<std::size_t>(i)] = s.disk_io.read_history[static_cast<std::size_t>(i)] / shared_pk;
+        wrs[static_cast<std::size_t>(i)] = s.disk_io.write_history[static_cast<std::size_t>(i)] / shared_pk;
+    }
     L.push_back(section("SYSTEM I/O", pal::disk_ac));
+    {
+        const int gh = std::max(4, cx.graph_h - 1);
+        L.push_back((h(
+            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false),
+            Element{Graph{rds.data(), s.disk_io.hist_len}.fill().rows(gh).color(pal::teal)
+                        .overlay(wrs.data(), s.disk_io.hist_len, pal::hot)} | grow(1)
+        ) | gap(1) | height(gh)).build());
+    }
+    // Live figures + peaks for each direction, keyed by the graph's colors.
     L.push_back((h(
         text("  ▼ read") | nowrap | fgc(pal::teal) | width(10),
-        Element{Spark{rdn.data(), s.disk_io.hist_len}.fill().color(pal::teal).baseline(true)} | grow(1),
-        text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(10) | justify(Justify::End),
-        text(fmt::count(s.disk_io.read_iops) + " iops") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End),
-        text("pk " + std::string(humanize_rate(ByteRate{rpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
+        text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(11) | justify(Justify::End),
+        text(fmt::count(s.disk_io.read_iops) + " iops") | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+        text("pk " + std::string(humanize_rate(ByteRate{rpk}))) | nowrap | fgc(pal::dim) | width(13) | justify(Justify::End)
     ) | gap(1)).build());
     L.push_back((h(
         text("  ▲ write") | nowrap | fgc(pal::hot) | width(10),
-        Element{Spark{wrn.data(), s.disk_io.hist_len}.fill().color(pal::hot).baseline(true)} | grow(1),
-        text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(10) | justify(Justify::End),
-        text(fmt::count(s.disk_io.write_iops) + " iops") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End),
-        text("pk " + std::string(humanize_rate(ByteRate{wpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
+        text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(11) | justify(Justify::End),
+        text(fmt::count(s.disk_io.write_iops) + " iops") | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
+        text("pk " + std::string(humanize_rate(ByteRate{wpk}))) | nowrap | fgc(pal::dim) | width(13) | justify(Justify::End)
     ) | gap(1)).build());
+    // Combined IOPS strip — operations/sec is the metric SSDs bottleneck on
+    // long before bandwidth does, so surface it as its own honest row.
+    L.push_back(kv3(
+        "read iops", fmt::count(s.disk_io.read_iops) + "/s",
+        s.disk_io.read_iops > 5000 ? pal::hot : pal::teal,
+        "write iops", fmt::count(s.disk_io.write_iops) + "/s",
+        s.disk_io.write_iops > 5000 ? pal::hot : pal::hot,
+        "total iops", fmt::count(s.disk_io.read_iops + s.disk_io.write_iops) + "/s",
+        pal::label));
     if (s.psi.io.available) {
         L.push_back(bar("io pressure", s.psi.io.some_avg10 / 100.0, "of last 10s stalled on I/O", pal::hot, cx.wide ? 34 : 0));
         if (s.psi.io.some_avg10 > 20)
@@ -101,6 +127,22 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         // On wide terminals, show the backing device under the mount.
         if (cx.wide && !d.device.empty())
             R.push_back((text("  └ " + d.device) | nowrap | fgc(pal::faint)).build());
+        // Inode fullness as its own meter where the fs reports it — the
+        // second way a disk fills up (millions of tiny files) that a byte
+        // meter can't see. Shown on tall/wide screens so idle rows stay
+        // compact; the count tail carries the raw free/total figures.
+        if (cx.wide && d.inodes_total > 0) {
+            const double iused = 1.0 - static_cast<double>(d.inodes_free) /
+                                          static_cast<double>(d.inodes_total);
+            const std::uint64_t iuse = d.inodes_total - d.inodes_free;
+            R.push_back((h(
+                text("    inodes") | nowrap | fgc(pal::faint) | width(14),
+                Element{Meter{iused}.fill().groove(false).color(load_color(iused))} | grow(1),
+                text(fmt::pct_pad(iused)) | nowrap | Bold | fgc(load_color(iused)) | width(5) | justify(Justify::End),
+                text(fmt::count(static_cast<double>(iuse)) + " / " +
+                     fmt::count(static_cast<double>(d.inodes_total))) | nowrap | fgc(pal::dim) | width(16) | justify(Justify::End)
+            ) | gap(1)).build());
+        }
     }
     if (worst) {
         const double f = worst->usage().v;
