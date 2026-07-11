@@ -1406,13 +1406,22 @@ struct App {
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
-                  v(Element{MemPanel{s.mem, rc_mem_graph}}
-                        | height(rc_top_h) | hit(ui::hit_band(ui::Detail::Mem)),
+                  // The two halves each grow(1): maya's flex distributes the
+                  // band's REAL height (forced definite on this column by the
+                  // outer row's height(rc_target) + cross-stretch) into two
+                  // exact halves, integer-remainder-safe — a true 50/50 at any
+                  // terminal size, no hand arithmetic that can drift from the
+                  // height maya actually lays the column out at. The graph row
+                  // counts (rc_*_graph) are only an ESTIMATE of each half's
+                  // interior; grow enforces the split regardless.
+                  v(v(Element{MemPanel{s.mem, rc_mem_graph}}
+                          | hit(ui::hit_band(ui::Detail::Mem)))
+                        | grow(1),
                     v(Element{NetPanel{s.nets, rc_net_graph}}
                           | hit(ui::hit_band(ui::Detail::Net)),
                       Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
                           | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
-                        | height(rc_bot_h))
+                        | grow(1))
                     | width(right_w)
               ) | gap(gap_w) | height(rc_target)).build();
 
