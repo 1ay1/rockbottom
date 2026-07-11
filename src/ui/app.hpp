@@ -193,10 +193,14 @@ struct App {
             const int fixed = 2 + 3 + 1 + 2 + 1 + cores_rows + right_stack_h + (2 + 5) + 2;
             L.graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
-            // The graph absorbs ALL the height the right stack forces on the
-            // CPU column — no artificial cap, so a tall NETWORK panel means a
-            // taller mountain, never dead space under the cores.
-            L.graph_h = std::max(2, right_stack_h - 3 - cores_rows);
+            // Mirror view(): the classic top band fills the space above a
+            // readable process table, so the CPU graph (and thus cpu_h) grows
+            // to that height and the right column fills the same band 50/50.
+            const int chrome = 2 + 3 + 1 + 2;
+            const int proc_min = 12;
+            const int avail = m.height - chrome - proc_min;
+            const int want = std::max(avail, right_stack_h);
+            L.graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
         }
         const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
         L.top_h = L.narrow ? cpu_h + mem_h + net_h + disk_h
@@ -1231,14 +1235,45 @@ struct App {
                             + 2;                        // outer padding slack
             graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
-            // cpu_h = 2(border) + 1(ALL header) + graph_h + cores_rows. Solve
-            // for the graph_h that makes cpu_h == right_stack_h — uncapped,
-            // so the graph soaks up ALL the height the right stack forces.
-            graph_h = std::max(2, right_stack_h - 3 - cores_rows);
+            // Classic split: the top band should FILL the space above a
+            // readable process table instead of collapsing to the compact
+            // stat-stack height (which left dead sky under the right column).
+            // Give the band all the height left after chrome + a min process
+            // table, capped so the table keeps a useful number of rows and the
+            // graph never balloons absurdly. cpu_h then drives both columns.
+            const int chrome = 2 + 3 + 1 + 2;   // header+verdict+footer + proc border
+            const int proc_min = 12;            // keep a usable process table
+            const int avail = m.height - chrome - proc_min;
+            // cpu_h = 3 + graph_h + cores_rows; solve graph_h from the band we
+            // want, but never below what the right stack forces (so the CPU
+            // column is at least as tall as MEM+NET+DISK compact).
+            const int want = std::max(avail, right_stack_h);
+            graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
         }
         const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
+
+        // ── Classic right column: 50 / 50 vertical split ──
+        // The CPU column on the left establishes the band height (cpu_h). The
+        // right column must fill that SAME height instead of leaving dead sky
+        // under DISK, so: MEMORY owns the TOP half, NETWORK + DISK share the
+        // BOTTOM half. Any height beyond each panel's fixed rows becomes a
+        // mountain graph, so all three panels carry a live trend and the
+        // column stacks to exactly the band with no trailing gap.
+        //   top half  = mem_fixed + mem_graph
+        //   bot half  = net_fixed + net_graph + disk_fixed + disk_graph
+        const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
+        const int rc_top_h    = rc_target / 2;                   // MEMORY half
+        const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
+        // A graph is only worth drawing with a few rows to breathe; below that
+        // the panel stays compact (legacy meter-only) and just grows to fill.
+        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
+        int rc_net_graph  = std::max(0, (rc_bot_h - net_h - disk_h) / 2);
+        int rc_disk_graph = std::max(0, rc_bot_h - net_h - disk_h - rc_net_graph);
+        if (rc_mem_graph  < 3) rc_mem_graph  = 0;
+        if (rc_net_graph  < 3) rc_net_graph  = 0;
+        if (rc_disk_graph < 3) rc_disk_graph = 0;
 
         // ── Wide 2-column body ──
         // On a big screen the whole thing flips: col 1 stacks EVERY stat panel
@@ -1368,11 +1403,14 @@ struct App {
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
-                  v(Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
-                    Element{DiskPanel{s.disks, s.disk_io, false}}
-                        | hit(ui::hit_band(ui::Detail::Disk))) | width(right_w)
-              ) | gap(gap_w)).build();
+                  v(Element{MemPanel{s.mem, rc_mem_graph}}
+                        | hit(ui::hit_band(ui::Detail::Mem)),
+                    Element{NetPanel{s.nets, rc_net_graph}}
+                        | hit(ui::hit_band(ui::Detail::Net)),
+                    Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
+                        | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
+                    | width(right_w)
+              ) | gap(gap_w) | height(rc_target)).build();
 
         return (v(
             Header{s, m.paused},
