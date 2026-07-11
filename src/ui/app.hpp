@@ -365,9 +365,11 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // Cap on processes carried from the sampler into the UI per tick. 400 is
-    // plenty for a fullscreen table + tree; the walk touches every pid anyway.
-    static constexpr int kTopN = 400;
+    // Cap on processes carried from the sampler into the UI per tick. 0 = keep
+    // EVERYTHING: the walk touches every pid anyway, the table windows/scrolls,
+    // and the flow tree needs full parentage (a truncated list orphans kids and
+    // hides processes on a Pid/Name sort). Memory cost of ~all procs is trivial.
+    static constexpr int kTopN = 0;
 
     // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
     // runs on a dedicated detached thread; when it finishes it dispatches a

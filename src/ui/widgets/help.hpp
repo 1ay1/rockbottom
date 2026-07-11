@@ -34,7 +34,7 @@ public:
         static const std::vector<Group> g = {
             {"PROCESSES", {
                 {"↑↓ j k", "select process"},
-                {"/", "filter by name or pid"},
+                {"/", "filter: name/pid, or user: state: port: cpu: mem: !neg"},
                 {"t", "toggle FLOW tree ↔ flat list"},
                 {"← →", "collapse / expand subtree (flow)"},
                 {"= / +", "collapse-all / expand-all (flow)"},

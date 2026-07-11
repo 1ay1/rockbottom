@@ -271,7 +271,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         return [](const ProcInfo& a, const ProcInfo& b){ return a.cpu > b.cpu; };
     };
     std::sort(out.begin(), out.end(), by(sort));
-    if (static_cast<int>(out.size()) > top_n) out.resize(static_cast<std::size_t>(top_n));
+    // top_n <= 0 means "keep everything" — the UI windows/scrolls and tree mode
+    // needs full parentage, so we no longer drop processes here.
+    if (top_n > 0 && static_cast<int>(out.size()) > top_n)
+        out.resize(static_cast<std::size_t>(top_n));
     snap.procs = std::move(out);
 }
 

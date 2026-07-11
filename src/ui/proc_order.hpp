@@ -22,6 +22,7 @@
 
 #include "../core/metrics.hpp"
 #include "../core/sampler.hpp"   // SortKey
+#include "proc_query.hpp"
 
 #include <algorithm>
 #include <set>
@@ -123,11 +124,11 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
     by_pid.reserve(all.size() * 2);
     for (const ProcInfo* p : all) by_pid[p->pid] = p;
 
-    // Match predicate: empty filter matches everything.
+    // Match predicate: the shared query language (name/pid substring plus
+    // user:/state:/port:/cpu:/mem: field terms, !negation, AND-combined).
+    // Empty filter matches everything.
     auto matches = [&](const ProcInfo* p) {
-        return filter.empty() ||
-               p->name.find(filter) != std::string::npos ||
-               std::to_string(p->pid).find(filter) != std::string::npos;
+        return proc_matches(*p, filter);
     };
 
     // Keep-set: every match PLUS every ancestor of a match (walk ppid links up
@@ -288,9 +289,7 @@ inline OrderedProcs order_procs(const std::vector<ProcInfo>& all,
     std::vector<const ProcInfo*> vis;
     vis.reserve(all.size());
     for (const auto& p : all) {
-        if (filter.empty() ||
-            p.name.find(filter) != std::string::npos ||
-            std::to_string(p.pid).find(filter) != std::string::npos)
+        if (proc_matches(p, filter))
             vis.push_back(&p);
     }
     return order_flat(std::move(vis), key, desc);

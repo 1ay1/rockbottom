@@ -68,6 +68,7 @@ public:
         } else if (filtering_) {
             parts.push_back((text(" filtering: ") | nowrap | fgc(pal::dim)).build());
             parts.push_back((text("/" + filter_ + "▌") | nowrap | Bold | fgc(pal::sky)).build());
+            parts.push_back((text("  user: state: port: cpu: mem: !neg") | nowrap | fgc(pal::faint)).build());
             parts.push_back(hint("enter", "apply"));
             parts.push_back(hint("esc", "clear"));
         } else {
