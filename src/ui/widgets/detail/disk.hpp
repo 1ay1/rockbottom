@@ -46,10 +46,16 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     b.push_back(section("FILESYSTEMS", pal::disk_ac,
                         std::to_string(static_cast<int>(s.disks.size())) + " mounted"));
     {
+        // Header columns MUST mirror the data-row layout below exactly, or the
+        // labels drift off their values. The data row is:
+        //   mount(16) · meter(grow) · pct(5) · free(9) · used/size(16) · inodes(7) · fs(10)
+        // so the header carries the same 7 slots — "usage" spans the meter,
+        // an empty slot sits over the pct column.
         auto col = [](const char* t) { return text(t) | nowrap | fgc(pal::dim); };
         b.push_back((h(
             col("mount") | width(16),
             col("usage") | grow(1),
+            col("") | width(5) | justify(Justify::End),
             col("free") | width(9) | justify(Justify::End),
             col("used / size") | width(16) | justify(Justify::End),
             col("inodes") | width(7) | justify(Justify::End),
