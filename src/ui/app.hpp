@@ -18,6 +18,7 @@
 #include <maya/maya.hpp>
 
 #include "../core/sampler.hpp"
+#include "../core/config.hpp"
 #include "state.hpp"
 #include "proc_order.hpp"
 #include "theme.hpp"
@@ -50,6 +51,12 @@
 namespace rockbottom {
 
 struct App {
+    // Boot configuration (CLI flags overlaid on the persisted file), set by
+    // main() before maya::run<App>. init() seeds the Model from it, and a clean
+    // quit writes the current view state back so the tool reopens as you left
+    // it. A function-local static keeps it out of a translation-unit global.
+    static Config& boot_config() { static Config c; return c; }
+
     struct Model {
         Snapshot snap;
         SortKey  sort = SortKey::Cpu;
@@ -348,6 +355,15 @@ struct App {
 
     static std::pair<Model, maya::Cmd<Msg>> init() {
         Model m;
+        // Seed the view from the boot config (CLI flags over the saved file):
+        // the sort column + direction, tree/flat, refresh cadence, and an
+        // optional startup filter all come back the way you left them.
+        const Config& cfg = boot_config();
+        m.sort       = cfg.sort;
+        m.sort_desc  = cfg.sort_desc;
+        m.tree       = cfg.tree;
+        m.refresh_ms = cfg.refresh_ms;
+        m.filter     = cfg.filter;
         // The very first sample runs synchronously: there is no event loop yet
         // to block, and the first frame should paint with real data instead of
         // an empty snapshot. Every sample AFTER this is a background effect.
@@ -363,6 +379,18 @@ struct App {
         // rockbottom opens on the flat sorted list — the fastest thing to read
         // at a glance; press t for the tree (which opens fully expanded).
         return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Write the current view state back to the config file on a clean exit, so
+    // the tool reopens the way you left it. Best-effort (never blocks quit).
+    static void save_config(const Model& m) {
+        Config c;
+        c.sort       = m.sort;
+        c.sort_desc  = m.sort_desc;
+        c.tree       = m.tree;
+        c.refresh_ms = m.refresh_ms;
+        c.filter     = m.filter;
+        c.save();
     }
 
     // Cap on processes carried from the sampler into the UI per tick. 0 = keep
@@ -420,7 +448,7 @@ struct App {
             [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
             [&](Key k)    { return on_key(std::move(m), k.ev); },
             [&](Mouse mo) { return on_mouse(std::move(m), mo.ev); },
-            [&](Quit)     { return std::pair{std::move(m), C::quit()}; },
+            [&](Quit)     { save_config(m); return std::pair{std::move(m), C::quit()}; },
         }, msg);
     }
 
@@ -615,6 +643,7 @@ struct App {
         // 4. Normal mode.
         if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
             if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; return {std::move(m), C{}}; }
+            save_config(m);
             return {std::move(m), C::quit()};
         }
         if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {std::move(m), C{}}; }
