@@ -47,6 +47,12 @@ struct OrderedProcs {
     // folded parent still shows what its hidden children are costing.
     std::vector<double>          sub_cpu;
     std::vector<double>          sub_mem;
+    // FLOW TREE: sib_share is this node's subtree-CPU as a fraction of the
+    // BUSIEST sibling's subtree-CPU (0..1) — the "which child is the hog" signal
+    // rendered as a weight-gutter bar at every branch. depth is the tree depth
+    // (0 = root) so the renderer can heat-grade rails by how deep the flow runs.
+    std::vector<double>          sib_share;
+    std::vector<int>             depth;
     bool                         tree = false;
 };
 
@@ -201,12 +207,27 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
         }
     }
 
+    // FLOW TREE: for each sibling group (roots + each parent's kids) find the
+    // busiest subtree so a node's bar reads as its share of the heaviest
+    // sibling — the dominant child at every branch is full-height.
+    std::unordered_map<int, double> group_max_cpu;   // keyed by parent pid (0 = roots)
+    {
+        double rmax = 0;
+        for (const ProcInfo* r : roots) rmax = std::max(rmax, sub_cpu[r->pid]);
+        group_max_cpu[0] = rmax;
+        for (auto& [ppid, v] : kids) {
+            double mx = 0;
+            for (const ProcInfo* c : v) mx = std::max(mx, sub_cpu[c->pid]);
+            group_max_cpu[ppid] = mx;
+        }
+    }
+
     // Pre-order emit with an explicit stack, carrying the running prefix and
     // whether each node is the last of its siblings (for └─ vs ├─).
-    struct Frame { const ProcInfo* node; std::string prefix; bool last; int depth; };
+    struct Frame { const ProcInfo* node; std::string prefix; bool last; int depth; int parent; };
     std::vector<Frame> st;
     for (std::size_t i = roots.size(); i-- > 0;)
-        st.push_back({roots[i], "", i + 1 == roots.size(), 0});
+        st.push_back({roots[i], "", i + 1 == roots.size(), 0, 0});
 
     while (!st.empty()) {
         Frame f = std::move(st.back()); st.pop_back();
@@ -221,6 +242,10 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
         if (f.depth > 0)
             row_prefix = f.prefix + (f.last ? "└─ " : "├─ ");
 
+        // Sibling share: this subtree's cpu vs the busiest sibling's (0..1).
+        double gmax = group_max_cpu.count(f.parent) ? group_max_cpu[f.parent] : 0;
+        double share = gmax > 0.01 ? std::clamp(sub_cpu[node->pid] / gmax, 0.0, 1.0) : 0.0;
+
         out.procs.push_back(node);
         out.prefix.push_back(row_prefix);
         out.has_kids.push_back(kids_exist);
@@ -229,6 +254,8 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
         out.context.push_back(!is_match[node->pid]);
         out.sub_cpu.push_back(sub_cpu[node->pid]);
         out.sub_mem.push_back(sub_mem[node->pid]);
+        out.sib_share.push_back(share);
+        out.depth.push_back(f.depth);
 
         if (kids_exist && !is_collapsed) {
             // Children inherit this node's rail: a vertical bar if we're not
@@ -238,7 +265,7 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
                 : "";
             const auto& cv = k->second;
             for (std::size_t i = cv.size(); i-- > 0;)
-                st.push_back({cv[i], child_prefix, i + 1 == cv.size(), f.depth + 1});
+                st.push_back({cv[i], child_prefix, i + 1 == cv.size(), f.depth + 1, node->pid});
         }
     }
 

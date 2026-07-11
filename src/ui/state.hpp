@@ -90,6 +90,7 @@ struct ProcView {
     std::vector<bool> context_row;    // kept only as ancestor of a match → dim
     std::vector<double> sub_cpu;      // subtree CPU% rollup (self + descendants)
     std::vector<double> sub_mem;      // subtree RSS-bytes rollup
+    std::vector<double> sib_share;    // flow tree: cpu share vs busiest sibling (0..1)
     int follow_pid = 0;               // PID locked with * (badge in the chip)
 };
 

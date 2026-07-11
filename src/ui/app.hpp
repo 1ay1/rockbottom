@@ -1142,6 +1142,7 @@ struct App {
             .context_row  = ord.context,
             .sub_cpu      = ord.sub_cpu,
             .sub_mem      = ord.sub_mem,
+            .sib_share    = ord.sib_share,
             .follow_pid   = m.follow_pid,
         };
 

@@ -139,7 +139,7 @@ public:
         // Chip: filter beats sort in relevance when active; tree/follow/dir
         // badges make the current view state legible at a glance.
         const char* arrow = view_.sort_desc ? "▼" : "▲";
-        std::string mode = view_.tree ? "tree" : ("sort " + sort_label() + arrow);
+        std::string mode = view_.tree ? "flow" : ("sort " + sort_label() + arrow);
         std::string chip = view_.filtering ? "/" + view_.filter + "▌"
                          : !view_.filter.empty() ? "/" + view_.filter + " · " + mode
                          : mode + " · " + std::to_string(n);
@@ -389,60 +389,75 @@ private:
                 std::vector<StyledRun> runs;
                 const std::size_t budget = static_cast<std::size_t>(name_w);
 
-                // Tree guide + collapse chevron (tree mode only).
+                // ══ THE FLOW TREE ═══════════════════════════════════════════
+                // A radically different tree: instead of dead box-drawing
+                // guides, the hierarchy's connective tissue CARRIES DATA.
+                //  1. Weight gutter (1 cell): a block glyph sized by this
+                //     node's CPU share among its siblings and colored on the
+                //     load ramp — the busiest child at EVERY branch stands tall
+                //     and bright, so you see which sibling dominates without
+                //     reading a number or expanding anything.
+                //  2. Heat-graded rails: the ├─ └─ │ guides are tinted by the
+                //     subtree CPU flowing through that branch — the rail glows
+                //     warm where load lives, so the eye follows the bright line
+                //     straight down to the hog. The tree becomes a live heatmap.
                 bool tree_row = view_.tree && idx >= 0 &&
                                 idx < static_cast<int>(view_.tree_prefix.size());
                 if (tree_row) {
-                    std::string guide = view_.tree_prefix[static_cast<std::size_t>(idx)];
+                    const std::size_t I = static_cast<std::size_t>(idx);
+                    std::string guide = view_.tree_prefix[I];
                     const bool kids = idx < static_cast<int>(view_.has_kids.size())
-                                      && view_.has_kids[static_cast<std::size_t>(idx)];
+                                      && view_.has_kids[I];
                     const bool folded = idx < static_cast<int>(view_.collapsed_row.size())
-                                        && view_.collapsed_row[static_cast<std::size_t>(idx)];
-                    // Guide rails first, in quiet ink (structure, not signal).
-                    Color guide_c = selected ? mix(pal::proc_ac, pal::white, 0.3)
-                                             : mix(pal::dim, pal::bg_panel, 0.2);
-                    if (!guide.empty()) {
+                                        && view_.collapsed_row[I];
+                    const double share = idx < static_cast<int>(view_.sib_share.size())
+                                         ? view_.sib_share[I] : 0.0;
+                    const double scpu = idx < static_cast<int>(view_.sub_cpu.size())
+                                        ? view_.sub_cpu[I] : 0.0;
+
+                    // Heat of this branch: subtree CPU on the load ramp, with a
+                    // dim floor so idle branches recede to structure.
+                    const bool warm = scpu >= 0.5;
+                    Color heat = warm
+                        ? lift(load_color(std::clamp(scpu / 100.0, 0.0, 1.0)))
+                        : (selected ? mix(pal::label, pal::white, 0.2)
+                                    : mix(pal::dim, pal::bg_panel, 0.25));
+
+                    // (1) Weight gutter — always one cell, even at the root, so
+                    // every row shares a left edge and the bars form a column.
+                    static const char* kW[] = {"▁","▂","▃","▄","▅","▆","▇","█"};
+                    int wl = std::clamp(static_cast<int>(share * 7.999), 0, 7);
+                    std::string gut = kW[wl];
+                    Color gut_c = warm ? heat
+                                       : (selected ? pal::label
+                                                   : mix(pal::dim, pal::bg_panel, 0.4));
+                    if (content.size() + gut.size() <= budget) {
+                        runs.push_back({content.size(), gut.size(),
+                                        warm && scpu > 40 ? Style{}.with_fg(gut_c).with_bold()
+                                                          : Style{}.with_fg(gut_c)});
+                        content += gut;
+                    }
+                    if (content.size() < budget) content += " ";
+
+                    // (2) Heat-graded rails: emit the accumulated guide, tinted
+                    // by this branch's heat rather than a dead gray.
+                    if (!guide.empty() && content.size() < budget) {
                         std::string g = guide;
-                        clip_bytes(g, budget);
-                        runs.push_back({0, g.size(), Style{}.with_fg(guide_c)});
+                        clip_bytes(g, budget - content.size());
+                        runs.push_back({content.size(), g.size(), Style{}.with_fg(heat)});
                         content += g;
                     }
-                    // ── The ACTIVITY RAIL ──────────────────────────────────
-                    // A COLLAPSED parent's fold marker is not a dead chevron:
-                    // it's a heat cell whose block-glyph HEIGHT and COLOR track
-                    // the rolled-up CPU of everything hidden beneath it. Scan
-                    // the column and the tall, bright marks are exactly where
-                    // the machine's work is buried — you read the load before
-                    // you ever expand a subtree. No other monitor does this.
+
+                    // (3) Chevron for foldable nodes, in the branch heat; the
+                    // collapsed marker doubles as "work is hiding here".
                     if (kids && content.size() < budget) {
-                        std::string mark;
-                        Style mst;
-                        if (folded) {
-                            // subtree CPU rollup (this row already carries it).
-                            double sc = idx < static_cast<int>(view_.sub_cpu.size())
-                                        ? view_.sub_cpu[static_cast<std::size_t>(idx)] : 0.0;
-                            static const char* kBlocks[] =
-                                {"▁","▂","▃","▄","▅","▆","▇","█"};
-                            // 0..~1 core saturates the ramp; log-ish knee so a
-                            // little activity is already visible.
-                            double t = std::clamp(sc / 80.0, 0.0, 1.0);
-                            int lvl = std::clamp(static_cast<int>(t * 7.999), 0, 7);
-                            const bool idle = sc < 0.5;
-                            mark = idle ? "▁ " : std::string(kBlocks[lvl]) + " ";
-                            Color hc = idle
-                                ? (selected ? pal::label : mix(pal::dim, pal::bg_panel, 0.35))
-                                : lift(load_color(std::clamp(sc / 100.0, 0.0, 1.0)));
-                            mst = Style{}.with_fg(hc);
-                            if (!idle && sc > 40) mst = mst.with_bold();
-                        } else {
-                            mark = "▾ ";
-                            mst = Style{}.with_fg(guide_c);
-                        }
-                        std::string mk = mark;
-                        clip_bytes(mk, budget - content.size());
-                        if (!mk.empty()) {
-                            runs.push_back({content.size(), mk.size(), mst});
-                            content += mk;
+                        std::string chev = folded ? "▸ " : "▾ ";
+                        clip_bytes(chev, budget - content.size());
+                        if (!chev.empty()) {
+                            runs.push_back({content.size(), chev.size(),
+                                            warm ? Style{}.with_fg(heat).with_bold()
+                                                 : Style{}.with_fg(heat)});
+                            content += chev;
                         }
                     }
                 }
