@@ -104,19 +104,39 @@ public:
             ) | gap(1)).build());
         } else {
         // Meter grid: cols_ equal columns, one line each. A clean number +
-        // right-aligned % + a meter that fills the column. No spark fragments,
-        // no dark groove blocks dominating idle cores.
+        // right-aligned % + a meter that fills the column, and — like the
+        // MEM/NET/DISK panels — a load-graded history SPARKLINE trailing the
+        // meter so every core shows its recent trend, not just a static bar.
         const int per_col = (n + cols_ - 1) / cols_;
         auto cell = [&](int i) -> Element {
             const CpuCore& c = cpu_.cores[static_cast<std::size_t>(i)];
             const double f = c.usage.v;
             char id[8];
             std::snprintf(id, sizeof id, "%2d", i);
-            return (h(
-                text(id) | nowrap | fgc(pal::cpu_ac) | w_<3>,
-                text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>,
-                Element{Meter{f}.fill().groove(false)} | grow(1)
-            ) | gap(1)).build();
+            std::string id_s = id;
+            // Copy the ring so the spark owns its data for the frame.
+            std::array<float, 48> hist = c.history;
+            const int hl = c.hist_len;
+            const Color spark_c = f < 0.03 ? mix(load_color(f), pal::bg_panel, 0.45)
+                                           : load_color(f);
+            return Element{ComponentElement{
+                .render = [=](int w, int) -> Element {
+                    // id(3) + % (4) + gaps; split the rest between meter and
+                    // spark. Only draw the spark when the column is wide
+                    // enough that both stay legible.
+                    const int fixed = 3 + 4 + 2;      // labels + gaps
+                    const int slack = std::max(0, w - fixed);
+                    const bool show_spark = slack >= 14;
+                    const int spark_w = show_spark ? slack / 3 : 0;
+                    std::vector<Element> cc;
+                    cc.push_back((text(id_s) | nowrap | fgc(pal::cpu_ac) | w_<3>).build());
+                    cc.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>).build());
+                    cc.push_back(Element{Meter{f}.fill().groove(false)} | grow(1));
+                    if (show_spark)
+                        cc.push_back(Spark{hist.data(), hl}.cells(spark_w)
+                                         .color(spark_c).baseline(true).build_fixed());
+                    return (h(std::move(cc)) | gap(1)).build();
+                }}};
         };
         for (int r = 0; r < per_col; ++r) {
             std::vector<Element> line;
