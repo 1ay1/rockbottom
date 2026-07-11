@@ -1254,22 +1254,24 @@ struct App {
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
 
-        // ── Classic right column: MEMORY compact, NETWORK gets the height ──
-        // The CPU column on the left establishes the band height (rc_target).
-        // The right column must fill that same height instead of leaving dead
-        // sky under DISK. MEMORY carries only a SHORT trend (a mem line is
-        // slow-moving — a tall one is empty sky); the bulk of the surplus goes
-        // to NETWORK (bursty, the most interesting trend), with DISK taking a
-        // moderate slice. All three still stack to exactly the band.
+        // ── Classic right column: strict 50 / 50 split ──
+        // The CPU column establishes the band height (rc_target). The right
+        // column fills exactly that height in two equal halves:
+        //   TOP half  (50%) = MEMORY
+        //   BOT half  (50%) = NETWORK + DISK  (NETWORK gets the bulk — its
+        //                     bursty trend is the interesting one; DISK a
+        //                     moderate slice under it)
+        // Every surplus row becomes a mountain graph so both halves fill with
+        // no dead sky and the column stacks to exactly the band.
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
-        const int rc_surplus  = std::max(0, rc_target - mem_h - net_h - disk_h);
-        // MEMORY: a small capped graph (slow signal, no need for a tall sky).
-        int rc_mem_graph  = std::min(rc_surplus, 5);
-        // DISK: a moderate slice of what's left after MEM.
-        int rc_disk_graph = std::min(std::max(0, rc_surplus - rc_mem_graph), 6);
-        // NETWORK: the LION'S SHARE — all remaining surplus so its bursty trend
-        // reads clearly and the column stacks to exactly the band.
-        int rc_net_graph  = std::max(0, rc_surplus - rc_mem_graph - rc_disk_graph);
+        const int rc_top_h    = rc_target / 2;                   // MEMORY half
+        const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
+        // MEMORY graph fills the whole top half above its meter rows.
+        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
+        // Bottom half: DISK a moderate slice, NETWORK the remainder (tall).
+        const int rc_bot_surplus = std::max(0, rc_bot_h - net_h - disk_h);
+        int rc_disk_graph = std::min(rc_bot_surplus, 6);
+        int rc_net_graph  = std::max(0, rc_bot_surplus - rc_disk_graph);
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
         if (rc_disk_graph < 3) rc_disk_graph = 0;
@@ -1403,11 +1405,12 @@ struct App {
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
                   v(Element{MemPanel{s.mem, rc_mem_graph}}
-                        | hit(ui::hit_band(ui::Detail::Mem)),
-                    Element{NetPanel{s.nets, rc_net_graph}}
-                        | hit(ui::hit_band(ui::Detail::Net)),
-                    Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
-                        | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
+                        | height(rc_top_h) | hit(ui::hit_band(ui::Detail::Mem)),
+                    v(Element{NetPanel{s.nets, rc_net_graph}}
+                          | hit(ui::hit_band(ui::Detail::Net)),
+                      Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
+                          | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
+                        | height(rc_bot_h))
                     | width(right_w)
               ) | gap(gap_w) | height(rc_target)).build();
 
