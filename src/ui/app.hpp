@@ -1268,9 +1268,15 @@ struct App {
         const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
         // MEMORY graph fills the whole top half above its meter rows.
         int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
-        // Bottom half: DISK a moderate slice, NETWORK the remainder (tall).
+        // Bottom half: NETWORK gets the BULK (bursty, the interesting trend),
+        // DISK a small capped slice under it. grow() lives on NETWORK so any
+        // leftover (or a zeroed DISK graph) inflates the network mountain,
+        // never the disk one.
         const int rc_bot_surplus = std::max(0, rc_bot_h - net_h - disk_h);
-        int rc_disk_graph = std::min(rc_bot_surplus, 6);
+        // DISK keeps only a small slice (its I/O is spikier but rarer); give it
+        // AT MOST a third of the surplus, capped at 4 rows. NETWORK claims
+        // everything else so its mountain fills the bottom half.
+        int rc_disk_graph = std::min({rc_bot_surplus / 3, 4});
         int rc_net_graph  = std::max(0, rc_bot_surplus - rc_disk_graph);
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
