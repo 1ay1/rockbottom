@@ -1315,15 +1315,15 @@ struct App {
             const int disk_fixed = disk_h;               // border + I/O + mounts
             const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
             int graph_pool = std::max(8, band_h - all_fixed);
-            // A graph reads best at a MODERATE height. Give EVERY graph a
-            // capped, comfortable height — CPU is the headline so it's a little
-            // taller, but it must NOT balloon to fill a tall screen (a 7% line
-            // over 30 rows is unreadable). Any height the caps don't consume
-            // becomes a small trailing gap under DISK, which is fine.
-            int mem_graph_h  = std::clamp(graph_pool / 5, 4, 7);
-            int net_graph_h  = std::clamp(graph_pool / 5, 4, 7);
-            int disk_graph_h = std::clamp(graph_pool / 5, 4, 8);
-            int cpu_graph_h  = std::clamp(graph_pool / 4, 6, 12);
+            // HEIGHT-RESPONSIVE + gap-free. The graphs are CAPPED at readable
+            // heights (a 10% line over 30 rows is unreadable), scaling down on
+            // a short screen. Whatever height the caps don't consume is handed
+            // to the LAST panel (disk) via grow(1) below, so col 1 always fills
+            // the band exactly — no dead gap under DISK, no ballooning CPU.
+            int cpu_graph_h  = std::clamp(graph_pool * 30 / 100, 5, 10);
+            int mem_graph_h  = std::clamp(graph_pool * 20 / 100, 4, 7);
+            int net_graph_h  = std::clamp(graph_pool * 20 / 100, 4, 7);
+            int disk_graph_h = std::clamp(graph_pool * 20 / 100, 4, 7);
             const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
@@ -1331,8 +1331,11 @@ struct App {
                     | hit(ui::hit_band(ui::Detail::Cpu)),
                 Element{MemPanel{s.mem, mem_graph_h}}  | hit(ui::hit_band(ui::Detail::Mem)),
                 Element{NetPanel{s.nets, net_graph_h}} | hit(ui::hit_band(ui::Detail::Net)),
+                // Disk grows to absorb leftover band height so col 1 is
+                // gap-free without any graph ballooning; the slack lands as
+                // quiet space inside the DISK box, below its mounts.
                 Element{DiskPanel{s.disks, s.disk_io, false, disk_graph_h}}
-                    | hit(ui::hit_band(ui::Detail::Disk))
+                    | grow(1) | hit(ui::hit_band(ui::Detail::Disk))
             ).build();
 
             Element body = (h(
