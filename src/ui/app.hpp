@@ -1260,24 +1260,21 @@ struct App {
         // strict 50 / 50.
         //   TOP half (50%) = MEMORY
         //   BOT half (50%) = NETWORK + DISK
+        // Bias the split so the bottom (NET+DISK) half is TALLER than the top
+        // (MEMORY) half: this keeps the NETWORK mountain bigger than the memory
+        // one WHILE both halves fill completely (no dead space). MEM gets ~40%
+        // of the band, NET+DISK ~60%.
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
-        const int rc_top_h    = rc_target / 2;                   // MEMORY half
-        const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
-        // Each half FILLS with its graph. Deliberately keep the MEMORY graph
-        // SHORTER than the NETWORK graph: memory is a slow-moving line (a tall
-        // one is mostly empty sky), while network is bursty and rewards the
-        // height. So cap MEM's graph and let NET take the taller mountain.
-        //   MEM graph  = top half minus meters, but CAPPED so it stays modest
+        const int rc_top_h    = std::max(mem_h, rc_target * 40 / 100);  // MEMORY half
+        const int rc_bot_h    = rc_target - rc_top_h;                   // NET+DISK half
+        // Each half FILLS with its graph — no caps, no dead space:
+        //   MEM graph  = top half minus MEM's meter rows (fills the top half)
         //   DISK graph = a small slice of the bottom half
-        //   NET graph  = the rest of the bottom half (always the tallest)
-        int rc_mem_graph  = std::min(std::max(0, rc_top_h - mem_h), 6);
+        //   NET graph  = the rest of the bottom half (the tallest mountain)
+        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
         const int bot_spare = std::max(0, rc_bot_h - net_h - disk_h);
         int rc_disk_graph = std::min({bot_spare / 4, 4});
         int rc_net_graph  = std::max(0, bot_spare - rc_disk_graph);
-        // Guarantee NET > MEM: if the bottom half didn't leave NET taller than
-        // the (capped) MEM graph, shrink MEM until it does.
-        if (rc_net_graph <= rc_mem_graph)
-            rc_mem_graph = std::max(0, rc_net_graph - 2);
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
         if (rc_disk_graph < 3) rc_disk_graph = 0;
@@ -1418,14 +1415,19 @@ struct App {
                   // height maya actually lays the column out at. The graph row
                   // counts (rc_*_graph) are only an ESTIMATE of each half's
                   // interior; grow enforces the split regardless.
+                  // Weighted grow splits the band's REAL height 40 / 60
+                  // (MEM / NET+DISK) — matching the graph row estimates below
+                  // — so the NETWORK mountain is bigger than MEMORY's while
+                  // both halves fill with no dead space. maya distributes free
+                  // space by grow weight, integer-remainder-safe, at any size.
                   v(v(Element{MemPanel{s.mem, rc_mem_graph}}
                           | hit(ui::hit_band(ui::Detail::Mem)))
-                        | grow(1),
+                        | grow(40),
                     v(Element{NetPanel{s.nets, rc_net_graph}}
                           | hit(ui::hit_band(ui::Detail::Net)),
                       Element{DiskPanel{s.disks, s.disk_io, false, rc_disk_graph}}
                           | grow(1) | hit(ui::hit_band(ui::Detail::Disk)))
-                        | grow(1))
+                        | grow(60))
                     | width(right_w)
               ) | gap(gap_w) | height(rc_target)).build();
 
