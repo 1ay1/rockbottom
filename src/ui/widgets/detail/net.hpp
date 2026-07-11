@@ -88,16 +88,25 @@ inline Element conn_row(const Connection& c, const ConnCols& cols, bool with_pro
 
 inline Element conn_header(const ConnCols& cols, bool with_proto) {
     using namespace maya; using namespace maya::dsl;
+    // A real table header: bold, accent-tinted labels sitting on a subtle
+    // header bar so the column titles read as a heading, not another data row.
+    const Color hc  = mix(pal::net_ac, pal::text, 0.15);   // bright accent label
+    const Color bar = mix(pal::bg_panel, pal::net_ac, 0.14); // header-row tint
+    auto col = [&](const char* label, int w, bool grow_it = false) {
+        auto e = text(label) | nowrap | Bold | fgc(hc);
+        return grow_it ? (std::move(e) | grow(1)).build()
+                       : (std::move(e) | width(w)).build();
+    };
     std::vector<Element> hdr;
     if (with_proto)
-        hdr.push_back((text("  proto") | nowrap | fgc(pal::faint) | width(cols.indent)).build());
+        hdr.push_back(col("PROTO", cols.indent));
     else
         hdr.push_back((text("  ") | nowrap | width(cols.indent)).build());
-    hdr.push_back((text("local") | nowrap | fgc(pal::faint) | width(cols.la)).build());
-    hdr.push_back((text("remote") | nowrap | fgc(pal::faint) | width(cols.ra)).build());
-    hdr.push_back((text("state") | nowrap | fgc(pal::faint) | width(cols.st)).build());
-    hdr.push_back((text("process") | nowrap | fgc(pal::faint) | grow(1)).build());
-    return (h(std::move(hdr)) | gap(1)).build();
+    hdr.push_back(col("LOCAL", cols.la));
+    hdr.push_back(col("REMOTE", cols.ra));
+    hdr.push_back(col("STATE", cols.st));
+    hdr.push_back(col("PROCESS", 0, /*grow_it=*/true));
+    return ((h(std::move(hdr)) | gap(1)) | bgc(bar)).build();
 }
 
 inline std::string conn_summary(const Snapshot& s, int& established, int& listen) {
