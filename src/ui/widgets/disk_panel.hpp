@@ -162,9 +162,13 @@ public:
                         const bool show_fs  = w >= 44;
                         const bool show_cap = w >= 32;
                         const bool show_pct = w >= 20;
-                        const int fsw = static_cast<int>(fs.size()) + 2;
+                        // Fixed fstype cell width so EVERY row's meter has the
+                        // same width and the capacity/badge columns hang on one
+                        // rail — a per-row fsw (btrfs=7 vs vfat=6) made each
+                        // meter a different length and the whole block ragged.
+                        const int fs_cell = 8;   // "[btrfs]" etc, padded
                         int used = 8 + (show_pct ? 9 + 1 : 0)
-                                 + (show_cap ? 12 + 1 : 0) + (show_fs ? fsw + 1 : 0) + 1;
+                                 + (show_cap ? 12 + 1 : 0) + (show_fs ? fs_cell + 1 : 0) + 1;
                         int mw = std::max(4, w - used);
                         std::vector<Element> cols;
                         cols.push_back((text(mnt) | nowrap | fgc(pal::disk_ac) | w_<8>).build());
@@ -176,7 +180,7 @@ public:
                             cols.push_back((text(cap) | nowrap | fgc(pal::text)
                                             | w_<12> | justify(Justify::End)).build());
                         if (show_fs)
-                            cols.push_back(fs_badge());
+                            cols.push_back(fs_badge() | width(fs_cell) | justify(Justify::End));
                         return (h(std::move(cols)) | gap(1)).build();
                     },
                 }};
