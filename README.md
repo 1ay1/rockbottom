@@ -223,6 +223,13 @@ mutations, the kind of clean code that would make your therapist proud:
 | App | `src/ui/app.hpp` | `Model` + `Msg` + `update` + a pure `view` |
 | Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
 
+No pane hand-counts breakpoints. Every layout is *measured*: maya's responsive
+toolkit (`fit_row` sheds the header down as it narrows, `solve_columns` keeps the
+process table's header and rows on one width plan, `fill` sizes each graph to
+exactly the height left over) means the thing measured is the thing drawn — so
+nothing drifts off its rail at some cursed terminal width. See maya's
+[Responsive Layouts](third_party/maya/docs/15-responsive.md) guide.
+
 `update()` ticks once a second like a very calm heartbeat. `view()` is a pure
 function of the state. The sampler remembers the last sample, so every rate is a
 real delta and not a wild guess. It's genuinely tidy in here. Please take your
