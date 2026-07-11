@@ -155,6 +155,11 @@ private:
         // The number keys switch domain, so render them as what they are: a
         // TAB BAR. The pane you're in is lit in its own accent + underline;
         // the rest sit quiet, so "where am I / where can I go" is one glance.
+        //
+        // Responsive via maya pick() (ViewThatFits): the same bar is built at
+        // three densities — glyph chips + labels, keys + labels tightened,
+        // keys only — and the first whose MEASURED width fits the pane
+        // renders. No breakpoints; a renamed tab re-decides by itself.
         struct Tab { Detail d; const char* key; const char* glyph; const char* label; maya::Color ac; };
         const Tab tabs[] = {
             {Detail::Cpu,  "1", "◈", "cpu",  pal::cpu_ac},
@@ -165,34 +170,49 @@ private:
             {Detail::Proc, "6", "≡", "proc", pal::proc_ac},
         };
         const bool scrollable = content_rows() > viewport_rows();
-        std::vector<Element> row;
-        row.push_back((text(" esc") | nowrap | Bold | fgc(pal::sky)).build());
-        row.push_back((text("·back") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text("   ") | nowrap).build());
-        for (const Tab& t : tabs) {
-            const bool on = which_ == t.d;
-            if (on) {
-                // The pane you're IN is a solid chip — dark ink on the tab's
-                // accent — the same idiom as the footer's status chips. One
-                // filled block among quiet labels is unmissable at a glance,
-                // where underline+color alone read as just another hint.
-                row.push_back((text(" " + std::string(t.glyph) + " " + t.key + " " + t.label + " ")
-                               | nowrap | Bold | fgc(pal::bg) | bgc(t.ac)
-                               | hit(hit_tab(t.d))).build());
-            } else {
-                row.push_back((h(
-                    text(t.key) | nowrap | Bold | fgc(pal::sky),
-                    text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)
-                ) | hit(hit_tab(t.d))).build());
+
+        // density 2 = chips + labels · 1 = tighter, keys + labels · 0 = keys.
+        auto bar = [&](int density) -> Element {
+            const char* pad = density == 2 ? "   " : density == 1 ? "  " : " ";
+            std::vector<Element> row;
+            row.push_back((text(" esc") | nowrap | Bold | fgc(pal::sky)).build());
+            if (density > 0)
+                row.push_back((text("·back") | nowrap | fgc(pal::dim)).build());
+            row.push_back((text(pad) | nowrap).build());
+            for (const Tab& t : tabs) {
+                const bool on = which_ == t.d;
+                if (on) {
+                    // The pane you're IN is a solid chip — dark ink on the
+                    // tab's accent, the footer status-chip idiom. One filled
+                    // block among quiet labels is unmissable at a glance.
+                    std::string chip = density == 2
+                        ? " " + std::string(t.glyph) + " " + t.key + " " + t.label + " "
+                        : density == 1
+                        ? " " + std::string(t.key) + " " + t.label + " "
+                        : " " + std::string(t.key) + " ";
+                    row.push_back((text(std::move(chip))
+                                   | nowrap | Bold | fgc(pal::bg) | bgc(t.ac)
+                                   | hit(hit_tab(t.d))).build());
+                } else if (density > 0) {
+                    row.push_back((h(
+                        text(t.key) | nowrap | Bold | fgc(pal::sky),
+                        text(" " + std::string(t.label)) | nowrap | fgc(pal::dim)
+                    ) | hit(hit_tab(t.d))).build());
+                } else {
+                    row.push_back((text(t.key) | nowrap | Bold | fgc(pal::sky)
+                                   | hit(hit_tab(t.d))).build());
+                }
+                row.push_back((text(pad) | nowrap).build());
             }
-            row.push_back((text("   ") | nowrap).build());
-        }
-        if (scrollable) {
-            row.push_back((Element{blank()} | grow(1)).build());
-            row.push_back((text("↑↓") | nowrap | Bold | fgc(pal::sky)).build());
-            row.push_back((text("·scroll") | nowrap | fgc(pal::dim)).build());
-        }
-        return (h(std::move(row))).build();
+            if (scrollable && density == 2) {
+                row.push_back((Element{blank()} | grow(1)).build());
+                row.push_back((text("↑↓") | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text("·scroll") | nowrap | fgc(pal::dim)).build());
+            }
+            return (h(std::move(row))).build();
+        };
+
+        return (v(pick({bar(2), bar(1), bar(0)}))).build();
     }
 
     // In-pane kill confirmation — the same y/n contract the process table uses,

@@ -1375,12 +1375,12 @@ struct App {
         }
 
         Element top = narrow
-            ? (v(Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
-                     | hit(ui::hit_band(ui::Detail::Cpu)),
-                 Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
-                 Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
-                 Element{DiskPanel{s.disks, s.disk_io, false}}
-                     | hit(ui::hit_band(ui::Detail::Disk)))).build()
+            ? col({Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
+                       | hit(ui::hit_band(ui::Detail::Cpu)),
+                   Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
+                   Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
+                   Element{DiskPanel{s.disks, s.disk_io, false}}
+                       | hit(ui::hit_band(ui::Detail::Disk))})
             : (h(
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),

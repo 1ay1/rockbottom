@@ -224,7 +224,9 @@ mutations, the kind of clean code that would make your therapist proud:
 | Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
 
 No pane hand-counts breakpoints. Every layout is *measured*: maya's responsive
-toolkit (`fit_row` sheds the header down as it narrows, `solve_columns` keeps the
+toolkit (`fit_row` sheds the header **and** the footer hints down as they
+narrow, `pick` re-renders the detail tab bar at the richest density that
+actually fits, `col` stacks the narrow-mode stat band, `solve_columns` keeps the
 process table's header and rows on one width plan, `fill` sizes each graph to
 exactly the height left over) means the thing measured is the thing drawn — so
 nothing drifts off its rail at some cursed terminal width. See maya's

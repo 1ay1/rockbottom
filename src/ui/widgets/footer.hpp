@@ -1,5 +1,11 @@
 // widgets/footer.hpp — key hints strip, live indicator, toast notifications,
 // and context-sensitive hints (filter mode / kill pending).
+//
+// Responsive: the strip is a maya fit_row — every hint carries a `keep` rank
+// and the row measures its REAL styled fragments, shedding the lowest rank
+// first as the terminal narrows. Wide shows everything; narrow keeps the
+// hints that matter (q·quit, x·end, /·filter, ?·help) and the status chip.
+// Nothing ever clips mid-glyph, and no hand-summed widths can drift.
 
 #pragma once
 
@@ -54,41 +60,50 @@ public:
             return (text(" │") | nowrap | fgc(pal::faint)).build();
         };
 
-        std::vector<Element> parts;
+        // The strip is a fit_row: each hint carries a `keep` rank and the
+        // lowest rank sheds first when the measured row doesn't fit. The
+        // separators go first (rank 1), then the label-only niceties, and
+        // the strip degrades to q · x · / · ? + the status chip before
+        // anything essential is touched. Modal strips (kill / filter) keep
+        // their prompt + confirm keys always; only their helper text sheds.
+        std::vector<FitItem> parts;
 
         if (pending_) {
-            parts.push_back((text(" send ") | nowrap | fgc(pal::dim)).build());
-            parts.push_back((text(sig_name(pending_->sig)) | nowrap | Bold | fgc(pal::hot)).build());
-            parts.push_back((text(" to " + pending_->name +
+            parts.push_back({(text(" send ") | nowrap | fgc(pal::dim)).build()});
+            parts.push_back({(text(sig_name(pending_->sig)) | nowrap | Bold | fgc(pal::hot)).build()});
+            parts.push_back({(text(" to " + pending_->name +
                                   (pending_->pids.size() > 1
                                        ? " ×" + std::to_string(pending_->pids.size()) : "") + "? ")
-                             | nowrap | fgc(pal::label)).build());
-            parts.push_back(hint("y", "confirm"));
-            parts.push_back(hint("n", "cancel"));
+                             | nowrap | fgc(pal::label)).build()});
+            parts.push_back({hint("y", "confirm")});
+            parts.push_back({hint("n", "cancel")});
         } else if (filtering_) {
-            parts.push_back((text(" filtering: ") | nowrap | fgc(pal::dim)).build());
-            parts.push_back((text("/" + filter_ + "▌") | nowrap | Bold | fgc(pal::sky)).build());
-            parts.push_back((text("  user: state: port: cpu: mem: !neg") | nowrap | fgc(pal::faint)).build());
-            parts.push_back(hint("enter", "apply"));
-            parts.push_back(hint("esc", "clear"));
+            parts.push_back({(text(" filtering: ") | nowrap | fgc(pal::dim)).build()});
+            parts.push_back({(text("/" + filter_ + "▌") | nowrap | Bold | fgc(pal::sky)).build()});
+            parts.push_back({(text("  user: state: port: cpu: mem: !neg")
+                              | nowrap | fgc(pal::faint)).build(), 1});   // syntax cheat — first to go
+            parts.push_back({hint("enter", "apply"), 3});
+            parts.push_back({hint("esc", "clear"), 2});
         } else {
             // Groups: app │ navigate │ act on process │ view. Only the hints
             // with a real action get a hit id; ↑↓ / 1-6 are labels only.
-            parts.push_back(act_hint("q", "quit", FooterAct::Quit));
-            parts.push_back(sep());
-            parts.push_back(hint("↑↓", "select"));
-            parts.push_back(act_hint("/", "filter", FooterAct::Filter));
-            parts.push_back(sep());
-            parts.push_back(act_hint("x", "end", FooterAct::End));
-            parts.push_back(act_hint("K", "kill", FooterAct::Kill));
-            parts.push_back(hint("l", "signal"));
-            parts.push_back(hint("r", "nice"));
-            parts.push_back(hint("t", "tree"));
-            parts.push_back(act_hint("s", "sort", FooterAct::Sort));
-            parts.push_back(sep());
-            parts.push_back(hint("1-6", "detail"));
-            parts.push_back(act_hint("space", "pause", FooterAct::Pause));
-            parts.push_back(act_hint("?", "help", FooterAct::Help));
+            // Drop order (first → last): rails · r · ↑↓ · 1-6 · l · t · s ·
+            // K · space · / · ? — q·quit and x·end never shed.
+            parts.push_back({act_hint("q", "quit", FooterAct::Quit)});          // essential
+            parts.push_back({sep(), 1});
+            parts.push_back({hint("↑↓", "select"), 2});
+            parts.push_back({act_hint("/", "filter", FooterAct::Filter), 7});
+            parts.push_back({sep(), 1});
+            parts.push_back({act_hint("x", "end", FooterAct::End)});            // essential
+            parts.push_back({act_hint("K", "kill", FooterAct::Kill), 5});
+            parts.push_back({hint("l", "signal"), 3});
+            parts.push_back({hint("r", "nice"), 2});
+            parts.push_back({hint("t", "tree"), 4});
+            parts.push_back({act_hint("s", "sort", FooterAct::Sort), 4});
+            parts.push_back({sep(), 1});
+            parts.push_back({hint("1-6", "detail"), 3});
+            parts.push_back({act_hint("space", "pause", FooterAct::Pause), 5});
+            parts.push_back({act_hint("?", "help", FooterAct::Help), 6});
         }
 
         // Toast overrides the live indicator on the right.
@@ -108,7 +123,13 @@ public:
                         text("live " + std::to_string(ticks_)) | nowrap | fgc(pal::dim))).build();
         }
 
-        return (h(h(parts) | gap(1), space, std::move(status), text(" "))
+        // Grow spacer (measures 0, always kept) pushes the status chip to
+        // the right edge; both ride the fit_row as essentials.
+        parts.push_back({Element{space}});
+        parts.push_back({std::move(status)});
+        parts.push_back({(text(" ") | nowrap).build()});
+
+        return (v(fit_row(std::move(parts), 1))
                 | bgc(pal::bg_panel) | padding(0, 1, 0, 1)).build();
     }
 };
