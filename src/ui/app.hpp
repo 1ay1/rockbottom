@@ -193,13 +193,11 @@ struct App {
             const int fixed = 2 + 3 + 1 + 2 + 1 + cores_rows + right_stack_h + (2 + 5) + 2;
             L.graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
-            // Mirror view(): the classic top band fills the space above a
-            // readable process table, so the CPU graph (and thus cpu_h) grows
-            // to that height and the right column fills the same band 50/50.
-            const int chrome = 2 + 3 + 1 + 2;
-            const int proc_min = 12;
-            const int avail = m.height - chrome - proc_min;
-            const int want = std::max(avail, right_stack_h);
+            // Mirror view(): band ≈ 45% of content, table keeps the majority.
+            const int chrome = 2 + 3 + 1;
+            const int content = std::max(10, m.height - chrome);
+            const int band_target = std::clamp(content * 45 / 100, 12, content - 10);
+            const int want = std::max(band_target, right_stack_h);
             L.graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
         }
         const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
@@ -1235,19 +1233,18 @@ struct App {
                             + 2;                        // outer padding slack
             graph_h = std::clamp(m.height - fixed, 0, 12);
         } else {
-            // Classic split: the top band should FILL the space above a
-            // readable process table instead of collapsing to the compact
-            // stat-stack height (which left dead sky under the right column).
-            // Give the band all the height left after chrome + a min process
-            // table, capped so the table keeps a useful number of rows and the
-            // graph never balloons absurdly. cpu_h then drives both columns.
-            const int chrome = 2 + 3 + 1 + 2;   // header+verdict+footer + proc border
-            const int proc_min = 12;            // keep a usable process table
-            const int avail = m.height - chrome - proc_min;
-            // cpu_h = 3 + graph_h + cores_rows; solve graph_h from the band we
-            // want, but never below what the right stack forces (so the CPU
-            // column is at least as tall as MEM+NET+DISK compact).
-            const int want = std::max(avail, right_stack_h);
+            // Classic split: share the vertical space between the top stat band
+            // and the process table so NEITHER dominates. The band takes about
+            // 45% of the content height (bounded so it stays readable but the
+            // process table — the primary view — always keeps the majority),
+            // and cpu_h drives both stat columns to that height.
+            const int chrome = 2 + 3 + 1;       // header + verdict + footer
+            const int content = std::max(10, m.height - chrome);
+            // Target band height: ~45% of the content, clamped to a sane range
+            // and never below what the compact right stack needs.
+            const int band_target = std::clamp(content * 45 / 100, 12, content - 10);
+            const int want = std::max(band_target, right_stack_h);
+            // cpu_h = 3 + graph_h + cores_rows; solve graph_h for that band.
             graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
         }
         const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
