@@ -191,7 +191,7 @@ private:
         const bool show_io    = w >= 84;
         // Too thin: drop the inline CPU usage meter entirely so the numeric
         // columns keep breathing room instead of the graph squeezing them.
-        const bool show_meter = w >= 46;
+        const bool show_meter = w >= 78;
         const int meter_w = show_meter ? (show_mem ? 14 : 8) : 0;
         int ncols = show_meter ? 6 : 5;      // pid, user, name, [meter], cpu, mem
         int fixed = 8 + 8 + meter_w + 6 + 8 + 2;  // + S dot
@@ -216,7 +216,7 @@ private:
         const bool show_memp = w >= 62;
         const bool show_mem  = w >= 54;
         const bool show_io   = w >= 84;
-        const bool show_meter = w >= 46;
+        const bool show_meter = w >= 78;
         // The header is a quiet RAIL, not a row of shouting labels: no
         // underline wall, a subtle full-width band (bgc on the h-container;
         // maya's ambient-bg inheritance carries it under every label), and a
@@ -375,7 +375,7 @@ private:
             const bool show_memp = w >= 62;
             const bool show_mem  = w >= 54;
             const bool show_io   = w >= 84;
-            const bool show_meter = w >= 46;
+            const bool show_meter = w >= 78;
             // Combined disk I/O rate; dim when idle, sky when the process is
             // actually touching the platter so a thrasher pops out.
             const double iorate = p.io_read.per_sec + p.io_write.per_sec;

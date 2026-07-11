@@ -76,22 +76,55 @@ public:
                    | nowrap | fgc(bc)).build();
         }
 
-        return (h(
-            std::move(pulse),
-            std::move(word),
-            std::move(tag),
-            text("  " + snap_.hostname) | Bold | fgc(pal::sky),
-            text("  " + snap_.kernel) | fgc(pal::dim),
-            text("  ") , std::move(pause_chip),
-            space,
-            std::move(bat),
-            text("  up " + humanize_duration(snap_.uptime_sec)) | fgc(pal::label),
-            text("  ·  ") | fgc(pal::faint),
-            text(std::to_string(snap_.proc_count)) | fgc(pal::text),
-            text(" procs ") | fgc(pal::dim),
-            text(std::to_string(snap_.running)) | fgc(pal::good),
-            text(" running") | fgc(pal::dim)
-        )).build();
+        // Responsive: the header packs left-to-right and DROPS the optional
+        // right-side vitals as width shrinks so it never wraps into the banner
+        // below. Widest-first budget check keyed off the ComponentElement's w.
+        std::string host   = snap_.hostname;
+        std::string kernel = snap_.kernel;
+        std::string uptime = std::string(humanize_duration(snap_.uptime_sec));
+        std::string procs  = std::to_string(snap_.proc_count);
+        std::string runs_s = std::to_string(snap_.running);
+        const bool has_bat = snap_.battery.present;
+        const bool paused = paused_;
+
+        return Element{ComponentElement{
+            .render = [=](int w, int) -> Element {
+                // Fixed left cluster: pulse(6) + " rockbottom"(11) + " rb"(3).
+                // Each optional segment is added only if it still fits.
+                int need = 6 + 11 + 3;
+                const bool show_host   = (need += 2 + static_cast<int>(host.size()),   w >= need);
+                const bool show_kernel = show_host &&
+                                         (need += 2 + static_cast<int>(kernel.size()), w >= need);
+                const bool show_bat    = has_bat &&
+                                         (need += 6, w >= need);
+                const bool show_uptime = (need += 4 + static_cast<int>(uptime.size()), w >= need);
+                const bool show_procs  = show_uptime &&
+                                         (need += 5 + static_cast<int>(procs.size())
+                                                    + static_cast<int>(runs_s.size()) + 8, w >= need);
+
+                std::vector<Element> cols;
+                cols.push_back(pulse);
+                cols.push_back(word);
+                cols.push_back(tag);
+                if (show_host)
+                    cols.push_back((text("  " + host) | nowrap | Bold | fgc(pal::sky)).build());
+                if (show_kernel)
+                    cols.push_back((text("  " + kernel) | nowrap | fgc(pal::dim)).build());
+                if (paused) { cols.push_back((text("  ")).build()); cols.push_back(pause_chip); }
+                cols.push_back(space);
+                if (show_bat) cols.push_back(bat);
+                if (show_uptime)
+                    cols.push_back((text("  up " + uptime) | nowrap | fgc(pal::label)).build());
+                if (show_procs) {
+                    cols.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build());
+                    cols.push_back((text(procs) | nowrap | fgc(pal::text)).build());
+                    cols.push_back((text(" procs ") | nowrap | fgc(pal::dim)).build());
+                    cols.push_back((text(runs_s) | nowrap | fgc(pal::good)).build());
+                    cols.push_back((text(" running") | nowrap | fgc(pal::dim)).build());
+                }
+                return (h(std::move(cols))).build();
+            },
+        }};
     }
 };
 
