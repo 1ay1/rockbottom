@@ -25,11 +25,17 @@ class DiskPanel {
     const DiskIO& io_;
     bool two_up_ = true;   // pack mounts two per row (wide terminals)
     int graph_h_ = 0;      // >0: draw an I/O area-graph this tall on top
+    float grow_ = 0;       // >0: panel fills its flex slot; graph fills the slack
 
 public:
     DiskPanel(const std::vector<DiskInfo>& d, const DiskIO& io, bool two_up = true,
               int graph_h = 0)
         : disks_(d), io_(io), two_up_(two_up), graph_h_(std::max(0, graph_h)) {}
+
+    // Fill mode: the panel grows to its flex slot and the I/O mountain fills
+    // whatever height is left after the rate row + mount meters. (Named
+    // `expand`, not `grow`, so it doesn't shadow dsl::grow inside build().)
+    DiskPanel& expand(float g) { grow_ = g; return *this; }
 
     operator maya::Element() const { return build(); }
 
@@ -39,10 +45,48 @@ public:
 
         std::vector<Element> rows;
 
+        // Fill mode: an I/O mountain (read fill + write overlay) that expands
+        // to consume the height left after the rate row + mounts. fill() hands
+        // the render the REAL (w, h) so the graph is exactly as tall as its
+        // slot — no estimate to drift.
+        if (grow_ > 0) {
+            float peak = 1.0f;
+            for (int i = 0; i < io_.hist_len; ++i)
+                peak = std::max({peak,
+                                 io_.read_history[static_cast<std::size_t>(i)],
+                                 io_.write_history[static_cast<std::size_t>(i)]});
+            const float* rh = io_.read_history.data();
+            const float* wh = io_.write_history.data();
+            const int hl = io_.hist_len;
+            rows.push_back(fill([rh, wh, hl, peak](int w, int ah) -> Element {
+                using namespace maya;
+                using namespace maya::dsl;
+                if (ah < 2) return blank().build();
+                // Normalize into a per-thread scratch; build_fixed() bakes the
+                // glyphs immediately so the buffer needn't outlive this call.
+                static thread_local std::array<float, 48> rn{}, wn{};
+                for (int i = 0; i < hl && i < 48; ++i) {
+                    rn[static_cast<std::size_t>(i)] = rh[static_cast<std::size_t>(i)] / peak;
+                    wn[static_cast<std::size_t>(i)] = wh[static_cast<std::size_t>(i)] / peak;
+                }
+                std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
+                std::vector<Element> axis;
+                for (int r = 0; r < ah; ++r) {
+                    std::string lbl = r == 0 ? peak_lbl : r == ah - 1 ? "0" : "";
+                    axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
+                                    | w_<6> | justify(Justify::End)).build());
+                }
+                Graph g{rn.data(), hl};
+                g.cells(std::max(1, w - 6 - 1)).rows(ah).color(pal::sky)
+                 .overlay(wn.data(), hl, pal::pink);
+                return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
+                        | gap(1)).build();
+            }, 0, 2));
+        }
         // Wide/graph mode: a system I/O mountain (read fill + write overlay)
         // above the live rate row and the mount meters. A peak-labelled y-axis
         // gives the mountain height a real magnitude.
-        if (graph_h_ >= 2) {
+        else if (graph_h_ >= 2) {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
                 peak = std::max({peak,
@@ -196,7 +240,7 @@ public:
             }
         }
 
-        return Panel("◇", "DISK", pal::disk_ac)(std::move(rows));
+        return Panel("◇", "DISK", pal::disk_ac).grow(grow_)(std::move(rows));
     }
 };
 

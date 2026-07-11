@@ -1340,47 +1340,24 @@ struct App {
 
         // ── Wide 2-col: build col 1 (stacked, graph-forward stats) ──
         if (wide2) {
-            // Every panel in col 1 shows a mountain graph. The band height is
-            // shared: each panel keeps its fixed content (border + meter/rate
-            // rows) and the LEFTOVER is split across the four graphs so the
-            // column fills top-to-bottom with no trailing gap.
-            // Fixed (non-graph) rows each panel needs:
-            const int cpu_fixed  = 2 + 1 + cores_rows;   // border + ALL hdr + cores
-            const int mem_fixed  = mem_h;                // border + RAM(+SWP) rows
-            const int net_fixed  = net_h;                // border + iface rows
-            const int disk_fixed = disk_h;               // border + I/O + mounts
-            const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
-            int graph_pool = band_h - all_fixed;
-            // Two goals in tension: FILL the band (no dead gap) but keep each
-            // graph READABLE (a 7% line over 20 rows is an empty sky). Resolve
-            // it by CAPPING each graph at a comfortable height, then letting
-            // the panels grow() to share any leftover band height as breathing
-            // room around the (capped) graphs — so col 1 fills top-to-bottom
-            // without any single mountain ballooning.
-            const bool graph_fill = graph_pool >= 16;
-            // Height-responsive FILL: the four graph heights SUM to graph_pool
-            // so the four panels stack to EXACTLY band_h — no grow(), so no
-            // empty space inside any panel and no gap under DISK. NETWORK is
-            // the star — it gets the LARGEST slice (the mountain fills its
-            // panel instead of sitting under an empty sky); CPU next, then
-            // MEM and DISK share what's left. net takes the exact remainder so
-            // the sum closes.
-            int cpu_graph_h  = graph_fill ? std::max(5, graph_pool * 26 / 100) : 0;
-            int mem_graph_h  = graph_fill ? std::max(4, graph_pool * 18 / 100) : 0;
-            int disk_graph_h = graph_fill ? std::max(4, graph_pool * 18 / 100) : 0;
-            int net_graph_h  = graph_fill
-                ? std::max(6, graph_pool - cpu_graph_h - mem_graph_h - disk_graph_h) : 0;
-            const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
-
+            // Every panel in col 1 shows a mountain graph and SELF-FILLS via
+            // maya's fill() primitive: each panel carries an intrinsic grow
+            // weight (.expand) so the band's REAL height is divided by weight,
+            // and inside each panel the mountain consumes whatever is left
+            // after the fixed rows (header/meters/mounts). NO hand-computed
+            // graph_pool / *_graph_h estimates — nothing can drift from what
+            // the layout engine actually allocates, so the column fills
+            // top-to-bottom at ANY terminal height. NETWORK is the star
+            // (largest weight); CPU next; MEM and DISK share the rest.
             Element col1 = v(
-                Element{CpuPanel{s.cpu, cpu_cols, cpu_gw, cpu_graph_h, &s.mem}}
+                Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(26)}
                     | hit(ui::hit_band(ui::Detail::Cpu)),
-                Element{MemPanel{s.mem, mem_graph_h}}
+                Element{MemPanel{s.mem}.expand(18)}
                     | hit(ui::hit_band(ui::Detail::Mem)),
-                Element{NetPanel{s.nets, net_graph_h}}
+                Element{NetPanel{s.nets}.expand(38)}
                     | hit(ui::hit_band(ui::Detail::Net)),
-                Element{DiskPanel{s.disks, s.disk_io, false, disk_graph_h}}
-                    | grow(1) | hit(ui::hit_band(ui::Detail::Disk))
+                Element{DiskPanel{s.disks, s.disk_io, false}.expand(18)}
+                    | hit(ui::hit_band(ui::Detail::Disk))
             ).build();
 
             Element body = (h(

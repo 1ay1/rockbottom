@@ -23,6 +23,7 @@
 #include "panel.hpp"
 
 #include <algorithm>
+#include <array>
 #include <csignal>
 #include <string>
 #include <vector>
@@ -55,8 +56,12 @@ public:
         const int rgutter = scrolling ? 1 : 0;
 
         // Kill confirmation strip replaces the header while pending.
+        // ONE column plan (maya solve_columns) is solved here and feeds the
+        // header AND every body row — the old name_cell_w()/show_* triplicate
+        // is gone, so the two can't drift apart by construction.
+        const maya::ColPlan cp = col_plan(rgutter);
         if (view_.pending) rows.push_back(confirm_strip());
-        else               rows.push_back(header_row(rgutter));
+        else               rows.push_back(header_row(cp));
 
         // Culprit detection on the visible (filtered) list.
         int hi = -1;
@@ -77,15 +82,12 @@ public:
         int start = std::clamp(view_.scroll, 0, std::max(0, n - body_rows));
 
         std::vector<Element> body;
-        // NAME cell width from the shared analytic helper — the header uses the
-        // exact same width, so labels and values hang on one rail.
-        const int name_w = name_cell_w(rgutter);
         for (int i = start; i < n && i < start + body_rows; ++i)
             body.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                     i == view_.selected,
                                     loud && i == hi,
                                     ((i - start) & 1) != 0,
-                                    name_w, i));
+                                    cp, i));
 
         if (n == 0)
             body.push_back((text(view_.filter.empty()
@@ -178,45 +180,42 @@ private:
         )).build();
     }
 
-    // The analytic NAME cell width — shared by the header and the rows so
-    // both hang the fixed columns on the same rail (a flex NAME in the header
-    // drifts out of alignment with a fixed-width NAME in the rows on a wide
-    // screen). `rgutter` is the scrollbar gutter reserved on the right.
-    [[nodiscard]] int name_cell_w(int rgutter) const {
-        const int w = view_.width;
-        const bool show_port  = w >= 92;
-        const bool show_thr   = w >= 70;
-        const bool show_memp  = w >= 62;
-        const bool show_mem   = w >= 54;
-        const bool show_io    = w >= 84;
-        // Too thin: drop the inline CPU usage meter entirely so the numeric
-        // columns keep breathing room instead of the graph squeezing them.
-        const bool show_meter = w >= 78;
-        const int meter_w = show_meter ? (show_mem ? 14 : 8) : 0;
-        int ncols = show_meter ? 6 : 5;      // pid, user, name, [meter], cpu, mem
-        int fixed = 8 + 8 + meter_w + 6 + 8 + 2;  // + S dot
-        ncols += 1;                          // S
-        if (show_port) { fixed += 9; ++ncols; }
-        if (show_memp) { fixed += 5; ++ncols; }
-        if (show_io)   { fixed += 8; ++ncols; }
-        if (show_thr)  { fixed += 4; ++ncols; }
-        if (rgutter > 0) { fixed += rgutter; ++ncols; }
-        return std::max(8, w - fixed - (ncols - 1));
+    // ── The shared column plan ──
+    // Every column is described ONCE: minimum width, an optional growth cap,
+    // a weight for surplus space, and a `keep` rank giving the drop order as
+    // the panel narrows (lowest first): PORT → DISK → meter → THR → MEM%.
+    // maya::solve_columns turns that into per-width cell widths; the header
+    // and the rows both render from the same plan, so the old bug class —
+    // three hand-maintained `show_* = w >= N` blocks drifting apart — is
+    // structurally impossible. NAME takes most of the slack (weight 3); the
+    // inline CPU meter breathes 8 → 14 cells (weight 1) before NAME wins.
+    enum Col : std::size_t {
+        CPid, CUser, CName, CPort, CMeter, CCpu, CMem, CMemP, CIo, CState,
+        CThr, CGut, CCount
+    };
+
+    [[nodiscard]] maya::ColPlan col_plan(int rgutter) const {
+        using maya::ColSpec;
+        const std::array<ColSpec, CCount> spec{{
+            /*PID  */ {.min = 8},
+            /*USER */ {.min = 8},
+            /*NAME */ {.min = 8, .weight = 3},
+            /*PORT */ {.min = 9, .keep = 1},
+            /*METER*/ {.min = 8, .max = 14, .weight = 1, .keep = 3},
+            /*CPU  */ {.min = 6},
+            /*MEM  */ {.min = 8},
+            /*MEM% */ {.min = 5, .keep = 5},
+            /*DISK */ {.min = 8, .keep = 2},
+            /*S    */ {.min = 2},
+            /*THR  */ {.min = 4, .keep = 4},
+            /*GUT  */ {.min = rgutter},   // scrollbar gutter; 0 → inert
+        }};
+        return maya::solve_columns(spec, view_.width, /*gap=*/1);
     }
 
-    [[nodiscard]] maya::Element header_row(int rgutter = 0) const {
+    [[nodiscard]] maya::Element header_row(const maya::ColPlan& cp) const {
         using namespace maya;
         using namespace maya::dsl;
-        const int w = view_.width;
-        // Drop optional columns as width shrinks; NAME is a FIXED analytic
-        // width (name_cell_w) — identical to the rows — so header labels hang
-        // on the same rail as their values even on a wide screen.
-        const bool show_port = w >= 92;
-        const bool show_thr  = w >= 70;
-        const bool show_memp = w >= 62;
-        const bool show_mem  = w >= 54;
-        const bool show_io   = w >= 84;
-        const bool show_meter = w >= 78;
         // The header is a quiet RAIL, not a row of shouting labels: no
         // underline wall, a subtle full-width band (bgc on the h-container;
         // maya's ambient-bg inheritance carries it under every label), and a
@@ -254,25 +253,38 @@ private:
             ) | gap(1)).build();
         };
         std::vector<Element> cols;
-        cols.push_back((hdr("  PID", SortKey::Pid) | w_<8>).build());
-        cols.push_back((plain("USER") | w_<8>).build());
-        cols.push_back((hdr("NAME", SortKey::Name) | width(name_cell_w(rgutter))).build());
-        if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
-        if (show_meter)
-            cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
+        cols.push_back((hdr("  PID", SortKey::Pid) | width(cp.at(CPid))).build());
+        cols.push_back((plain("USER") | width(cp.at(CUser))).build());
+        cols.push_back((hdr("NAME", SortKey::Name) | width(cp.at(CName))).build());
+        if (cp.has(CPort))
+            cols.push_back((hdr("PORT", SortKey::Port) | width(cp.at(CPort))
+                            | justify(Justify::End)).build());
+        if (cp.has(CMeter))
+            cols.push_back(num_hdr("CPU", SortKey::Cpu, cp.at(CMeter), cp.at(CCpu)));
         else
-            cols.push_back((hdr("CPU", SortKey::Cpu) | w_<6> | justify(Justify::End)).build());
-        cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
-        if (show_memp) cols.push_back((hdr_bare("MEM%", SortKey::Mem) | w_<5> | justify(Justify::End)).build());
-        if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
-        cols.push_back((plain("S") | w_<2> | justify(Justify::Center)).build());
-        if (show_thr) cols.push_back((plain("THR") | w_<4> | justify(Justify::End)).build());
-        if (rgutter > 0) cols.push_back((Element{blank()} | width(rgutter)).build());
+            cols.push_back((hdr("CPU", SortKey::Cpu) | width(cp.at(CCpu))
+                            | justify(Justify::End)).build());
+        cols.push_back((hdr("MEM", SortKey::Mem) | width(cp.at(CMem))
+                        | justify(Justify::End)).build());
+        if (cp.has(CMemP))
+            cols.push_back((hdr_bare("MEM%", SortKey::Mem) | width(cp.at(CMemP))
+                            | justify(Justify::End)).build());
+        if (cp.has(CIo))
+            cols.push_back((hdr("DISK", SortKey::Io) | width(cp.at(CIo))
+                            | justify(Justify::End)).build());
+        cols.push_back((plain("S") | width(cp.at(CState))
+                        | justify(Justify::Center)).build());
+        if (cp.has(CThr))
+            cols.push_back((plain("THR") | width(cp.at(CThr))
+                            | justify(Justify::End)).build());
+        if (cp.has(CGut))
+            cols.push_back((Element{blank()} | width(cp.at(CGut))).build());
         return (h(std::move(cols)) | gap(1) | bgc(pal::track)).build();
     }
 
     [[nodiscard]] maya::Element proc_row(const ProcInfo& p, bool selected, bool culprit,
-                                         bool alt, int name_w, int idx) const {
+                                         bool alt, const maya::ColPlan& cp,
+                                         int idx) const {
         using namespace maya;
         using namespace maya::dsl;
 
@@ -369,13 +381,6 @@ private:
         }
 
         auto row = [&] {
-            const int w = view_.width;
-            const bool show_port = w >= 92;
-            const bool show_thr  = w >= 70;
-            const bool show_memp = w >= 62;
-            const bool show_mem  = w >= 54;
-            const bool show_io   = w >= 84;
-            const bool show_meter = w >= 78;
             // Combined disk I/O rate; dim when idle, sky when the process is
             // actually touching the platter so a thrasher pops out.
             const double iorate = p.io_read.per_sec + p.io_write.per_sec;
@@ -394,11 +399,12 @@ private:
                 pid_runs.push_back({gutter.size(), pid_txt.size() - gutter.size(), pid_st});
                 cols.push_back(Element{TextElement{.content = std::move(pid_txt), .style = {},
                                                    .wrap = TextWrap::NoWrap,
-                                                   .runs = std::move(pid_runs)}} | width(8));
+                                                   .runs = std::move(pid_runs)}} | width(cp.at(CPid)));
             } else {
-                cols.push_back((text(pid_txt, pid_st) | nowrap | w_<8>).build());
+                cols.push_back((text(pid_txt, pid_st) | nowrap | width(cp.at(CPid))).build());
             }
-            cols.push_back((text(fmt::clip(p.user, 7), cell_st(user_c)) | nowrap | w_<8>).build());
+            cols.push_back((text(fmt::clip(p.user, 7), cell_st(user_c)) | nowrap
+                            | width(cp.at(CUser))).build());
             {
                 // name (styled) + dim command trail, hard-clipped to the
                 // analytically computed cell width so fixed columns to the
@@ -414,6 +420,7 @@ private:
                 };
                 std::string content;
                 std::vector<StyledRun> runs;
+                const int name_w = cp.at(CName);
                 const std::size_t budget = static_cast<std::size_t>(name_w);
 
                 // ══ THE FLOW TREE ═══════════════════════════════════════════
@@ -524,31 +531,33 @@ private:
                                                    .wrap = TextWrap::NoWrap,
                                                    .runs = std::move(runs)}} | width(name_w));
             }
-            if (show_port)
+            if (cp.has(CPort))
                 cols.push_back((text(port_txt, sk == SortKey::Port ? cell_st(pal::sky).with_bold()
                                                                    : cell_st(pal::sky))
-                                | nowrap | w_<9> | justify(Justify::End)).build());
-            if (show_meter)
-                cols.push_back(Meter{disp_cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
-            cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
+                                | nowrap | width(cp.at(CPort)) | justify(Justify::End)).build());
+            if (cp.has(CMeter))
+                cols.push_back(Meter{disp_cpu_frac}.width(cp.at(CMeter)).groove(false).build_fixed());
+            cols.push_back((text(cpu_txt, cpu_st) | nowrap | width(cp.at(CCpu))
+                            | justify(Justify::End)).build());
             cols.push_back((text(humanize_bytes(static_cast<std::uint64_t>(disp_rss)),
                                  sk == SortKey::Mem ? cell_st(pal::white).with_bold()
                                                     : cell_st(pal::text))
-                            | nowrap | w_<8> | justify(Justify::End)).build());
-            if (show_memp)
+                            | nowrap | width(cp.at(CMem)) | justify(Justify::End)).build());
+            if (cp.has(CMemP))
                 cols.push_back((text(memp_txt,
                                      cell_st(mem_frac > 0.1 ? pal::hot : memp_zero ? hushed : quiet))
-                                | nowrap | w_<5> | justify(Justify::End)).build());
-            if (show_io)
+                                | nowrap | width(cp.at(CMemP)) | justify(Justify::End)).build());
+            if (cp.has(CIo))
                 cols.push_back((text(io_txt,
                                      sk == SortKey::Io && iorate > 512
                                          ? cell_st(pal::sky).with_bold()
                                          : cell_st(io_c))
-                                | nowrap | w_<8> | justify(Justify::End)).build());
-            cols.push_back((text(dot) | nowrap | fgc(dot_c) | w_<2> | justify(Justify::Center)).build());
-            if (show_thr)
+                                | nowrap | width(cp.at(CIo)) | justify(Justify::End)).build());
+            cols.push_back((text(dot) | nowrap | fgc(dot_c) | width(cp.at(CState))
+                            | justify(Justify::Center)).build());
+            if (cp.has(CThr))
                 cols.push_back((text(std::to_string(p.threads), cell_st(quiet))
-                                | nowrap | w_<4> | justify(Justify::End)).build());
+                                | nowrap | width(cp.at(CThr)) | justify(Justify::End)).build());
             return h(std::move(cols)) | gap(1);
         }();
 

@@ -77,54 +77,34 @@ public:
         }
 
         // Responsive: the header packs left-to-right and DROPS the optional
-        // right-side vitals as width shrinks so it never wraps into the banner
-        // below. Widest-first budget check keyed off the ComponentElement's w.
-        std::string host   = snap_.hostname;
-        std::string kernel = snap_.kernel;
-        std::string uptime = std::string(humanize_duration(snap_.uptime_sec));
-        std::string procs  = std::to_string(snap_.proc_count);
-        std::string runs_s = std::to_string(snap_.running);
-        const bool has_bat = snap_.battery.present;
-        const bool paused = paused_;
+        // vitals as width shrinks so it never wraps into the banner below.
+        // maya's fit_row measures each REAL styled fragment and sheds the
+        // lowest `keep` rank first — no hand-summed cell estimates to drift.
+        // Drop order (first → last): procs · uptime · battery · kernel · host.
+        Element procs_cluster = (h(
+            text("  ·  ") | nowrap | fgc(pal::faint),
+            text(std::to_string(snap_.proc_count)) | nowrap | fgc(pal::text),
+            text(" procs ") | nowrap | fgc(pal::dim),
+            text(std::to_string(snap_.running)) | nowrap | fgc(pal::good),
+            text(" running") | nowrap | fgc(pal::dim)
+        )).build();
 
-        return Element{ComponentElement{
-            .render = [=](int w, int) -> Element {
-                // Fixed left cluster: pulse(6) + " rockbottom"(11) + " rb"(3).
-                // Each optional segment is added only if it still fits.
-                int need = 6 + 11 + 3;
-                const bool show_host   = (need += 2 + static_cast<int>(host.size()),   w >= need);
-                const bool show_kernel = show_host &&
-                                         (need += 2 + static_cast<int>(kernel.size()), w >= need);
-                const bool show_bat    = has_bat &&
-                                         (need += 6, w >= need);
-                const bool show_uptime = (need += 4 + static_cast<int>(uptime.size()), w >= need);
-                const bool show_procs  = show_uptime &&
-                                         (need += 5 + static_cast<int>(procs.size())
-                                                    + static_cast<int>(runs_s.size()) + 8, w >= need);
-
-                std::vector<Element> cols;
-                cols.push_back(pulse);
-                cols.push_back(word);
-                cols.push_back(tag);
-                if (show_host)
-                    cols.push_back((text("  " + host) | nowrap | Bold | fgc(pal::sky)).build());
-                if (show_kernel)
-                    cols.push_back((text("  " + kernel) | nowrap | fgc(pal::dim)).build());
-                if (paused) { cols.push_back((text("  ")).build()); cols.push_back(pause_chip); }
-                cols.push_back(space);
-                if (show_bat) cols.push_back(bat);
-                if (show_uptime)
-                    cols.push_back((text("  up " + uptime) | nowrap | fgc(pal::label)).build());
-                if (show_procs) {
-                    cols.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build());
-                    cols.push_back((text(procs) | nowrap | fgc(pal::text)).build());
-                    cols.push_back((text(" procs ") | nowrap | fgc(pal::dim)).build());
-                    cols.push_back((text(runs_s) | nowrap | fgc(pal::good)).build());
-                    cols.push_back((text(" running") | nowrap | fgc(pal::dim)).build());
-                }
-                return (h(std::move(cols))).build();
-            },
-        }};
+        std::vector<FitItem> items;
+        items.push_back({std::move(pulse)});                    // essential
+        items.push_back({std::move(word)});
+        items.push_back({std::move(tag)});
+        items.push_back({(text("  " + snap_.hostname) | nowrap | Bold
+                          | fgc(pal::sky)).build(), 5});
+        items.push_back({(text("  " + snap_.kernel) | nowrap
+                          | fgc(pal::dim)).build(), 4});
+        if (paused_)
+            items.push_back({(h(text("  "), std::move(pause_chip))).build()});
+        items.push_back({Element{space}});                      // grow spacer
+        if (snap_.battery.present) items.push_back({std::move(bat), 3});
+        items.push_back({(text("  up " + std::string(humanize_duration(snap_.uptime_sec)))
+                          | nowrap | fgc(pal::label)).build(), 2});
+        items.push_back({std::move(procs_cluster), 1});
+        return fit_row(std::move(items));
     }
 };
 

@@ -26,12 +26,19 @@ class CpuPanel {
     int graph_w_;   // width of the ALL history graph (cells)
     int graph_h_;   // height of the ALL graph (rows); 0 = skip it
     bool heat_;     // narrow mode: cores as a one-row heat strip, not meters
+    float grow_ = 0;  // >0: panel fills its flex slot; graph fills the slack
 
 public:
     explicit CpuPanel(const CpuInfo& c, int cols = 2, int graph_w = 46, int graph_h = 4,
                       const MemInfo* mem = nullptr, bool heat = false)
         : cpu_(c), mem_(mem), cols_(std::max(2, cols)),
           graph_w_(std::max(8, graph_w)), graph_h_(std::max(0, graph_h)), heat_(heat) {}
+
+    // Fill mode: the panel grows to its flex slot and the ALL mountain fills
+    // whatever height is left after the header + core rows — no graph_h
+    // estimate threaded down from the layout, so nothing can drift. (Named
+    // `expand`, not `grow`, so it doesn't shadow dsl::grow inside build().)
+    CpuPanel& expand(float g) { grow_ = g; return *this; }
 
     operator maya::Element() const { return build(); }
 
@@ -45,7 +52,7 @@ public:
         // "what has the machine been doing" trace — with the live meter and
         // bold % stacked to its left. ──
         const double tf = cpu_.total.v;
-        if (graph_h_ >= 2) {
+        if (grow_ > 0 || graph_h_ >= 2) {
             // Header line: ALL + live % — and, when RAM is overlaid, a small
             // legend so the second (mauve) trace is unambiguous.
             std::vector<Element> hdr;
@@ -62,6 +69,26 @@ public:
                 hdr.push_back((text(fmt::pct_pad(mem_->usage().v)) | nowrap | fgc(pal::mem_ac)).build());
             }
             rows.push_back((h(std::move(hdr)) | gap(1)).build());
+        }
+        // Fill mode: the mountain expands to consume the height left after
+        // the header + core rows. fill() hands the render the REAL (w, h) so
+        // the graph is exactly as tall as its slot — no estimate to drift.
+        if (grow_ > 0) {
+            const float* hist = cpu_.total_history.data();
+            const int hlen = cpu_.total_hist_len;
+            const float* memh = mem_ ? mem_->usage_history.data() : nullptr;
+            const int memlen = mem_ ? mem_->hist_len : 0;
+            rows.push_back(fill([hist, hlen, memh, memlen](int w, int ah) -> Element {
+                using namespace maya;
+                using namespace maya::dsl;
+                if (ah < 2) return blank().build();
+                Graph g{hist, hlen};
+                g.cells(std::max(1, w - 3 - 1)).rows(ah);   // y-axis(3) + gap(1)
+                if (memh) g.overlay(memh, memlen, pal::mem_ac);
+                return (h(y_axis(ah, 100.0, 3), Element{g.build_fixed()})
+                        | gap(1)).build();
+            }, 0, 2));
+        } else if (graph_h_ >= 2) {
             // Graph with a labelled left y-axis: 100/75/50/25/0 down the side.
             Graph g{cpu_.total_history.data(), cpu_.total_hist_len};
             g.cells(graph_w_).rows(graph_h_);
@@ -154,6 +181,7 @@ public:
         if (cpu_.temp_c > 1) chip = std::to_string(static_cast<int>(cpu_.temp_c)) + "°C";
 
         return Panel("◈", "CPU · " + fmt::short_model(cpu_.model), pal::cpu_ac)
+            .grow(grow_)
             .chip(chip)(std::move(rows));
     }
 };
