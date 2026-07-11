@@ -1254,30 +1254,32 @@ struct App {
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
 
-        // ── Classic right column: strict 50 / 50 split ──
+        // ── Classic right column: 50 / 50 split, balanced graphs ──
         // The CPU column establishes the band height (rc_target). The right
-        // column fills exactly that height in two equal halves:
-        //   TOP half  (50%) = MEMORY
-        //   BOT half  (50%) = NETWORK + DISK  (NETWORK gets the bulk — its
-        //                     bursty trend is the interesting one; DISK a
-        //                     moderate slice under it)
-        // Every surplus row becomes a mountain graph so both halves fill with
-        // no dead sky and the column stacks to exactly the band.
+        // column fills exactly that height in two EQUAL halves (each grows to
+        // rc_target/2), and MEMORY and NETWORK carry the SAME-height mountain
+        // so neither reads bigger than the other — the graphs are balanced,
+        // height-responsive (they scale with the band), and the halves are a
+        // strict 50 / 50.
+        //   TOP half (50%) = MEMORY
+        //   BOT half (50%) = NETWORK + DISK
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
         const int rc_top_h    = rc_target / 2;                   // MEMORY half
         const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
-        // MEMORY graph fills the whole top half above its meter rows.
-        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
-        // Bottom half: NETWORK gets the BULK (bursty, the interesting trend),
-        // DISK a small capped slice under it. grow() lives on NETWORK so any
-        // leftover (or a zeroed DISK graph) inflates the network mountain,
-        // never the disk one.
-        const int rc_bot_surplus = std::max(0, rc_bot_h - net_h - disk_h);
-        // DISK keeps only a small slice (its I/O is spikier but rarer); give it
-        // AT MOST a third of the surplus, capped at 4 rows. NETWORK claims
-        // everything else so its mountain fills the bottom half.
-        int rc_disk_graph = std::min({rc_bot_surplus / 3, 4});
-        int rc_net_graph  = std::max(0, rc_bot_surplus - rc_disk_graph);
+        // Shared graph height = whatever the SMALLER half can spare above its
+        // fixed rows, so MEM and NET get identical mountains and neither half
+        // overflows. DISK takes a small slice of what's left in the bottom.
+        //   top spare = rc_top_h - mem_h ;  bot spare = rc_bot_h - net_h - disk_h
+        const int top_spare = std::max(0, rc_top_h - mem_h);
+        const int bot_spare = std::max(0, rc_bot_h - net_h - disk_h);
+        int rc_disk_graph = std::min({bot_spare / 4, 4});
+        // NET and MEM share the same height: the min of the top spare and the
+        // net's share of the bottom spare, so both graphs match and are
+        // height-responsive. Cap so a very tall band doesn't make an empty sky.
+        int gshared = std::clamp(std::min(top_spare, bot_spare - rc_disk_graph),
+                                 0, 12);
+        int rc_mem_graph = gshared;
+        int rc_net_graph = gshared;
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
         if (rc_disk_graph < 3) rc_disk_graph = 0;
