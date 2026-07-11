@@ -8,6 +8,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <string>
+#include <sys/resource.h>
 #include <unistd.h>
 
 namespace rockbottom {
@@ -20,6 +21,22 @@ std::string signal_process(int pid, int sig) {
         case EPERM: return "permission denied — not your process";
         case ESRCH: return "process no longer exists";
         default:    return "kill failed";
+    }
+}
+
+// renice_process is also pure POSIX (setpriority(2)). Lowering a nice value
+// (raising priority) requires privilege; raising it (yielding CPU) is always
+// allowed for your own processes.
+std::string renice_process(int pid, int nice) {
+    if (nice < -20) nice = -20;
+    if (nice > 19)  nice = 19;
+    errno = 0;
+    if (::setpriority(PRIO_PROCESS, static_cast<id_t>(pid), nice) == 0) return {};
+    switch (errno) {
+        case EPERM:
+        case EACCES: return "permission denied — raising priority needs privilege";
+        case ESRCH:  return "process no longer exists";
+        default:     return "renice failed";
     }
 }
 

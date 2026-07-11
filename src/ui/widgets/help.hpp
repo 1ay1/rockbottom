@@ -35,15 +35,20 @@ public:
             {"PROCESSES", {
                 {"↑↓ j k", "select process"},
                 {"/", "filter by name or pid"},
+                {"t", "toggle process tree"},
+                {"← →", "collapse / expand subtree (tree)"},
+                {"*", "follow: lock cursor to this process"},
                 {"x / Del", "end process (SIGTERM)"},
                 {"K", "force-kill (SIGKILL)"},
                 {"l", "send any signal (picker)"},
+                {"r", "renice (change priority)"},
                 {"X", "end ALL with this name"},
                 {"y / n", "confirm / cancel kill"},
             }},
             {"SORTING", {
                 {"s", "cycle sort column"},
                 {"c m i n P o", "cpu · mem · i/o · name · pid · port"},
+                {"R / re-press", "reverse sort direction"},
             }},
             {"DETAIL", {
                 {"1 2 3 4 5 6", "cpu · mem · net · gpu · disk · proc"},

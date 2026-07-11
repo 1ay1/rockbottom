@@ -28,6 +28,10 @@ enum class SortKey { Cpu, Mem, Io, Pid, Name, Port };
 // impure system boundary besides sampling.
 [[nodiscard]] std::string signal_process(int pid, int sig);
 
+// Set a process's nice value (scheduling priority, -20..19). Returns empty on
+// success, error text on failure (permission to LOWER nice needs privilege).
+[[nodiscard]] std::string renice_process(int pid, int nice);
+
 class Sampler {
 public:
     Sampler();

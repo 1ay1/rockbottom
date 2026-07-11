@@ -69,14 +69,25 @@ namespace ui {
 
 // Everything the process panel needs to render one frame.
 struct ProcView {
-    std::vector<const ProcInfo*> procs;   // filtered, sorted
+    std::vector<const ProcInfo*> procs;   // filtered, ordered (sorted OR tree)
     SortKey sort = SortKey::Cpu;
+    bool sort_desc = true;                // ▼ high-to-low (default) vs ▲ low-to-high
     int selected = 0;
     int max_rows = 10;
     int width = 120;                      // panel inner width, for column tiers
     std::string filter;
     bool filtering = false;
     const PendingKill* pending = nullptr;
+
+    // Tree mode: when true, `procs` is in parent→child order and `tree_prefix`
+    // carries the ASCII guide ("│  ├─ ") for each row, index-aligned to `procs`.
+    // A row whose subtree is collapsed gets a ▸ marker in `collapsed_row`.
+    bool tree = false;
+    std::vector<std::string> tree_prefix;
+    std::vector<bool> has_kids;       // row heads a subtree (can be collapsed)
+    std::vector<bool> collapsed_row;  // row's subtree is currently collapsed
+    std::vector<int>  hidden_count;   // descendants folded under a collapsed row
+    int follow_pid = 0;               // PID locked with * (badge in the chip)
 };
 
 }  // namespace ui

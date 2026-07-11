@@ -5,11 +5,13 @@
 // Interaction model (all keyboard, zero modes to memorize):
 //   ↑/↓ or j/k   move the process selection
 //   /            filter processes by name (Esc clears)
+//   t            toggle process tree · ←/→ collapse/expand · * follow
 //   x / Delete   ask to end the selected process (SIGTERM)
 //   K            ask to force-kill (SIGKILL)
 //   l            open the signal picker (send ANY signal)
+//   r            renice — change scheduling priority
 //   y / Enter    confirm pending kill · n / Esc cancels
-//   s c m n P    sorting · space pause · ? help · q quit
+//   s c m n P    sorting (re-press to reverse) · space pause · ? help · q quit
 
 #pragma once
 
@@ -17,6 +19,7 @@
 
 #include "../core/sampler.hpp"
 #include "state.hpp"
+#include "proc_order.hpp"
 #include "theme.hpp"
 #include "widgets/header.hpp"
 #include "widgets/verdict.hpp"
@@ -28,12 +31,14 @@
 #include "widgets/footer.hpp"
 #include "widgets/help.hpp"
 #include "widgets/signal_menu.hpp"
+#include "widgets/nice_menu.hpp"
 #include "widgets/detail.hpp"
 
 #include <algorithm>
 #include <csignal>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -63,6 +68,10 @@ struct App {
         int         sel = 0;             // index into the *filtered* view
         std::string filter;              // active name filter ("" = off)
         bool        filtering = false;   // '/' typing mode
+        bool        sort_desc = true;    // sort direction (▼ default, ▲ reversed)
+        bool        tree = false;        // process-tree view vs flat sorted list
+        std::set<int> collapsed;         // pids whose subtree is folded (tree mode)
+        int         follow_pid = 0;      // keep this pid selected as the list moves (* toggles)
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
 
@@ -77,6 +86,16 @@ struct App {
             int  sel = 0;             // index into signal_catalog()
         };
         std::optional<SigMenu> sigmenu;
+
+        // Renice picker: adjust a process's nice value (scheduling priority).
+        // Unlike the signal menu this applies on Enter via setpriority(2).
+        struct NiceMenu {
+            int  pid = 0;
+            std::string name;
+            int  cur = 0;    // current nice, for reference
+            int  val = 0;    // the value being dialed in
+        };
+        std::optional<NiceMenu> nicemenu;
 
         // Verdict pulse: when health DEGRADES the banner border flares and
         // fades over the next few ticks so the state change catches the eye.
@@ -275,6 +294,7 @@ struct App {
             m.sigmenu.reset();
             return {std::move(m), C{}};
         }
+        if (m.nicemenu) { m.nicemenu.reset(); return {std::move(m), C{}}; }
 
         // ── Everything else routes through the paint-time hit registry ──
         if (hit) {
@@ -370,6 +390,9 @@ struct App {
                 if (static_cast<int>(m.last_health) > static_cast<int>(prev))
                     m.verdict_pulse = 3;   // degrade → flare for 3 ticks
                 m.sampling = false;
+                // Follow mode: keep the cursor pinned to the locked process as
+                // the freshly-sampled list re-orders around it.
+                if (m.follow_pid) select_pid(m, m.follow_pid);
                 clamp_sel(m);
                 return {std::move(m), C{}};
             },
@@ -414,6 +437,36 @@ struct App {
                 m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
                                         sig, m.sigmenu->pids};
                 m.sigmenu.reset();
+                return {std::move(m), C{}};
+            }
+            return {std::move(m), C{}};
+        }
+
+        // 0b. Renice dial. ←→/↑↓ adjust; enter applies via setpriority(2).
+        if (m.nicemenu) {
+            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                m.nicemenu.reset();
+                return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Left) || key(ev, maya::SpecialKey::Down)
+                || key(ev, 'h') || key(ev, 'j')) {
+                m.nicemenu->val = std::max(-20, m.nicemenu->val - 1); return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Right) || key(ev, maya::SpecialKey::Up)
+                || key(ev, 'l') || key(ev, 'k')) {
+                m.nicemenu->val = std::min(19, m.nicemenu->val + 1); return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::PageDown)) { m.nicemenu->val = std::max(-20, m.nicemenu->val - 5); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { m.nicemenu->val = std::min(19, m.nicemenu->val + 5); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
+                std::string err = renice_process(m.nicemenu->pid, m.nicemenu->val);
+                if (err.empty())
+                    m.toast = Toast{"reniced " + m.nicemenu->name + " to " +
+                                    (m.nicemenu->val > 0 ? "+" : "") + std::to_string(m.nicemenu->val), false};
+                else
+                    m.toast = Toast{err, true};
+                m.nicemenu.reset();
+                if (!m.sampling) { auto c = sample_cmd(m); return {std::move(m), std::move(c)}; }
                 return {std::move(m), C{}};
             }
             return {std::move(m), C{}};
@@ -550,46 +603,139 @@ struct App {
             return {std::move(m), C{}};
         }
 
-        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m)); }
-        if (key(ev, 'c')) { m.sort = SortKey::Cpu;  return resample(std::move(m)); }
-        if (key(ev, 'm')) { m.sort = SortKey::Mem;  return resample(std::move(m)); }
-        if (key(ev, 'i')) { m.sort = SortKey::Io;   return resample(std::move(m)); }
-        if (key(ev, 'P')) { m.sort = SortKey::Pid;  return resample(std::move(m)); }
-        if (key(ev, 'n')) { m.sort = SortKey::Name; return resample(std::move(m)); }
-        if (key(ev, 'o')) { m.sort = SortKey::Port; return resample(std::move(m)); }
+        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); m.sort_desc = true; return resample(std::move(m)); }
+        if (key(ev, 'c')) return set_sort(std::move(m), SortKey::Cpu);
+        if (key(ev, 'm')) return set_sort(std::move(m), SortKey::Mem);
+        if (key(ev, 'i')) return set_sort(std::move(m), SortKey::Io);
+        if (key(ev, 'P')) return set_sort(std::move(m), SortKey::Pid);
+        if (key(ev, 'n')) return set_sort(std::move(m), SortKey::Name);
+        if (key(ev, 'o')) return set_sort(std::move(m), SortKey::Port);
+        if (key(ev, 'R')) { m.sort_desc = !m.sort_desc; const int keep = selected_pid(m); select_pid(m, keep); return {std::move(m), C{}}; }
+
+        // Tree view + navigation.
+        if (key(ev, 't')) return toggle_tree(std::move(m));
+        if (key(ev, '*')) return toggle_follow(std::move(m));
+        if (m.tree && (key(ev, maya::SpecialKey::Left)  || key(ev, 'h'))) return set_collapse(std::move(m), true);
+        if (m.tree && (key(ev, maya::SpecialKey::Right) || key(ev, 'l'))) return set_collapse(std::move(m), false);
 
         // Selection.
-        if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::PageDown)) { m.sel += 10; clamp_sel(m); return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= 10; clamp_sel(m); return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::End))  { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::PageDown)) { m.sel += 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
 
         // Kill.
         if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
         if (key(ev, 'K'))                                      return arm_kill(std::move(m), SIGKILL);
         if (key(ev, 'X'))                                      return arm_kill_all(std::move(m), SIGTERM);
-        if (key(ev, 'l'))                                      return open_sigmenu(std::move(m));
+        if (key(ev, 'l') && !m.tree)                           return open_sigmenu(std::move(m));
+        if (key(ev, 'r'))                                      return open_nicemenu(std::move(m));
 
         return {std::move(m), C{}};
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
+    // The fully-ordered process view (filter → sort/tree). This is the SINGLE
+    // source of row order: the panel renders it and every index-based action
+    // (selection, kill, follow, collapse) resolves against the same vector.
+    static ui::OrderedProcs ordered(const Model& m) {
+        return ui::order_procs(m.snap.procs, m.filter, m.sort, m.sort_desc,
+                               m.tree, m.collapsed);
+    }
+
     static std::vector<const ProcInfo*> filtered(const Model& m) {
-        std::vector<const ProcInfo*> out;
-        for (const auto& p : m.snap.procs) {
-            if (m.filter.empty() ||
-                p.name.find(m.filter) != std::string::npos ||
-                std::to_string(p.pid).find(m.filter) != std::string::npos)
-                out.push_back(&p);
-        }
-        return out;
+        return ordered(m).procs;
     }
 
     static void clamp_sel(Model& m) {
         int n = static_cast<int>(filtered(m).size());
         m.sel = std::clamp(m.sel, 0, std::max(0, n - 1));
+    }
+
+    // The pid under the cursor in the current ordered view, or 0 if none.
+    static int selected_pid(const Model& m) {
+        auto view = filtered(m);
+        if (!view.empty() && m.sel >= 0 && m.sel < static_cast<int>(view.size()))
+            return view[static_cast<std::size_t>(m.sel)]->pid;
+        return 0;
+    }
+
+    // Re-point the selection at a given pid after the list re-orders (toggling
+    // tree, sort, collapse). Keeps the cursor on the SAME process instead of
+    // the same index, which is the difference between "solid" and "jumpy".
+    static void select_pid(Model& m, int pid) {
+        if (pid <= 0) return;
+        auto view = filtered(m);
+        for (std::size_t i = 0; i < view.size(); ++i)
+            if (view[i]->pid == pid) { m.sel = static_cast<int>(i); return; }
+        clamp_sel(m);
+    }
+
+    // Toggle the process-tree view, keeping the cursor on the same process.
+    static std::pair<Model, maya::Cmd<Msg>> toggle_tree(Model m) {
+        const int keep = selected_pid(m);
+        m.tree = !m.tree;
+        if (!m.tree) m.collapsed.clear();   // fresh slate when leaving tree mode
+        select_pid(m, keep);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Collapse (fold=true) or expand (fold=false) the selected subtree. In
+    // flat mode this is a no-op. Collapsing a leaf jumps to its parent so
+    // ←/→ feels like real tree navigation (htop idiom).
+    static std::pair<Model, maya::Cmd<Msg>> set_collapse(Model m, bool fold) {
+        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+        ui::OrderedProcs ord = ordered(m);
+        if (m.sel < 0 || m.sel >= static_cast<int>(ord.procs.size()))
+            return {std::move(m), maya::Cmd<Msg>{}};
+        const int pid = ord.procs[static_cast<std::size_t>(m.sel)]->pid;
+        const bool kids = m.sel < static_cast<int>(ord.has_kids.size())
+                          && ord.has_kids[static_cast<std::size_t>(m.sel)];
+        if (fold) {
+            if (kids && !m.collapsed.count(pid)) { m.collapsed.insert(pid); }
+            else {
+                // Already a leaf or already folded → hop to the parent so a
+                // repeated ← walks up the tree.
+                const int ppid = ord.procs[static_cast<std::size_t>(m.sel)]->ppid;
+                select_pid(m, ppid);
+            }
+        } else {
+            if (kids && m.collapsed.count(pid)) m.collapsed.erase(pid);
+        }
+        select_pid(m, pid);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Toggle collapse on the selected row (Space / Enter-on-parent).
+    static std::pair<Model, maya::Cmd<Msg>> toggle_collapse(Model m) {
+        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+        const int pid = selected_pid(m);
+        if (pid <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        if (m.collapsed.count(pid)) m.collapsed.erase(pid);
+        else                        m.collapsed.insert(pid);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Lock/unlock "follow": keep the selected process under the cursor as the
+    // list re-sorts each tick, instead of the row index drifting.
+    static std::pair<Model, maya::Cmd<Msg>> toggle_follow(Model m) {
+        const int pid = selected_pid(m);
+        m.follow_pid = (m.follow_pid == pid) ? 0 : pid;
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Pick a sort column. Re-pressing the ACTIVE column flips direction
+    // (btop/htop idiom); switching columns resets to the natural "biggest
+    // first" order.
+    static std::pair<Model, maya::Cmd<Msg>> set_sort(Model m, SortKey k) {
+        const int keep = selected_pid(m);
+        if (m.sort == k) m.sort_desc = !m.sort_desc;
+        else            { m.sort = k; m.sort_desc = true; }
+        select_pid(m, keep);
+        return {std::move(m), maya::Cmd<Msg>{}};
     }
 
     // Remember WHICH process the Proc detail pane is showing. The table
@@ -630,6 +776,17 @@ struct App {
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.sigmenu = Model::SigMenu{p->pid, p->name, {p->pid}, 0};
+        }
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Open the renice dial on the selected process, seeded with its current
+    // nice value so ←→ nudge from where it already is.
+    static std::pair<Model, maya::Cmd<Msg>> open_nicemenu(Model m) {
+        auto view = filtered(m);
+        if (!view.empty() && m.sel < static_cast<int>(view.size())) {
+            const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
+            m.nicemenu = Model::NiceMenu{p->pid, p->name, p->nice, p->nice};
         }
         return {std::move(m), maya::Cmd<Msg>{}};
     }
@@ -697,6 +854,10 @@ struct App {
 
         // Interaction / mode state that view() branches on.
         fold(static_cast<std::uint64_t>(m.sort));
+        fold(m.sort_desc ? 1 : 0);
+        fold(m.tree ? 1 : 0);
+        fold(static_cast<std::uint64_t>(m.follow_pid));
+        for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid));
         fold(static_cast<std::uint64_t>(m.sel));
         fold(m.paused ? 1 : 0);
         fold(m.filtering ? 1 : 0);
@@ -715,6 +876,9 @@ struct App {
         if (m.sigmenu) { fold(23); fold(static_cast<std::uint64_t>(m.sigmenu->sel));
                          fold(static_cast<std::uint64_t>(m.sigmenu->pids.size()));
                          fold(static_cast<std::uint64_t>(m.sigmenu->anchor_pid)); }
+        // Renice dial: which process + the dialed value.
+        if (m.nicemenu) { fold(29); fold(static_cast<std::uint64_t>(m.nicemenu->pid));
+                          fold(static_cast<std::uint64_t>(m.nicemenu->val + 64)); }
         // Toast: text + error tint (its ttl countdown is what expires it).
         if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
 
@@ -759,6 +923,11 @@ struct App {
                 ? std::to_string(m.sigmenu->pids.size()) + " × " + m.sigmenu->name
                 : m.sigmenu->name + " (" + std::to_string(m.sigmenu->anchor_pid) + ")";
             return SignalMenu{m.width, m.height, std::move(target), m.sigmenu->sel};
+        }
+
+        if (m.nicemenu) {
+            std::string target = m.nicemenu->name + " (" + std::to_string(m.nicemenu->pid) + ")";
+            return NiceMenu{m.width, m.height, std::move(target), m.nicemenu->cur, m.nicemenu->val};
         }
 
         if (m.detail != ui::Detail::None) {
@@ -806,15 +975,23 @@ struct App {
                                   : std::max(cpu_h, right_stack_h);
         const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
 
+        ui::OrderedProcs ord = ordered(m);
         ProcView pv{
-            .procs     = filtered(m),
-            .sort      = m.sort,
-            .selected  = m.sel,
-            .max_rows  = proc_rows,
-            .width     = std::max(20, m.width - 6),
-            .filter    = m.filter,
-            .filtering = m.filtering,
-            .pending   = m.pending ? &*m.pending : nullptr,
+            .procs        = ord.procs,
+            .sort         = m.sort,
+            .sort_desc    = m.sort_desc,
+            .selected     = m.sel,
+            .max_rows     = proc_rows,
+            .width        = std::max(20, m.width - 6),
+            .filter       = m.filter,
+            .filtering    = m.filtering,
+            .pending      = m.pending ? &*m.pending : nullptr,
+            .tree         = ord.tree,
+            .tree_prefix  = ord.prefix,
+            .has_kids     = ord.has_kids,
+            .collapsed_row = ord.collapsed,
+            .hidden_count = ord.hidden,
+            .follow_pid   = m.follow_pid,
         };
 
         // ── Top band: CPU alone on the left · MEM / NET / DISK stacked right ──

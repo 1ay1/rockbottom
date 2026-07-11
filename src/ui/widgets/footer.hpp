@@ -81,6 +81,8 @@ public:
             parts.push_back(act_hint("x", "end", FooterAct::End));
             parts.push_back(act_hint("K", "kill", FooterAct::Kill));
             parts.push_back(hint("l", "signal"));
+            parts.push_back(hint("r", "nice"));
+            parts.push_back(hint("t", "tree"));
             parts.push_back(act_hint("s", "sort", FooterAct::Sort));
             parts.push_back(sep());
             parts.push_back(hint("1-6", "detail"));

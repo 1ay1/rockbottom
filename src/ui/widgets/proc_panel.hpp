@@ -136,10 +136,14 @@ public:
             for (auto& r : body) rows.push_back(std::move(r));
         }
 
-        // Chip: filter beats sort in relevance when active.
+        // Chip: filter beats sort in relevance when active; tree/follow/dir
+        // badges make the current view state legible at a glance.
+        const char* arrow = view_.sort_desc ? "▼" : "▲";
+        std::string mode = view_.tree ? "tree" : ("sort " + sort_label() + arrow);
         std::string chip = view_.filtering ? "/" + view_.filter + "▌"
-                         : !view_.filter.empty() ? "/" + view_.filter + " · " + sort_label()
-                         : "sort " + sort_label() + " · " + std::to_string(n);
+                         : !view_.filter.empty() ? "/" + view_.filter + " · " + mode
+                         : mode + " · " + std::to_string(n);
+        if (view_.follow_pid) chip = "◉ follow " + std::to_string(view_.follow_pid) + " · " + chip;
 
         return Panel("≡", "PROCESSES", pal::proc_ac)
             .chip(chip)
@@ -209,7 +213,8 @@ private:
         // read as clickable), non-sortable ones recede to dim.
         auto hdr = [&](const char* name, SortKey self) {
             const bool on = view_.sort == self;
-            std::string s = on ? std::string(name) + " ▾" : std::string(name);
+            const char* ar = view_.sort_desc ? " ▾" : " ▴";
+            std::string s = on ? std::string(name) + ar : std::string(name);
             Style st = Style{}.with_fg(on ? pal::proc_ac : pal::label);
             if (on) st = st.with_bold();
             return text(s, st) | nowrap | hit(hit_sort(self));
@@ -345,7 +350,8 @@ private:
             {
                 // name (styled) + dim command trail, hard-clipped to the
                 // analytically computed cell width so fixed columns to the
-                // right never shift.
+                // right never shift. In tree mode a dim box-drawing guide and
+                // a ▸/▾ collapse chevron ride in front of the name.
                 auto clip_bytes = [](std::string& s, std::size_t nb) {
                     if (s.size() <= nb) return false;
                     s.resize(nb);
@@ -354,12 +360,55 @@ private:
                         s.pop_back();
                     return true;
                 };
-                std::string content = std::string(fmt::clip(p.name, 32));
+                std::string content;
                 std::vector<StyledRun> runs;
                 const std::size_t budget = static_cast<std::size_t>(name_w);
-                clip_bytes(content, budget);
-                runs.push_back({0, content.size(), name_st});
-                if (!cmd_trail.empty() && content.size() + 4 < budget) {
+
+                // Tree guide + collapse chevron (tree mode only).
+                bool tree_row = view_.tree && idx >= 0 &&
+                                idx < static_cast<int>(view_.tree_prefix.size());
+                if (tree_row) {
+                    std::string guide = view_.tree_prefix[static_cast<std::size_t>(idx)];
+                    const bool kids = idx < static_cast<int>(view_.has_kids.size())
+                                      && view_.has_kids[static_cast<std::size_t>(idx)];
+                    const bool folded = idx < static_cast<int>(view_.collapsed_row.size())
+                                        && view_.collapsed_row[static_cast<std::size_t>(idx)];
+                    // A node that can fold gets a chevron; leaves keep the
+                    // guide's own connector so the column stays aligned.
+                    std::string chev = kids ? (folded ? "▸ " : "▾ ") : "";
+                    std::string pre = guide + chev;
+                    if (!pre.empty()) {
+                        clip_bytes(pre, budget);
+                        runs.push_back({0, pre.size(),
+                                        Style{}.with_fg(selected ? mix(pal::proc_ac, pal::white, 0.3)
+                                                                 : mix(pal::dim, pal::bg_panel, 0.2))});
+                        content += pre;
+                    }
+                }
+
+                std::string nm = std::string(fmt::clip(p.name, 32));
+                const std::size_t off0 = content.size();
+                if (off0 < budget) {
+                    clip_bytes(nm, budget - off0);
+                    runs.push_back({off0, nm.size(), name_st});
+                    content += nm;
+                }
+
+                // Collapsed subtree count badge: " +N".
+                if (tree_row && idx < static_cast<int>(view_.collapsed_row.size())
+                    && view_.collapsed_row[static_cast<std::size_t>(idx)]
+                    && idx < static_cast<int>(view_.hidden_count.size())) {
+                    const int hc = view_.hidden_count[static_cast<std::size_t>(idx)];
+                    std::string badge = "  +" + std::to_string(hc);
+                    if (content.size() + badge.size() <= budget) {
+                        std::size_t off = content.size();
+                        content += badge;
+                        runs.push_back({off, badge.size(),
+                                        Style{}.with_fg(selected ? pal::label : pal::dim)});
+                    }
+                }
+
+                if (!cmd_trail.empty() && content.size() + 4 < budget && !tree_row) {
                     std::size_t off = content.size();
                     std::string t = "  " + cmd_trail;
                     if (clip_bytes(t, budget - off - 3)) t += "…";

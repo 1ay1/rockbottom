@@ -1,0 +1,204 @@
+// ui/proc_order.hpp — turns the raw process list into the ORDERED view the
+// table renders: either a flat sorted list or a parent→child tree.
+//
+// This is the single source of truth for row order. Both the app (selection,
+// kill targeting, follow) and the panel renderer consume the SAME ordered
+// vector, so a selection index always names the row the user sees — in flat
+// mode and in tree mode alike.
+//
+// Design notes for the tree:
+//   • Roots are processes whose parent isn't in the (filtered) set — pid 1,
+//     kernel_task, and anything whose parent was filtered out. Orphans surface
+//     as roots rather than vanishing.
+//   • Children of a node are ordered by the ACTIVE sort key, so the tree still
+//     answers "who's the hog" — the busiest child floats to the top of its
+//     siblings. Roots are ordered the same way.
+//   • Guide glyphs use the box-drawing idiom (│ ├─ └─) with the last child
+//     getting the corner, so the shape reads at a glance.
+//   • A collapsed node keeps its row but omits its subtree; its descendant
+//     count rides the row so you know how much is hidden.
+
+#pragma once
+
+#include "../core/metrics.hpp"
+#include "../core/sampler.hpp"   // SortKey
+
+#include <algorithm>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace rockbottom::ui {
+
+// The fully-ordered process view: parallel arrays, all index-aligned.
+struct OrderedProcs {
+    std::vector<const ProcInfo*> procs;
+    std::vector<std::string>     prefix;     // tree guides ("│  ├─ "); empty in flat mode
+    std::vector<bool>            has_kids;   // row heads a subtree
+    std::vector<bool>            collapsed;  // row's subtree is folded
+    std::vector<int>             hidden;     // descendants hidden under a collapsed row
+    bool                         tree = false;
+};
+
+// Comparator for a sort key + direction. `desc` = the natural "biggest first"
+// reading for cpu/mem/io; pid/name flip to ascending as their natural default,
+// but the caller still controls direction so ▲/▼ works on every column.
+[[nodiscard]] inline bool proc_less(const ProcInfo& a, const ProcInfo& b,
+                                    SortKey key, bool desc) {
+    auto cmp = [&]() -> bool {
+        switch (key) {
+            case SortKey::Cpu:  return a.cpu > b.cpu;
+            case SortKey::Mem:  return a.rss.value > b.rss.value;
+            case SortKey::Io:   return (a.io_read.per_sec + a.io_write.per_sec)
+                                     > (b.io_read.per_sec + b.io_write.per_sec);
+            case SortKey::Pid:  return a.pid < b.pid;
+            case SortKey::Name: return a.name < b.name;
+            case SortKey::Port: {
+                const bool ha = !a.ports.empty(), hb = !b.ports.empty();
+                if (ha != hb) return ha;
+                if (ha && a.ports.front() != b.ports.front())
+                    return a.ports.front() < b.ports.front();
+                return a.cpu > b.cpu;
+            }
+        }
+        return a.cpu > b.cpu;
+    };
+    // cmp() encodes the DESCENDING intent for magnitude keys and ASCENDING for
+    // pid/name. `desc` toggles that baseline.
+    const bool base = cmp();
+    const bool magnitude = key == SortKey::Cpu || key == SortKey::Mem ||
+                           key == SortKey::Io || key == SortKey::Port;
+    // For magnitude keys base==true means a>b (already "desc"); for pid/name
+    // base==true means a<b ("asc"). Normalize so `desc` means the intuitive
+    // "biggest / Z-last first", then flip when the user asked for the reverse.
+    const bool desc_order = magnitude ? base : !base;
+    return desc ? desc_order : !desc_order;
+}
+
+// Build the flat sorted list (filter applied by the caller).
+inline OrderedProcs order_flat(std::vector<const ProcInfo*> procs,
+                               SortKey key, bool desc) {
+    std::stable_sort(procs.begin(), procs.end(),
+                     [&](const ProcInfo* a, const ProcInfo* b) {
+                         return proc_less(*a, *b, key, desc);
+                     });
+    OrderedProcs out;
+    out.procs = std::move(procs);
+    out.tree = false;
+    return out;
+}
+
+// Build the parent→child tree. `visible` is the already-filtered pointer set;
+// `collapsed` holds pids whose subtree is folded. The active sort orders
+// siblings so the tree still ranks by the hot column.
+inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& visible,
+                               SortKey key, bool desc,
+                               const std::set<int>& collapsed) {
+    OrderedProcs out;
+    out.tree = true;
+
+    // Index by pid and bucket children under their parent.
+    std::unordered_map<int, const ProcInfo*> by_pid;
+    by_pid.reserve(visible.size() * 2);
+    for (const ProcInfo* p : visible) by_pid[p->pid] = p;
+
+    std::unordered_map<int, std::vector<const ProcInfo*>> kids;
+    std::vector<const ProcInfo*> roots;
+    for (const ProcInfo* p : visible) {
+        const bool parent_here = p->ppid > 0 && by_pid.count(p->ppid) && p->ppid != p->pid;
+        if (parent_here) kids[p->ppid].push_back(p);
+        else             roots.push_back(p);   // pid1 / orphan / filtered-out parent
+    }
+
+    auto sib_sort = [&](std::vector<const ProcInfo*>& v) {
+        std::stable_sort(v.begin(), v.end(),
+                         [&](const ProcInfo* a, const ProcInfo* b) {
+                             return proc_less(*a, *b, key, desc);
+                         });
+    };
+    sib_sort(roots);
+    for (auto& [_, v] : kids) sib_sort(v);
+
+    // Count all descendants of a node (for the "+N" collapsed badge).
+    std::unordered_map<int, int> subtree_n;
+    // Post-order DFS to fill subtree_n without recursion depth worries.
+    {
+        std::vector<std::pair<const ProcInfo*, bool>> st;
+        for (auto it = roots.rbegin(); it != roots.rend(); ++it) st.push_back({*it, false});
+        std::vector<const ProcInfo*> post;
+        while (!st.empty()) {
+            auto [node, done] = st.back(); st.pop_back();
+            if (done) { post.push_back(node); continue; }
+            st.push_back({node, true});
+            if (auto k = kids.find(node->pid); k != kids.end())
+                for (const ProcInfo* c : k->second) st.push_back({c, false});
+        }
+        for (const ProcInfo* node : post) {
+            int n = 0;
+            if (auto k = kids.find(node->pid); k != kids.end())
+                for (const ProcInfo* c : k->second)
+                    n += 1 + subtree_n[c->pid];
+            subtree_n[node->pid] = n;
+        }
+    }
+
+    // Pre-order emit with an explicit stack, carrying the running prefix and
+    // whether each node is the last of its siblings (for └─ vs ├─).
+    struct Frame { const ProcInfo* node; std::string prefix; bool last; int depth; };
+    std::vector<Frame> st;
+    for (std::size_t i = roots.size(); i-- > 0;)
+        st.push_back({roots[i], "", i + 1 == roots.size(), 0});
+
+    while (!st.empty()) {
+        Frame f = std::move(st.back()); st.pop_back();
+        const ProcInfo* node = f.node;
+        auto k = kids.find(node->pid);
+        const bool kids_exist = k != kids.end() && !k->second.empty();
+        const bool is_collapsed = collapsed.count(node->pid) > 0;
+
+        // Row prefix: at depth 0 there's no guide; deeper rows get the parent
+        // rails already accumulated in f.prefix plus this node's connector.
+        std::string row_prefix;
+        if (f.depth > 0)
+            row_prefix = f.prefix + (f.last ? "└─ " : "├─ ");
+
+        out.procs.push_back(node);
+        out.prefix.push_back(row_prefix);
+        out.has_kids.push_back(kids_exist);
+        out.collapsed.push_back(kids_exist && is_collapsed);
+        out.hidden.push_back(kids_exist && is_collapsed ? subtree_n[node->pid] : 0);
+
+        if (kids_exist && !is_collapsed) {
+            // Children inherit this node's rail: a vertical bar if we're not
+            // the last sibling, blank space if we are (so the tree "closes").
+            std::string child_prefix = f.depth > 0
+                ? f.prefix + (f.last ? "   " : "│  ")
+                : "";
+            const auto& cv = k->second;
+            for (std::size_t i = cv.size(); i-- > 0;)
+                st.push_back({cv[i], child_prefix, i + 1 == cv.size(), f.depth + 1});
+        }
+    }
+
+    return out;
+}
+
+// Top-level: filter → order. `filter` matches name OR pid substring.
+inline OrderedProcs order_procs(const std::vector<ProcInfo>& all,
+                                const std::string& filter,
+                                SortKey key, bool desc, bool tree,
+                                const std::set<int>& collapsed) {
+    std::vector<const ProcInfo*> vis;
+    vis.reserve(all.size());
+    for (const auto& p : all) {
+        if (filter.empty() ||
+            p.name.find(filter) != std::string::npos ||
+            std::to_string(p.pid).find(filter) != std::string::npos)
+            vis.push_back(&p);
+    }
+    return tree ? order_tree(vis, key, desc, collapsed)
+                : order_flat(std::move(vis), key, desc);
+}
+
+}  // namespace rockbottom::ui
