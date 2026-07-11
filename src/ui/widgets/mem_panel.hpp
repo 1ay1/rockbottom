@@ -11,6 +11,7 @@
 #include "../theme.hpp"
 #include "../fmt.hpp"
 #include "meter.hpp"
+#include "graph.hpp"
 #include "panel.hpp"
 
 #include <string>
@@ -20,9 +21,11 @@ namespace rockbottom::ui {
 
 class MemPanel {
     const MemInfo& mem_;
+    int graph_h_ = 0;   // >0: draw a usage area-graph this tall above the meters
 
 public:
-    explicit MemPanel(const MemInfo& m) : mem_(m) {}
+    explicit MemPanel(const MemInfo& m, int graph_h = 0)
+        : mem_(m), graph_h_(std::max(0, graph_h)) {}
 
     operator maya::Element() const { return build(); }
 
@@ -63,6 +66,14 @@ public:
 
         std::vector<Element> rows;
         const double mf = mem_.usage().v;
+
+        // Wide/graph mode: a usage-over-time mountain above the meters, so a
+        // slow leak is visible as a rising trend, not just a single number.
+        if (graph_h_ >= 2) {
+            Graph g{mem_.usage_history.data(), mem_.hist_len};
+            g.fill().rows(graph_h_).color(pal::mem_ac);
+            rows.push_back(Element{g} | height(graph_h_));
+        }
 
         rows.push_back(row("RAM", mf,
             humanize_bytes(mem_.used) + " / " + humanize_bytes(mem_.total),

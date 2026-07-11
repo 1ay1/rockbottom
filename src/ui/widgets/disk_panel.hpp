@@ -10,6 +10,7 @@
 #include "../fmt.hpp"
 #include "meter.hpp"
 #include "spark.hpp"
+#include "graph.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
@@ -23,10 +24,12 @@ class DiskPanel {
     const std::vector<DiskInfo>& disks_;
     const DiskIO& io_;
     bool two_up_ = true;   // pack mounts two per row (wide terminals)
+    int graph_h_ = 0;      // >0: draw an I/O area-graph this tall on top
 
 public:
-    DiskPanel(const std::vector<DiskInfo>& d, const DiskIO& io, bool two_up = true)
-        : disks_(d), io_(io), two_up_(two_up) {}
+    DiskPanel(const std::vector<DiskInfo>& d, const DiskIO& io, bool two_up = true,
+              int graph_h = 0)
+        : disks_(d), io_(io), two_up_(two_up), graph_h_(std::max(0, graph_h)) {}
 
     operator maya::Element() const { return build(); }
 
@@ -36,7 +39,26 @@ public:
 
         std::vector<Element> rows;
 
-        // ── Row 1: live whole-system I/O rates — rendered exactly like a
+        // Wide/graph mode: a system I/O mountain (read fill + write overlay)
+        // above the live rate row and the mount meters.
+        if (graph_h_ >= 2) {
+            float peak = 1.0f;
+            for (int i = 0; i < io_.hist_len; ++i)
+                peak = std::max({peak,
+                                 io_.read_history[static_cast<std::size_t>(i)],
+                                 io_.write_history[static_cast<std::size_t>(i)]});
+            static thread_local std::array<float, 48> rn{}, wn{};
+            for (int i = 0; i < io_.hist_len; ++i) {
+                rn[static_cast<std::size_t>(i)] = io_.read_history[static_cast<std::size_t>(i)] / peak;
+                wn[static_cast<std::size_t>(i)] = io_.write_history[static_cast<std::size_t>(i)] / peak;
+            }
+            Graph g{rn.data(), io_.hist_len};
+            g.fill().rows(graph_h_).color(pal::sky)
+             .overlay(wn.data(), io_.hist_len, pal::pink);
+            rows.push_back(Element{g} | height(graph_h_));
+        }
+
+        // ── Row 1: live whole-system I/O rates ── rendered exactly like a
         // network interface row: peak-normalized rx/tx-style sparks with the
         // baseline mode keeping a faint ▁ track alive when the disk idles,
         // so the graph never vanishes.

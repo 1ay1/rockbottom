@@ -9,6 +9,7 @@
 #include "../theme.hpp"
 #include "../fmt.hpp"
 #include "spark.hpp"
+#include "graph.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
@@ -20,9 +21,11 @@ namespace rockbottom::ui {
 
 class NetPanel {
     const std::vector<NetIface>& nets_;
+    int graph_h_ = 0;   // >0: draw a throughput area-graph this tall on top
 
 public:
-    explicit NetPanel(const std::vector<NetIface>& n) : nets_(n) {}
+    explicit NetPanel(const std::vector<NetIface>& n, int graph_h = 0)
+        : nets_(n), graph_h_(std::max(0, graph_h)) {}
 
     // The pane always shows the top 4 interfaces (the sampler sorts by
     // traffic rate, name as tiebreak) — a stable roster that never grows a
@@ -47,6 +50,31 @@ public:
         std::vector<Element> rows;
         if (nets_.empty())
             rows.push_back((text("no active interfaces") | fgc(pal::dim)).build());
+
+        // Wide/graph mode: a throughput mountain (busiest iface's rx as the
+        // fill, tx as an overlay line) above the per-iface rate rows.
+        if (graph_h_ >= 2 && !nets_.empty()) {
+            const NetIface* busy = &nets_.front();
+            double best = -1;
+            for (const auto& n : nets_) {
+                double r = n.rx.per_sec + n.tx.per_sec;
+                if (r > best) { best = r; busy = &n; }
+            }
+            float peak = 1.0f;
+            for (int i = 0; i < busy->hist_len; ++i)
+                peak = std::max({peak,
+                                 busy->rx_history[static_cast<std::size_t>(i)],
+                                 busy->tx_history[static_cast<std::size_t>(i)]});
+            static thread_local std::array<float, 48> rxn{}, txn{};
+            for (int i = 0; i < busy->hist_len; ++i) {
+                rxn[static_cast<std::size_t>(i)] = busy->rx_history[static_cast<std::size_t>(i)] / peak;
+                txn[static_cast<std::size_t>(i)] = busy->tx_history[static_cast<std::size_t>(i)] / peak;
+            }
+            Graph g{rxn.data(), busy->hist_len};
+            g.fill().rows(graph_h_).color(pal::good)
+             .overlay(txn.data(), busy->hist_len, pal::hot);
+            rows.push_back(Element{g} | height(graph_h_));
+        }
 
         std::vector<const NetIface*> live;
         std::vector<std::string> idle_names;

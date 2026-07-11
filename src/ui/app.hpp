@@ -177,7 +177,11 @@ struct App {
         Layout L;
         L.narrow = m.width < 96;
         const int ncores = static_cast<int>(s.cpu.cores.size());
-        L.cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;
+        // Wide-2col stacks the CPU card in a narrow left column: 2-3 core
+        // columns (mirror view()). Non-wide keeps the classic packing.
+        const bool wide_screen = m.width >= 200;
+        L.cpu_cols = wide_screen ? (ncores > 16 ? 3 : 2)
+                                 : (ncores > 24 ? 4 : ncores > 12 ? 3 : 2);
         // Narrow mode packs the cores into a single heat-strip row.
         const int cores_rows = L.narrow ? 1 : (ncores + L.cpu_cols - 1) / L.cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
@@ -197,11 +201,19 @@ struct App {
         const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
         L.top_h = L.narrow ? cpu_h + mem_h + net_h + disk_h
                            : std::max(cpu_h, right_stack_h);
-        L.proc_rows = std::max(5, m.height - 5 - L.top_h - 2);
+        // Wide 2-col: the process table runs the full band height beside the
+        // stacked stat column, so its row count is the band, not a strip under
+        // the top band. Must mirror view()'s wide2 math or sync_scroll drifts.
+        const bool wide2 = m.width >= 200;
+        const int band_h = std::max(6, m.height - 5);
+        L.proc_rows = wide2 ? std::max(5, band_h - 2)
+                            : std::max(5, m.height - 5 - L.top_h - 2);
         L.body_rows = std::max(3, L.proc_rows - 1);
 
         const int inner = std::max(20, m.width - 2);
         const int gap_w = 1;
+        // Non-wide: classic CPU|stats split. (Wide-2col overrides proc_rows
+        // above and lays the body out in view(); these widths are unused there.)
         L.right_w = std::clamp((inner - gap_w) * 42 / 100, 34, 56);
         L.left_w  = inner - gap_w - L.right_w;
         const int cpu_inner = (L.narrow ? inner : L.left_w) - 4;
@@ -1189,7 +1201,14 @@ struct App {
         // Fixed rows: header(1) + verdict(3) + footer(1) + outer padding.
         // Top band: CPU panel (graph 4 + blank + cores) vs MEM+NET+DISK stack.
         const int ncores = static_cast<int>(s.cpu.cores.size());
-        const int cpu_cols = ncores > 24 ? 4 : ncores > 12 ? 3 : 2;   // stay ~8 rows tall
+        const bool wide_screen = m.width >= 200;
+        // In the wide-2col layout the CPU card lives in a ~narrow left column,
+        // so keep the core grid to 2-3 columns (meters need room); only the
+        // legacy full-width wide layout packs them 6-8 wide.
+        const bool wide2_cores = m.width >= 200;
+        const int cpu_cols = wide2_cores ? (ncores > 16 ? 3 : 2)
+                           : wide_screen ? (ncores > 32 ? 8 : ncores > 8 ? 6 : 2)
+                                         : (ncores > 24 ? 4 : ncores > 12 ? 3 : 2);
         // Narrow mode packs the cores into a single heat-strip row.
         const int cores_rows = narrow ? 1 : (ncores + cpu_cols - 1) / cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
@@ -1220,7 +1239,29 @@ struct App {
         const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
-        const int proc_rows = std::max(5, m.height - 5 - top_h - 2);
+
+        // ── Wide 2-column body ──
+        // On a big screen the whole thing flips: col 1 stacks EVERY stat panel
+        // vertically (CPU · MEM · NET · DISK · TRENDS), col 2 is the process
+        // table running the FULL band height beside them. The band spans from
+        // just under the verdict banner down to the footer.
+        const bool wide2 = m.width >= 200;
+        const int band_h = std::max(6, m.height - 5);   // minus header(1)+verdict(3)+footer(1)
+        // In wide-2col the proc table owns the band height; otherwise it's the
+        // classic strip beneath the top band.
+        const int proc_rows = wide2 ? std::max(5, band_h - 2)     // minus panel border
+                                    : std::max(5, m.height - 5 - top_h - 2);
+
+        // Process-table inner width. In wide-2col the table lives in the right
+        // column, so it's narrower than the full frame; compute it from the
+        // same col1 slice the body uses. (col1_w is derived again below; keep
+        // the two in sync — both read m.width.)
+        const bool wide2_pv = m.width >= 200;
+        const int inner_pv = std::max(20, m.width - 2);
+        const int col1_pv  = wide2_pv ? std::clamp(inner_pv * 40 / 100, 72, 110) : 0;
+        const int proc_inner_w = wide2_pv
+            ? std::max(40, inner_pv - col1_pv - 1 - 4)   // minus gap + panel border/pad
+            : std::max(20, m.width - 6);
 
         const ui::OrderedProcs& ord = ordered(m);
         ProcView pv{
@@ -1230,7 +1271,7 @@ struct App {
             .selected     = m.sel,
             .scroll       = m.scroll_top,
             .max_rows     = proc_rows,
-            .width        = std::max(20, m.width - 6),
+            .width        = proc_inner_w,
             .filter       = m.filter,
             .filtering    = m.filtering,
             .pending      = m.pending ? &*m.pending : nullptr,
@@ -1246,16 +1287,69 @@ struct App {
             .follow_pid   = m.follow_pid,
         };
 
-        // ── Top band: CPU alone on the left · MEM / NET / DISK stacked right ──
-        // Split the inner width so neither side starves the other; the CPU
-        // graph wants the wider slice, the stat cards the rest.
+        // ── Column split ──
+        // Wide 2-col: col 1 (stats, stacked) gets a fixed readable slice, col 2
+        // (proc table) takes the rest. Otherwise the classic CPU|stats split.
         const int inner = std::max(20, m.width - 2);      // minus outer padding
         const int gap_w = 1;
-        const int right_w = std::clamp((inner - gap_w) * 42 / 100, 34, 56);
-        const int left_w  = inner - gap_w - right_w;
+        // Stats column width: wide enough for the CPU cores + graphs to breathe
+        // but leaving the majority to the process table on an ultra-wide screen.
+        const int col1_w = wide2 ? std::clamp(inner * 40 / 100, 72, 110) : 0;
+        const int band_inner = wide2 ? col1_w : inner;
+        const int right_w = std::clamp((band_inner - gap_w) * 42 / 100, 34, 56);
+        const int left_w  = band_inner - gap_w - right_w;
         // Inner content width of a panel = box width - 2 border - 2 padding.
-        const int cpu_inner = (narrow ? inner : left_w) - 4;
+        const int cpu_inner = (narrow ? inner : wide2 ? col1_w - 4 : left_w) - 4;
         const int graph_w = std::max(8, cpu_inner - 4);   // minus y-axis (3) + gap (1)
+
+        // ── Wide 2-col: build col 1 (stacked, graph-forward stats) ──
+        if (wide2) {
+            // Every panel in col 1 shows a mountain graph. The band height is
+            // shared: each panel keeps its fixed content (border + meter/rate
+            // rows) and the LEFTOVER is split across the four graphs so the
+            // column fills top-to-bottom with no trailing gap.
+            const int cpu_gw = std::max(8, col1_w - 4 - 4);
+            // Fixed (non-graph) rows each panel needs:
+            const int cpu_fixed  = 2 + 1 + cores_rows;   // border + ALL hdr + cores
+            const int mem_fixed  = mem_h;                // border + RAM(+SWP) rows
+            const int net_fixed  = net_h;                // border + iface rows
+            const int disk_fixed = disk_h;               // border + I/O + mounts
+            const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
+            int graph_pool = std::max(8, band_h - all_fixed);
+            // Weight the split: CPU gets the tallest mountain, the rest share
+            // the remainder evenly. (CPU is the headline metric.)
+            int cpu_graph_h  = std::max(3, graph_pool * 40 / 100);
+            int rest_pool    = std::max(6, graph_pool - cpu_graph_h);
+            int rest_each    = std::max(2, rest_pool / 3);
+            int mem_graph_h  = rest_each;
+            int net_graph_h  = rest_each;
+            // The last panel absorbs the integer-division remainder so col 1
+            // fills the band exactly with no trailing gap.
+            int disk_graph_h = std::max(2, rest_pool - 2 * rest_each);
+
+            Element col1 = v(
+                Element{CpuPanel{s.cpu, cpu_cols, cpu_gw, cpu_graph_h, &s.mem}}
+                    | hit(ui::hit_band(ui::Detail::Cpu)),
+                Element{MemPanel{s.mem, mem_graph_h}}  | hit(ui::hit_band(ui::Detail::Mem)),
+                Element{NetPanel{s.nets, net_graph_h}} | hit(ui::hit_band(ui::Detail::Net)),
+                Element{DiskPanel{s.disks, s.disk_io, false, disk_graph_h}}
+                    | hit(ui::hit_band(ui::Detail::Disk))
+            ).build();
+
+            Element body = (h(
+                std::move(col1) | width(col1_w),
+                Element{ProcPanel{s, pv}} | grow(1)
+            ) | gap(gap_w) | height(band_h)).build();
+
+            return (v(
+                Header{s, m.paused},
+                VerdictBanner{s, m.verdict_pulse},
+                std::move(body),
+                Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
+                       m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
+            ) | padding(0, 1, 0, 1)).build();
+        }
+
         Element top = narrow
             ? (v(Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
                      | hit(ui::hit_band(ui::Detail::Cpu)),
