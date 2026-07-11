@@ -1315,32 +1315,28 @@ struct App {
             const int disk_fixed = disk_h;               // border + I/O + mounts
             const int all_fixed  = cpu_fixed + mem_fixed + net_fixed + disk_fixed;
             int graph_pool = band_h - all_fixed;
-            // FILL THE BAND: the four graphs SUM to exactly graph_pool so col 1
-            // covers the whole height with live graphs — no dead gap, no single
-            // graph left as a thin thread. CPU (headline) takes the biggest
-            // slice, the three stat graphs share the rest; the remainder from
-            // integer division lands on the net graph so the total is exact.
-            // Only do this when the band has genuine room for four readable
-            // graphs (>= ~16 rows of pool); on a short screen the graphs would
-            // overflow the footer, so fall back to the compact meter layout
-            // (graph_h 0 disables each panel's mountain).
+            // Two goals in tension: FILL the band (no dead gap) but keep each
+            // graph READABLE (a 7% line over 20 rows is an empty sky). Resolve
+            // it by CAPPING each graph at a comfortable height, then letting
+            // the panels grow() to share any leftover band height as breathing
+            // room around the (capped) graphs — so col 1 fills top-to-bottom
+            // without any single mountain ballooning.
             const bool graph_fill = graph_pool >= 16;
-            int cpu_graph_h  = graph_fill ? std::max(5, graph_pool * 34 / 100) : 0;
-            int mem_graph_h  = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
-            int disk_graph_h = graph_fill ? std::max(4, graph_pool * 22 / 100) : 0;
-            int net_graph_h  = graph_fill
-                ? std::max(4, graph_pool - cpu_graph_h - mem_graph_h - disk_graph_h) : 0;
+            int cpu_graph_h  = graph_fill ? std::clamp(graph_pool * 30 / 100, 6, 10) : 0;
+            int mem_graph_h  = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
+            int net_graph_h  = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
+            int disk_graph_h = graph_fill ? std::clamp(graph_pool * 22 / 100, 4, 7)  : 0;
             const int cpu_gw = std::max(8, col1_w - 4 - 4 - 4);   // minus y-axis
 
             Element col1 = v(
                 Element{CpuPanel{s.cpu, cpu_cols, cpu_gw, cpu_graph_h, &s.mem}}
-                    | hit(ui::hit_band(ui::Detail::Cpu)),
+                    | grow(3) | hit(ui::hit_band(ui::Detail::Cpu)),
                 Element{MemPanel{s.mem, mem_graph_h}}
-                    | hit(ui::hit_band(ui::Detail::Mem)),
+                    | grow(2) | hit(ui::hit_band(ui::Detail::Mem)),
                 Element{NetPanel{s.nets, net_graph_h}}
-                    | hit(ui::hit_band(ui::Detail::Net)),
+                    | grow(2) | hit(ui::hit_band(ui::Detail::Net)),
                 Element{DiskPanel{s.disks, s.disk_io, false, disk_graph_h}}
-                    | grow(1) | hit(ui::hit_band(ui::Detail::Disk))
+                    | grow(2) | hit(ui::hit_band(ui::Detail::Disk))
             ).build();
 
             Element body = (h(

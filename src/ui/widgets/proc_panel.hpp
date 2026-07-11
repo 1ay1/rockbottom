@@ -327,12 +327,13 @@ private:
 
         // The NAME column owns all the slack; instead of a void, trail the
         // command line in barely-there ink — genuinely useful (which python?
-        // whose agentty?) and it fills the table's dead middle.
+        // whose agentty?) and it fills the table's dead middle. NOT capped:
+        // the trail is clipped to the cell budget at render, so on a wide
+        // table it stretches to fill the whole NAME column instead of leaving
+        // a void between a short name and the numeric columns.
         std::string cmd_trail;
-        if (!p.cmd.empty() && p.cmd != p.name) {
+        if (!p.cmd.empty() && p.cmd != p.name)
             cmd_trail = p.cmd;
-            if (cmd_trail.size() > 96) cmd_trail.resize(96);
-        }
 
         // Ports: ":80" / ":80 +2" — lowest port plus how many more. Sky color
         // makes network-facing processes pop out of the table.
