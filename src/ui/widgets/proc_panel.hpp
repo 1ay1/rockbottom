@@ -184,13 +184,17 @@ private:
     // screen). `rgutter` is the scrollbar gutter reserved on the right.
     [[nodiscard]] int name_cell_w(int rgutter) const {
         const int w = view_.width;
-        const bool show_port = w >= 92;
-        const bool show_thr  = w >= 70;
-        const bool show_memp = w >= 62;
-        const bool show_mem  = w >= 54;
-        const bool show_io   = w >= 84;
-        int ncols = 6;                       // pid, user, name, meter, cpu, mem
-        int fixed = 8 + 8 + (show_mem ? 14 : 8) + 6 + 8 + 2;  // + S dot
+        const bool show_port  = w >= 92;
+        const bool show_thr   = w >= 70;
+        const bool show_memp  = w >= 62;
+        const bool show_mem   = w >= 54;
+        const bool show_io    = w >= 84;
+        // Too thin: drop the inline CPU usage meter entirely so the numeric
+        // columns keep breathing room instead of the graph squeezing them.
+        const bool show_meter = w >= 46;
+        const int meter_w = show_meter ? (show_mem ? 14 : 8) : 0;
+        int ncols = show_meter ? 6 : 5;      // pid, user, name, [meter], cpu, mem
+        int fixed = 8 + 8 + meter_w + 6 + 8 + 2;  // + S dot
         ncols += 1;                          // S
         if (show_port) { fixed += 9; ++ncols; }
         if (show_memp) { fixed += 5; ++ncols; }
@@ -212,6 +216,7 @@ private:
         const bool show_memp = w >= 62;
         const bool show_mem  = w >= 54;
         const bool show_io   = w >= 84;
+        const bool show_meter = w >= 46;
         // The header is a quiet RAIL, not a row of shouting labels: no
         // underline wall, a subtle full-width band (bgc on the h-container;
         // maya's ambient-bg inheritance carries it under every label), and a
@@ -253,7 +258,10 @@ private:
         cols.push_back((plain("USER") | w_<8>).build());
         cols.push_back((hdr("NAME", SortKey::Name) | width(name_cell_w(rgutter))).build());
         if (show_port) cols.push_back((hdr("PORT", SortKey::Port) | w_<9> | justify(Justify::End)).build());
-        cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
+        if (show_meter)
+            cols.push_back(num_hdr("CPU", SortKey::Cpu, show_mem ? 14 : 8, 6));
+        else
+            cols.push_back((hdr("CPU", SortKey::Cpu) | w_<6> | justify(Justify::End)).build());
         cols.push_back((hdr("MEM", SortKey::Mem) | w_<8> | justify(Justify::End)).build());
         if (show_memp) cols.push_back((hdr_bare("MEM%", SortKey::Mem) | w_<5> | justify(Justify::End)).build());
         if (show_io) cols.push_back((hdr("DISK", SortKey::Io) | w_<8> | justify(Justify::End)).build());
@@ -367,6 +375,7 @@ private:
             const bool show_memp = w >= 62;
             const bool show_mem  = w >= 54;
             const bool show_io   = w >= 84;
+            const bool show_meter = w >= 46;
             // Combined disk I/O rate; dim when idle, sky when the process is
             // actually touching the platter so a thrasher pops out.
             const double iorate = p.io_read.per_sec + p.io_write.per_sec;
@@ -519,7 +528,8 @@ private:
                 cols.push_back((text(port_txt, sk == SortKey::Port ? cell_st(pal::sky).with_bold()
                                                                    : cell_st(pal::sky))
                                 | nowrap | w_<9> | justify(Justify::End)).build());
-            cols.push_back(Meter{disp_cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
+            if (show_meter)
+                cols.push_back(Meter{disp_cpu_frac}.width(show_mem ? 14 : 8).groove(false).build_fixed());
             cols.push_back((text(cpu_txt, cpu_st) | nowrap | w_<6> | justify(Justify::End)).build());
             cols.push_back((text(humanize_bytes(static_cast<std::uint64_t>(disp_rss)),
                                  sk == SortKey::Mem ? cell_st(pal::white).with_bold()
