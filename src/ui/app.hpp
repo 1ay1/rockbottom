@@ -1266,20 +1266,14 @@ struct App {
         const int rc_target   = std::max(cpu_h, right_stack_h);  // band height
         const int rc_top_h    = rc_target / 2;                   // MEMORY half
         const int rc_bot_h    = rc_target - rc_top_h;            // NET+DISK half
-        // Shared graph height = whatever the SMALLER half can spare above its
-        // fixed rows, so MEM and NET get identical mountains and neither half
-        // overflows. DISK takes a small slice of what's left in the bottom.
-        //   top spare = rc_top_h - mem_h ;  bot spare = rc_bot_h - net_h - disk_h
-        const int top_spare = std::max(0, rc_top_h - mem_h);
+        // Each half FILLS with its graph — no dead space, no capping:
+        //   MEM graph  = top half minus MEM's meter rows
+        //   DISK graph = a small slice of the bottom half
+        //   NET graph  = the rest of the bottom half (the big one)
+        int rc_mem_graph  = std::max(0, rc_top_h - mem_h);
         const int bot_spare = std::max(0, rc_bot_h - net_h - disk_h);
         int rc_disk_graph = std::min({bot_spare / 4, 4});
-        // NET and MEM share the same height: the min of the top spare and the
-        // net's share of the bottom spare, so both graphs match and are
-        // height-responsive. Cap so a very tall band doesn't make an empty sky.
-        int gshared = std::clamp(std::min(top_spare, bot_spare - rc_disk_graph),
-                                 0, 12);
-        int rc_mem_graph = gshared;
-        int rc_net_graph = gshared;
+        int rc_net_graph  = std::max(0, bot_spare - rc_disk_graph);
         if (rc_mem_graph  < 3) rc_mem_graph  = 0;
         if (rc_net_graph  < 3) rc_net_graph  = 0;
         if (rc_disk_graph < 3) rc_disk_graph = 0;
