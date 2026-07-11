@@ -165,11 +165,22 @@ private:
         const auto& p = *view_.pending;
         const bool hard = p.sig == SIGKILL;
         const bool group = p.pids.size() > 1;
-        Color c = hard ? pal::crit : pal::warn;
+        // Non-lethal signals (STOP/CONT/HUP/USR…) shouldn't wear the crit/warn
+        // "kill" tint or verb — only TERM/KILL are destructive-by-intent.
+        const bool lethal = p.sig == SIGKILL || p.sig == SIGTERM ||
+                            p.sig == SIGQUIT || p.sig == SIGABRT || p.sig == SIGINT;
+        Color c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
         std::string what = group
             ? "ALL " + std::to_string(p.pids.size()) + " × " + p.name
             : p.name + " (" + std::to_string(p.pid) + ")";
-        std::string q = std::string(hard ? "force-kill " : "end ") + what + "?";
+        // Verb reads naturally per signal; the exotic ones say "send SIGX to".
+        std::string verb =
+              p.sig == SIGKILL ? "force-kill "
+            : p.sig == SIGTERM ? "end "
+            : (p.sig == SIGSTOP || p.sig == SIGTSTP) ? "suspend "
+            : p.sig == SIGCONT ? "resume "
+            : "send " + sig_name(p.sig) + " to ";
+        std::string q = verb + what + "?";
         return (h(
             text(" " + q + " ") | nowrap | Bold | fgc(pal::bg) | bgc(c),
             text("  y") | nowrap | Bold | fgc(pal::good),

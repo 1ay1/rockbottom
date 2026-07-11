@@ -57,6 +57,12 @@ public:
         std::vector<Element> parts;
 
         if (pending_) {
+            parts.push_back((text(" send ") | nowrap | fgc(pal::dim)).build());
+            parts.push_back((text(sig_name(pending_->sig)) | nowrap | Bold | fgc(pal::hot)).build());
+            parts.push_back((text(" to " + pending_->name +
+                                  (pending_->pids.size() > 1
+                                       ? " ×" + std::to_string(pending_->pids.size()) : "") + "? ")
+                             | nowrap | fgc(pal::label)).build());
             parts.push_back(hint("y", "confirm"));
             parts.push_back(hint("n", "cancel"));
         } else if (filtering_) {
@@ -74,6 +80,7 @@ public:
             parts.push_back(sep());
             parts.push_back(act_hint("x", "end", FooterAct::End));
             parts.push_back(act_hint("K", "kill", FooterAct::Kill));
+            parts.push_back(hint("l", "signal"));
             parts.push_back(act_hint("s", "sort", FooterAct::Sort));
             parts.push_back(sep());
             parts.push_back(hint("1-6", "detail"));

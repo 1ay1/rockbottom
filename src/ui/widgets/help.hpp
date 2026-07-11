@@ -37,6 +37,7 @@ public:
                 {"/", "filter by name or pid"},
                 {"x / Del", "end process (SIGTERM)"},
                 {"K", "force-kill (SIGKILL)"},
+                {"l", "send any signal (picker)"},
                 {"X", "end ALL with this name"},
                 {"y / n", "confirm / cancel kill"},
             }},

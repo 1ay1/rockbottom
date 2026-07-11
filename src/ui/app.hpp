@@ -7,6 +7,7 @@
 //   /            filter processes by name (Esc clears)
 //   x / Delete   ask to end the selected process (SIGTERM)
 //   K            ask to force-kill (SIGKILL)
+//   l            open the signal picker (send ANY signal)
 //   y / Enter    confirm pending kill · n / Esc cancels
 //   s c m n P    sorting · space pause · ? help · q quit
 
@@ -26,6 +27,7 @@
 #include "widgets/proc_panel.hpp"
 #include "widgets/footer.hpp"
 #include "widgets/help.hpp"
+#include "widgets/signal_menu.hpp"
 #include "widgets/detail.hpp"
 
 #include <algorithm>
@@ -63,6 +65,18 @@ struct App {
         bool        filtering = false;   // '/' typing mode
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
+
+        // Signal picker (htop's F9 menu): when set, an overlay lists every
+        // signal in the catalog and the number keys / ↑↓ pick one. Choosing
+        // arms a PendingKill with that signal, so the same y/n confirm and
+        // group semantics apply to ANY signal, not just TERM/KILL.
+        struct SigMenu {
+            int  anchor_pid = 0;      // process the menu was opened on
+            std::string name;         // its name (for the confirm strip)
+            std::vector<int> pids;    // targets (group-aware, like PendingKill)
+            int  sel = 0;             // index into signal_catalog()
+        };
+        std::optional<SigMenu> sigmenu;
 
         // Verdict pulse: when health DEGRADES the banner border flares and
         // fades over the next few ticks so the state change catches the eye.
@@ -255,6 +269,12 @@ struct App {
             m.pending.reset();
             return {std::move(m), C{}};
         }
+        if (m.sigmenu) {
+            // Same safety rule for the signal picker: a click dismisses it;
+            // the destructive choice stays keyboard-only.
+            m.sigmenu.reset();
+            return {std::move(m), C{}};
+        }
 
         // ── Everything else routes through the paint-time hit registry ──
         if (hit) {
@@ -367,6 +387,38 @@ struct App {
         maya::Event ev{ke};
         using maya::key;
 
+        // 0. Signal picker intercepts everything. Number keys 1-9 jump to a
+        //    signal; ↑↓ move; enter/y arms the confirm; esc/n backs out.
+        if (m.sigmenu) {
+            const auto& cat = signal_catalog();
+            const int n = static_cast<int>(cat.size());
+            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'n') || key(ev, 'q')) {
+                m.sigmenu.reset();
+                return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) {
+                m.sigmenu->sel = std::min(n - 1, m.sigmenu->sel + 1); return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Up) || key(ev, 'k')) {
+                m.sigmenu->sel = std::max(0, m.sigmenu->sel - 1); return {std::move(m), C{}};
+            }
+            if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
+                ck && ck->codepoint >= '1' && ck->codepoint <= '9') {
+                const int idx = static_cast<int>(ck->codepoint - '1');
+                if (idx < n) m.sigmenu->sel = idx;
+                return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
+                const int sig = cat[static_cast<std::size_t>(
+                    std::clamp(m.sigmenu->sel, 0, n - 1))].num;
+                m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
+                                        sig, m.sigmenu->pids};
+                m.sigmenu.reset();
+                return {std::move(m), C{}};
+            }
+            return {std::move(m), C{}};
+        }
+
         // 1. Kill confirmation intercepts everything.
         if (m.pending) {
             if (key(ev, 'y') || key(ev, maya::SpecialKey::Enter)) {
@@ -379,8 +431,15 @@ struct App {
                     else { ++failed; if (first_err.empty()) first_err = err; }
                 }
                 const bool group = targets.size() > 1;
-                std::string verb = m.pending->sig == SIGKILL ? "force-killed " : "asked ";
-                std::string tail = m.pending->sig == SIGKILL ? "" : " to exit";
+                const int sig = m.pending->sig;
+                // Signal-aware wording: KILL is "force-killed", STOP/CONT/HUP
+                // etc. name themselves, plain TERM stays "asked … to exit".
+                std::string verb, tail;
+                if (sig == SIGKILL)      { verb = "force-killed "; tail = ""; }
+                else if (sig == SIGTERM) { verb = "asked ";        tail = " to exit"; }
+                else if (sig == SIGSTOP || sig == SIGTSTP) { verb = "suspended "; tail = ""; }
+                else if (sig == SIGCONT) { verb = "resumed ";      tail = ""; }
+                else { verb = "sent " + sig_name(sig) + " to "; tail = ""; }
                 std::string what = group
                     ? std::to_string(ok) + " × " + m.pending->name
                     : m.pending->name + " (" + std::to_string(m.pending->pid) + ")";
@@ -453,6 +512,7 @@ struct App {
                 if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
                 if (key(ev, 'X')) return arm_kill_all(std::move(m), SIGTERM);
+                if (key(ev, 'l')) return open_sigmenu(std::move(m));
             } else {
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0;
@@ -509,6 +569,7 @@ struct App {
         if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
         if (key(ev, 'K'))                                      return arm_kill(std::move(m), SIGKILL);
         if (key(ev, 'X'))                                      return arm_kill_all(std::move(m), SIGTERM);
+        if (key(ev, 'l'))                                      return open_sigmenu(std::move(m));
 
         return {std::move(m), C{}};
     }
@@ -560,6 +621,17 @@ struct App {
         const int max_scroll = std::max(0, ui::HelpOverlay::content_rows(m.width)
                                            - ui::HelpOverlay::viewport_rows(m.height));
         m.help_scroll = std::clamp(m.help_scroll, 0, max_scroll);
+    }
+
+    // Open the signal picker on the selected process (single target). The
+    // menu itself arms the PendingKill once a signal is chosen.
+    static std::pair<Model, maya::Cmd<Msg>> open_sigmenu(Model m) {
+        auto view = filtered(m);
+        if (!view.empty() && m.sel < static_cast<int>(view.size())) {
+            const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
+            m.sigmenu = Model::SigMenu{p->pid, p->name, {p->pid}, 0};
+        }
+        return {std::move(m), maya::Cmd<Msg>{}};
     }
 
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
@@ -639,6 +711,10 @@ struct App {
         // Pending kill strip (footer + proc panel both change).
         if (m.pending) { fold(7); fold(static_cast<std::uint64_t>(m.pending->pids.size()));
                          fold(static_cast<std::uint64_t>(m.pending->sig)); fold_str(m.pending->name); }
+        // Signal picker overlay: target + which signal is highlighted.
+        if (m.sigmenu) { fold(23); fold(static_cast<std::uint64_t>(m.sigmenu->sel));
+                         fold(static_cast<std::uint64_t>(m.sigmenu->pids.size()));
+                         fold(static_cast<std::uint64_t>(m.sigmenu->anchor_pid)); }
         // Toast: text + error tint (its ttl countdown is what expires it).
         if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
 
@@ -676,6 +752,14 @@ struct App {
         using namespace rockbottom::ui;
 
         if (m.show_help) return HelpOverlay{m.width, m.height, m.help_scroll};
+
+        if (m.sigmenu) {
+            const bool group = m.sigmenu->pids.size() > 1;
+            std::string target = group
+                ? std::to_string(m.sigmenu->pids.size()) + " × " + m.sigmenu->name
+                : m.sigmenu->name + " (" + std::to_string(m.sigmenu->anchor_pid) + ")";
+            return SignalMenu{m.width, m.height, std::move(target), m.sigmenu->sel};
+        }
 
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;

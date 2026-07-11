@@ -175,6 +175,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     b.push_back((h(
         text("  x") | nowrap | Bold | fgc(pal::warn), text("·ask it to stop (SIGTERM)   ") | nowrap | fgc(pal::dim),
         text("K") | nowrap | Bold | fgc(pal::crit), text("·force-kill (SIGKILL)   ") | nowrap | fgc(pal::dim),
+        text("l") | nowrap | Bold | fgc(pal::hot), text("·send any signal   ") | nowrap | fgc(pal::dim),
         text("X") | nowrap | Bold | fgc(pal::crit), text("·end all with this name   ") | nowrap | fgc(pal::dim),
         text("↑↓") | nowrap | Bold | fgc(pal::sky), text("·walk the list") | nowrap | fgc(pal::dim)
     )).build());

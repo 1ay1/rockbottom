@@ -21,6 +21,43 @@ struct PendingKill {
     std::vector<int> pids;   // every target; size()>1 = group kill
 };
 
+// One entry in the signal picker: the number, its POSIX name, and a one-word
+// gloss of what it does. Ordered the way htop's F9 menu lists them — the
+// everyday ones first, the exotic ones after.
+struct SignalDef {
+    int         num;
+    const char* name;   // "SIGTERM"
+    const char* gloss;  // "graceful stop"
+};
+
+// The catalog the picker renders. Kept deliberately curated (not every signal
+// in <csignal>) so the menu stays a glanceable page, not a syscall reference.
+inline const std::vector<SignalDef>& signal_catalog() {
+    static const std::vector<SignalDef> kSignals = {
+        {SIGTERM, "SIGTERM", "graceful stop"},
+        {SIGKILL, "SIGKILL", "force kill"},
+        {SIGINT,  "SIGINT",  "interrupt (^C)"},
+        {SIGHUP,  "SIGHUP",  "hang up / reload"},
+        {SIGQUIT, "SIGQUIT", "quit + core dump"},
+        {SIGSTOP, "SIGSTOP", "suspend"},
+        {SIGCONT, "SIGCONT", "resume"},
+        {SIGUSR1, "SIGUSR1", "user-defined 1"},
+        {SIGUSR2, "SIGUSR2", "user-defined 2"},
+        {SIGABRT, "SIGABRT", "abort"},
+        {SIGWINCH,"SIGWINCH","window resize"},
+        {SIGTSTP, "SIGTSTP", "stop (^Z)"},
+    };
+    return kSignals;
+}
+
+// Human name for a signal number ("SIGTERM"), for the confirm strip / toast.
+// Falls back to "signal N" for anything outside the curated catalog.
+inline std::string sig_name(int sig) {
+    for (const auto& s : signal_catalog())
+        if (s.num == sig) return s.name;
+    return "signal " + std::to_string(sig);
+}
+
 // Transient notification shown in the footer for a few ticks.
 struct Toast {
     std::string text;
