@@ -51,8 +51,11 @@ struct Ctx {
         c.wide = w >= 84;
         // On a big monitor a single tall column wastes 2/3 of the width and
         // leaves the hero graph a thin line in an empty sky. Panes that opt in
-        // reflow into two side-by-side columns above this width.
-        c.ultrawide = w >= 170;
+        // reflow into two side-by-side columns above this width. Two ~72-col
+        // reading columns + a 2-col gutter fit from ~146 cols; splitting there
+        // (rather than 170) kills the lopsided right-hand VOID a single
+        // 104-capped column leaves on a 150-col terminal.
+        c.ultrawide = w >= 146;
         c.tall = h >= 30;
         // Frame chrome: panel border(2) + panel padding(2) + hint(1) = 5 rows.
         c.body_h = std::max(3, h - 5);
@@ -676,13 +679,25 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
                 total_rows += rows[static_cast<std::size_t>(i)];
             }
 
-            // Wrap the windowed column at the (possibly capped) width and
-            // left-anchor it; a trailing spacer soaks the surplus so the
-            // scrollbar still pins to the far right edge of the slot.
+            // Wrap the windowed column at the (possibly capped) width. When
+            // the slot is much WIDER than the reading cap (a single-column
+            // pane on a 130-150 col terminal that hasn't reached the two-col
+            // split), CENTER the block so the surplus reads as symmetric
+            // margin rather than a lopsided right-hand VOID beside the
+            // scrollbar. A small surplus still left-anchors (centering a
+            // near-full column just jitters it). The scrollbar always pins to
+            // the far right via the outer h-stack in the caller.
             const int pad_w = std::max(0, gutter_w - inner_w);
+            const bool center = pad_w >= 12;
             auto place = [&](std::vector<Element> col) -> Element {
                 Element body = (v(std::move(col)) | width(inner_w)).build();
                 if (pad_w <= 0) return (Element{std::move(body)} | grow(1)).build();
+                if (center)
+                    return (h(
+                        Element{blank()} | grow(1),
+                        Element{std::move(body)} | width(inner_w),
+                        Element{blank()} | grow(1)
+                    )).build();
                 return (h(
                     Element{std::move(body)} | width(inner_w),
                     Element{blank()} | grow(1)
