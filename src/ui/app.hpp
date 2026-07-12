@@ -1387,13 +1387,17 @@ struct App {
             // graph_pool / *_graph_h estimates — nothing can drift from what
             // the layout engine actually allocates, so the column fills
             // top-to-bottom at ANY terminal height. NETWORK is the star
-            // (largest weight); CPU next; MEM and DISK share the rest.
+            // (largest weight); CPU next; DISK gets the rest.
+            //   MEMORY sits at NATURAL height (RAM + SWP meters only): its
+            //   usage-over-time mountain is REDUNDANT because the CPU panel
+            //   already overlays the same RAM series (the "── ram" trace).
+            //   Its freed weight goes to CPU + NET.
             Element col1 = v(
-                Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(26)}
+                Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(32)}
                     | hit(ui::hit_band(ui::Detail::Cpu)),
-                Element{MemPanel{s.mem}.expand(18)}
+                Element{MemPanel{s.mem}}
                     | hit(ui::hit_band(ui::Detail::Mem)),
-                Element{NetPanel{s.nets}.expand(38)}
+                Element{NetPanel{s.nets}.expand(50)}
                     | hit(ui::hit_band(ui::Detail::Net)),
                 Element{DiskPanel{s.disks, s.disk_io, false}.expand(18)}
                     | hit(ui::hit_band(ui::Detail::Disk))
@@ -1440,23 +1444,22 @@ struct App {
                   // terminal height instead of being clamped at ~22 rows.
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(1)}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
-                  // Self-filling right column. Each panel carries an intrinsic
-                  // grow weight (MemPanel.grow / NetPanel.grow) so it lands as
-                  // a growing BOX in the column and stretches to its slot;
-                  // inside, a maya fill() graph consumes whatever height is
-                  // left after the meters/iface rows. maya divides the band's
-                  // REAL height 40 / 60 (MEM / NET+DISK) by grow weight and
-                  // hands each panel its true height at paint — no rc_*_graph
-                  // estimate, so no drift and no trailing "still space".
-                  //   TOP  (grow 40) MEMORY fills
-                  //   BOT  (grow 60) NETWORK fills, DISK sits at natural height
-                  v(Element{MemPanel{s.mem}.expand(40)}
+                  // Self-filling right column. NETWORK carries the fill; its
+                  // maya fill() graph consumes whatever height is left after
+                  // the meters/iface rows. MEMORY sits at NATURAL height (just
+                  // the RAM + SWP meters) — its usage-over-time mountain is
+                  // REDUNDANT here because the CPU panel already overlays the
+                  // same RAM series (the "── ram" trace), so drawing it twice
+                  // wasted a tall slot. DISK sits at natural height too.
+                  //   MEMORY  natural (meters only)
+                  //   NETWORK (grow) fills · DISK natural
+                  v(Element{MemPanel{s.mem}}
                         | hit(ui::hit_band(ui::Detail::Mem)),
                     v(Element{NetPanel{s.nets}.expand(1)}
                           | hit(ui::hit_band(ui::Detail::Net)),
                       Element{DiskPanel{s.disks, s.disk_io, false}}
                           | hit(ui::hit_band(ui::Detail::Disk)))
-                        | grow(60))
+                        | grow(1))
                     | width(right_w)
               ) | gap(gap_w) | height(band_px)).build();
 
