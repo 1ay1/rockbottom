@@ -50,7 +50,9 @@ add_subdirectory(third_party/maya)
 # The sampler is split into an OS-agnostic core (orchestration + verdict) and a
 # per-platform backend. Exactly ONE backend compiles, chosen here by the host
 # OS; adding an OS means adding a platform/<os>/ directory and a branch below.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Termux reports CMAKE_SYSTEM_NAME as "Android", but it is Linux underneath
+# (procfs, sysfs, the same syscalls) — so the Linux backend serves it directly.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Android")
     set(RB_PLATFORM_DIR src/core/platform/linux)
     file(GLOB RB_PLATFORM_SRC CONFIGURE_DEPENDS ${RB_PLATFORM_DIR}/*.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -59,7 +61,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 else()
     message(FATAL_ERROR
         "rockbottom has no platform backend for '${CMAKE_SYSTEM_NAME}'. "
-        "Supported: Linux, Darwin (macOS).")
+        "Supported: Linux, Android (Termux), Darwin (macOS).")
 endif()
 message(STATUS "rockbottom platform backend: ${CMAKE_SYSTEM_NAME} (${RB_PLATFORM_DIR})")
 
