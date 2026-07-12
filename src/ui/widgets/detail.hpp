@@ -129,19 +129,28 @@ private:
         using namespace maya; using namespace maya::dsl;
         // Census with lit figures — a faint mush of text hides the one number
         // you came for; ink the counts, keep the joinery quiet.
-        std::vector<Element> census;
-        auto fig = [&](const std::string& n, const char* unit, maya::Color c) {
-            census.push_back((text(n) | nowrap | Bold | fgc(c)).build());
-            census.push_back((text(unit) | nowrap | fgc(pal::faint)).build());
+        // Built as a fit_row of ATOMIC clusters (dot + figure + unit): a plain
+        // h-stack of nowrap cells flex-shrinks and clips the DIGITS themselves
+        // on a narrow pane ("41 p ·10 th" for 418 procs / 1077 threads — a
+        // lie). fit_row sheds whole clusters lowest-rank-first instead:
+        // threads go first, then running; procs and the zombie/blocked
+        // warnings always survive.
+        auto cluster = [](const std::string& n, const char* unit, maya::Color c,
+                          bool lead_dot) -> Element {
+            std::vector<Element> cc;
+            if (lead_dot) cc.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build());
+            cc.push_back((text(n) | nowrap | Bold | fgc(c)).build());
+            cc.push_back((text(unit) | nowrap | fgc(pal::faint)).build());
+            return (h(std::move(cc))).build();
         };
-        auto dot = [&] { census.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build()); };
-        fig(std::to_string(s_.proc_count), " procs", pal::label);
-        dot();
-        fig(std::to_string(s_.thread_count), " threads", pal::label);
-        dot();
-        fig(std::to_string(s_.running), " running", pal::good);
-        if (s_.zombies) { dot(); fig(std::to_string(s_.zombies), " zombie", pal::hot); }
-        if (s_.dstate)  { dot(); fig(std::to_string(s_.dstate), " blocked", pal::crit); }
+        std::vector<FitItem> census;
+        census.push_back({cluster(std::to_string(s_.proc_count), " procs", pal::label, false)});
+        census.push_back({cluster(std::to_string(s_.thread_count), " threads", pal::label, true), 1});
+        census.push_back({cluster(std::to_string(s_.running), " running", pal::good, true), 2});
+        if (s_.zombies)
+            census.push_back({cluster(std::to_string(s_.zombies), " zombie", pal::hot, true), 4});
+        if (s_.dstate)
+            census.push_back({cluster(std::to_string(s_.dstate), " blocked", pal::crit, true), 5});
         std::string batt;
         if (s_.battery.present)
             batt = "  \xf0\x9f\x94\x8b " + std::to_string(s_.battery.percent) + "%" + (s_.battery.charging ? " \xe2\x86\x91" : "");
@@ -182,7 +191,7 @@ private:
         }};
         return (v(
             std::move(id_row),
-            h(std::move(census)),
+            fit_row(std::move(census)),
             blank()
         )).build();
     }

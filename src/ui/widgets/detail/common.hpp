@@ -208,9 +208,13 @@ inline Element section(std::string title, maya::Color ac, std::string chip = "")
             runs.push_back({off, t.size(), Style{}.with_bold().with_fg(ac)});
 
             // Reserve room for a trailing chip ( " · <chip>" ) on the right.
-            const int chip_cells = ch.empty() ? 0
-                                 : 3 + static_cast<int>(ch.size());       // " · " + chip
+            // If the pane is too thin to hold the name AND the chip, drop the
+            // chip WHOLE — a clipped "· t" stub reads as garbage.
             const int used = 2 + static_cast<int>(t.size()) + 1;         // bar + name + gap
+            int chip_cells = ch.empty() ? 0
+                           : 3 + static_cast<int>(ch.size());            // " · " + chip
+            const bool with_chip = chip_cells > 0 && used + chip_cells <= avail;
+            if (!with_chip) chip_cells = 0;
             const int rule_cells = std::max(0, avail - used - chip_cells);
 
             off = content.size();
@@ -219,7 +223,7 @@ inline Element section(std::string title, maya::Color ac, std::string chip = "")
             content += rulestr;
             runs.push_back({off, rulestr.size(), Style{}.with_fg(rule)});
 
-            if (!ch.empty()) {
+            if (with_chip) {
                 off = content.size();
                 std::string sep = " · ";
                 content += sep;
@@ -246,27 +250,58 @@ inline Element verdict(const std::string& msg, maya::Color c) {
     ) | gap(1)).build();
 }
 
-// A ranked top-N list row: " N  name  ████░░  value". The rank digit is a
+// A ranked top-N list row: " N  name  ████░░  value". The rank digit is a
 // quiet ordinal — #1 gets the accent so the biggest consumer pops — and the
 // grid (rank 3 / name / meter / figures) is identical across panes, so once
 // you've read one "top" list you've read them all.
+// Width-aware: the full grid needs ~45 cols; on a thin pane flex used to
+// clip the fixed cells' DIGITS ("13683" for pid 136830, "6.0" losing its %)
+// — numbers that lie. Instead shed by priority: v2 → shrink name → meter →
+// pid; the rank, a readable name, and the primary value always survive.
 inline Element rank_row(int rank, const std::string& pid, const std::string& name,
                         double frac, maya::Color ac,
                         const std::string& v1, maya::Color c1, int v1w,
                         const std::string& v2 = "", maya::Color c2 = pal::label, int v2w = 0) {
-    using namespace maya; using namespace maya::dsl;
-    std::vector<Element> row;
-    row.push_back((text(std::to_string(rank)) | nowrap
-                   | fgc(rank == 1 ? ac : pal::faint) | width(2) | justify(Justify::End)).build());
-    row.push_back((text(pid) | nowrap | fgc(pal::dim) | width(7) | justify(Justify::End)).build());
-    Style nst = Style{}.with_fg(rank == 1 ? pal::white : pal::text);
-    if (rank == 1) nst = nst.with_bold();
-    row.push_back((text(name, nst) | nowrap | width(23)).build());
-    row.push_back((Element{Meter{frac}.fill().groove(false).color(ac)} | grow(1)).build());
-    row.push_back((text(v1) | nowrap | Bold | fgc(c1) | width(v1w) | justify(Justify::End)).build());
-    if (v2w > 0)
-        row.push_back((text(v2) | nowrap | fgc(c2) | width(v2w) | justify(Justify::End)).build());
-    return (h(std::move(row)) | gap(1)).build();
+    using namespace maya;
+    return Element{maya::ComponentElement{
+        .render = [=](int w, int) -> Element {
+            using namespace maya::dsl;
+            constexpr int kGap = 1, kMeterMin = 6;
+            bool keep_v2    = v2w > 0;
+            bool keep_meter = true;
+            bool keep_pid   = true;
+            int  name_w     = 23;
+            auto need = [&] {
+                return 2 + kGap + (keep_pid ? 7 + kGap : 0) + name_w + kGap
+                     + (keep_meter ? kMeterMin + kGap : 0) + v1w
+                     + (keep_v2 ? kGap + v2w : 0);
+            };
+            if (need() > w) keep_v2 = false;
+            if (need() > w) name_w = std::max(10, name_w - (need() - w));
+            if (need() > w) keep_meter = false;
+            if (need() > w) keep_pid = false;
+            if (need() > w) name_w = std::max(4, name_w - (need() - w));
+            std::vector<Element> row;
+            row.push_back((text(std::to_string(rank)) | nowrap
+                           | fgc(rank == 1 ? ac : pal::faint) | width(2) | justify(Justify::End)).build());
+            if (keep_pid)
+                row.push_back((text(pid) | nowrap | fgc(pal::dim) | width(7) | justify(Justify::End)).build());
+            Style nst = Style{}.with_fg(rank == 1 ? pal::white : pal::text);
+            if (rank == 1) nst = nst.with_bold();
+            // truncate_end (display-width, UTF-8-safe) — NOT fmt::clip, whose
+            // byte-indexed substr can split a multi-byte codepoint mid-sequence
+            // and render a replacement glyph.
+            const std::string nm = static_cast<int>(string_width(name)) > name_w
+                ? truncate_end(name, name_w) : name;
+            row.push_back((text(nm, nst) | nowrap | width(name_w)).build());
+            if (keep_meter)
+                row.push_back((Element{Meter{frac}.fill().groove(false).color(ac)} | grow(1)).build());
+            row.push_back((text(v1) | nowrap | Bold | fgc(c1) | width(v1w) | justify(Justify::End)).build());
+            if (keep_v2)
+                row.push_back((text(v2) | nowrap | fgc(c2) | width(v2w) | justify(Justify::End)).build());
+            return (h(std::move(row)) | gap(kGap)).build();
+        },
+    }};
 }
 
 // ── BIG-NUMBER STAT CARD ─────────────────────────────────────────────
@@ -364,7 +399,11 @@ inline Element hero_graph(double frac, maya::Color card_c, const char* label,
             g.fill().rows(gh);
             if (graph_c) g.color(*graph_c);
             if (overlay) g.overlay(overlay, overlay_len, overlay_c);
-            row.push_back(Element{g.build_fixed()} | grow(1));
+            // build(), NOT build_fixed(): fill() zeroes cells_, and
+            // build_fixed() with cells_==0 draws ZERO dot-columns — a dead,
+            // empty graph at every size. build() wraps the fill-mode
+            // component that resolves the real slot width at paint.
+            row.push_back(Element{g.build()});
             return (h(std::move(row)) | gap(1) | height(gh)).build();
         },
     }};

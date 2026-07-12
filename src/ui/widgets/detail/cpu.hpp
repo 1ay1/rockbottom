@@ -254,12 +254,36 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             std::string tail = sane(sn.high_c)
                 ? ("high " + std::to_string(static_cast<int>(sn.high_c)) + "°")
                 : (sane(sn.crit_c) ? "crit " + std::to_string(static_cast<int>(sn.crit_c)) + "°" : "");
-            R.push_back((h(
-                text("    " + std::string(fmt::clip(sn.label, 18))) | nowrap | fgc(pal::label) | width(20),
-                Element{Meter{frac}.fill().groove(false).color(load_color(frac))} | grow(1),
-                text(t) | nowrap | Bold | fgc(load_color(frac)) | width(7) | justify(Justify::End),
-                text(tail) | nowrap | fgc(pal::faint) | width(11) | justify(Justify::End)
-            ) | gap(1)).build());
+            // Width-aware: fixed label(20)+temp(7)+tail(11) columns crush on a
+            // thin pane — the label truncates to a stub and the tail clips
+            // mid-figure ("high 8"). Shed the tail first, then shrink the
+            // label; the meter + temperature always survive.
+            const std::string label = sn.label;
+            const std::string temp = t;
+            const maya::Color tc = load_color(frac);
+            R.push_back(Element{maya::ComponentElement{
+                .render = [label, tail, temp, frac, tc](int w, int) -> Element {
+                    using namespace maya; using namespace maya::dsl;
+                    constexpr int kGap = 1, kMeterMin = 4, kTempW = 7;
+                    int label_w = 20;
+                    bool keep_tail = !tail.empty();
+                    auto need = [&] {
+                        return label_w + kGap + kMeterMin + kGap + kTempW
+                             + (keep_tail ? kGap + 11 : 0);
+                    };
+                    if (need() > w) keep_tail = false;
+                    if (need() > w) label_w = std::max(8, label_w - (need() - w));
+                    std::vector<Element> row;
+                    row.push_back((text("    " + std::string(truncate_end(label,
+                                       std::max(4, label_w - 4))))
+                                   | nowrap | fgc(pal::label) | width(label_w)).build());
+                    row.push_back((Element{Meter{frac}.fill().groove(false).color(tc)} | grow(1)).build());
+                    row.push_back((text(temp) | nowrap | Bold | fgc(tc) | width(kTempW) | justify(Justify::End)).build());
+                    if (keep_tail)
+                        row.push_back((text(tail) | nowrap | fgc(pal::faint) | width(11) | justify(Justify::End)).build());
+                    return (h(std::move(row)) | gap(kGap)).build();
+                },
+            }});
         }
     }
 
