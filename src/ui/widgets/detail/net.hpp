@@ -168,20 +168,41 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         agg_rpps += ni.rx_pps; agg_tpps += ni.tx_pps;
         agg_errs += ni.rx_errs + ni.tx_errs; agg_drops += ni.drops;
     }
-    b.push_back(section("ALL INTERFACES", pal::net_ac));
-    b.push_back(kv3(
+    // Split geometry decided up-front so the aggregate header, the roster,
+    // and the connections band all share ONE centered inner width — the
+    // "fixed width, centered" chrome every other pane uses. `center()` wraps a
+    // row in symmetric grow-spacer margins when split has surplus; otherwise
+    // it's a transparent pass-through (narrow / non-split panes unchanged).
+    const bool split = net_is_split(s, cx);
+    constexpr int kBandDesign = 184;
+    const int ngap    = 2;
+    const int navail  = std::max(40, cx.w - 6);
+    const int ninner  = split ? std::min(navail, kBandDesign) : navail;
+    const int nside   = std::max(0, navail - ninner);
+    const bool ncenter = split && nside >= 16;
+    auto center = [&](Element e) -> Element {
+        using namespace maya::dsl;
+        if (!ncenter) return e;
+        return (h(
+            Element{blank()} | grow(1),
+            std::move(e) | width(ninner),
+            Element{blank()} | grow(1)
+        )).build();
+    };
+
+    b.push_back(center(section("ALL INTERFACES", pal::net_ac)));
+    b.push_back(center(kv3(
         "download", humanize_rate(ByteRate{agg_rx}), pal::sky,
         "upload", humanize_rate(ByteRate{agg_tx}), pal::good,
         "links up", std::to_string(up) + "/" + std::to_string(s.nets.size()),
-        up > 0 ? pal::good : pal::dim));
-    b.push_back(kv3(
+        up > 0 ? pal::good : pal::dim)));
+    b.push_back(center(kv3(
         "lifetime ↓", humanize_bytes(agg_rxt), pal::label,
         "lifetime ↑", humanize_bytes(agg_txt), pal::label,
-        "packets", fmt::count(agg_rpps + agg_tpps) + "/s", pal::label));
+        "packets", fmt::count(agg_rpps + agg_tpps) + "/s", pal::label)));
     // NOTE: net_conn_scroll_max assumes a FIXED aggregate height, so the
     // optional error line only shows in the STACKED (non-split) layout, where
     // scroll math counts rows directly.
-    const bool split = net_is_split(s, cx);
     if ((agg_errs || agg_drops) && !split) {
         b.push_back(kv3(
             "errors", fmt::count(static_cast<double>(agg_errs)), agg_errs ? pal::hot : pal::dim,
@@ -324,8 +345,11 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     const int band_h   = std::max(3, cx.body_h - agg_rows - 1);   // -1 for CONNECTIONS rule
 
     // Geometry: roster capped ~52, the surplus to the denser socket table.
-    const int gap_w   = 2;
-    const int inner   = std::max(40, cx.w - 6);
+    // The band shares the SAME centered inner width as the aggregate header
+    // (ninner / center() computed up-front) so the whole pane reads as one
+    // fixed-width, centered slab.
+    const int gap_w   = ngap;
+    const int inner   = ninner;
     const int left_w  = std::clamp(52, 40, std::max(40, inner - gap_w - 40));
     const int right_w = inner - gap_w - left_w;
 
@@ -368,10 +392,11 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     left_stack.push_back((text(" ") | nowrap).build());   // spacer to match the CONNECTIONS rule row
     left_stack.push_back((v(std::move(left))).build());
 
-    b.push_back((h(
+    Element band = (h(
         v(std::move(left_stack))  | width(left_w),
         v(std::move(right_stack)) | width(right_w)
-    ) | gap(gap_w)).build());
+    ) | gap(gap_w)).build();
+    b.push_back(center(std::move(band)));
 
     return b;
 }

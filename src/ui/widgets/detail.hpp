@@ -82,10 +82,13 @@ public:
         framed.push_back(sysbar());
         // The scroller is a fill component (grow baked in) — it takes the
         // rows left between the sysbar and the hint. On ultrawide the domain
-        // panes reflow into two_col (which caps its OWN column widths), so
-        // the scroller must NOT re-clamp them — hand those the full slot; a
-        // single-column body (proc, or any pane below ultrawide) gets the
-        // readable design-width cap so its graph/meters don't smear.
+        // panes reflow into two_col (which caps its OWN column widths and
+        // centers the pair), so the scroller must NOT re-clamp them — hand
+        // those the full slot; a single-column body (proc, or any pane below
+        // ultrawide) gets the readable design-width cap (centered when the
+        // surplus is large) so its graph/meters don't smear. Every pane's
+        // "fixed width, centered" behaviour lives in scroller()/two_col() so
+        // the scroller keeps its baked-in grow(1) height-fill.
         const bool split_body = cx.ultrawide && which_ != Detail::Proc;
         framed.push_back(detail::scroller(std::move(rows), cx.scroll,
                                           cx.body_h, ac, /*cap_width=*/!split_body));
