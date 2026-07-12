@@ -203,13 +203,20 @@ struct App {
         const int cpu_h = 2 + 1 + (L.graph_h >= 2 ? L.graph_h : 1) + cores_rows;
         L.top_h = L.narrow ? cpu_h + mem_h + net_h + disk_h
                            : std::max(cpu_h, right_stack_h);
+        // Mirror view()'s real band height (proportional to terminal height,
+        // floored at the compact right stack) so proc_rows / scroll clamping
+        // stays in lockstep with the self-filling band.
+        const int band_content = std::max(10, m.height - (2 + 3 + 1));
+        const int band_px = L.narrow ? L.top_h
+            : std::clamp(band_content * 45 / 100,
+                         right_stack_h, std::max(right_stack_h, band_content - 8));
         // Wide 2-col: the process table runs the full band height beside the
         // stacked stat column, so its row count is the band, not a strip under
         // the top band. Must mirror view()'s wide2 math or sync_scroll drifts.
         const bool wide2 = m.width >= 200;
         const int band_h = std::max(6, m.height - 5);
         L.proc_rows = wide2 ? std::max(5, band_h - 2)
-                            : std::max(5, m.height - 5 - L.top_h - 2);
+                            : std::max(5, m.height - 5 - band_px - 2);
         L.body_rows = std::max(3, L.proc_rows - 1);
 
         const int inner = std::max(20, m.width - 2);
@@ -1251,6 +1258,17 @@ struct App {
         const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
                                   : std::max(cpu_h, right_stack_h);
 
+        // Classic-path top band height, in REAL rows. The band self-fills to
+        // this exact height and its panels (CPU/MEM/NET all in fill mode) grow
+        // their mountains to match — so the graphs are truly height-responsive
+        // instead of frozen at the graph_h estimate. Take ~45% of the content
+        // height, but never below what the compact right stack needs to render
+        // its meters/mounts. The process table takes the remaining ~55%.
+        const int band_content = std::max(10, m.height - (2 + 3 + 1));
+        const int band_px = narrow ? top_h
+            : std::clamp(band_content * 45 / 100,
+                         right_stack_h, std::max(right_stack_h, band_content - 8));
+
         // ── Classic right column: 40 / 60 split, self-filling panels ──
         // The CPU column establishes the band height (rc_target). The right
         // column fills exactly that height; its panels use maya's fill()
@@ -1272,7 +1290,7 @@ struct App {
         // In wide-2col the proc table owns the band height; otherwise it's the
         // classic strip beneath the top band.
         const int proc_rows = wide2 ? std::max(5, band_h - 2)     // minus panel border
-                                    : std::max(5, m.height - 5 - top_h - 2);
+                                    : std::max(5, m.height - 5 - band_px - 2);
 
         // Process-table inner width. In wide-2col the table lives in the right
         // column, so it's narrower than the full frame; compute it from the
@@ -1382,7 +1400,11 @@ struct App {
                    Element{DiskPanel{s.disks, s.disk_io, false}}
                        | hit(ui::hit_band(ui::Detail::Disk))})
             : (h(
-                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem}}
+                  // CPU column self-fills its slot (fill() mountain) exactly
+                  // like MEM/NET on the right — NO fixed graph_h estimate, so
+                  // the graph is as tall as the band actually is at any
+                  // terminal height instead of being clamped at ~22 rows.
+                  Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(1)}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
                   // Self-filling right column. Each panel carries an intrinsic
                   // grow weight (MemPanel.grow / NetPanel.grow) so it lands as
@@ -1402,7 +1424,7 @@ struct App {
                           | hit(ui::hit_band(ui::Detail::Disk)))
                         | grow(60))
                     | width(right_w)
-              ) | gap(gap_w) | height(rc_target)).build();
+              ) | gap(gap_w) | height(band_px)).build();
 
         return (v(
             Header{s, m.paused},
