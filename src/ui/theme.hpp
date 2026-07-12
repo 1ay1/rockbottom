@@ -58,6 +58,16 @@ inline constexpr auto proc_ac = hot;
     return t < 0.5 ? a : b;
 }
 
+// The ANSI-16 way to "lift toward white": promote a normal slot to its
+// bright counterpart (green → bright green). This is what selection ink,
+// glossy meter tips and hot rails use now that mix() can't interpolate —
+// the terminal's own bright variant IS the theme-correct highlight.
+[[nodiscard]] inline maya::Color brighten(maya::Color c) {
+    if (c.kind() == maya::Color::Kind::Named && c.index() < 8)
+        return maya::Color{static_cast<maya::AnsiColor>(c.index() + 8)};
+    return c;
+}
+
 // Load ramp, snapped to the terminal's own green/yellow/red. No gradient —
 // the terminal owns the hues, so we step through its semantic slots.
 [[nodiscard]] inline maya::Color load_color(double f) {

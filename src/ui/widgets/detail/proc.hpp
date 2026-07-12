@@ -55,7 +55,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         }
         b.push_back(kv3(
             "parent", parent, pal::label,
-            "owner", p.user, p.user == "root" ? mix(pal::hot, pal::label, 0.55) : pal::label,
+            "owner", p.user, p.user == "root" ? pal::warn : pal::teal,
             "age", age_txt, pal::text));
     }
     b.push_back(gap_row());

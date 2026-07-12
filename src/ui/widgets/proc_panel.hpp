@@ -246,8 +246,6 @@ private:
                                           bool culprit, int idx) const {
         using namespace maya;
 
-        const double mem_frac = p.mem_share.v;
-
         // Tree rollup / context lookups (index-aligned to the ordered view).
         // A COLLAPSED parent surfaces its whole subtree's CPU%/RSS instead of
         // just its own, so a folded node still shows what it's hiding (btop
@@ -270,10 +268,10 @@ private:
         const double disp_cpu_frac = std::clamp(disp_cpu / 100.0, 0.0, 1.0);
 
         // The cursor row rides the table's bg strip + accent edge bar (the
-        // modern list-selection idiom). Ink lifts toward white so hues stay
-        // meaningful but brighter; bold is reserved for the name and PID
-        // (the row's identity) — the strip already does the shouting.
-        auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.45) : c; };
+        // modern list-selection idiom). Ink lifts to the BRIGHT ANSI slot so
+        // hues stay meaningful but brighter; bold is reserved for the name
+        // and PID (the row's identity) — the strip already does the shouting.
+        auto lift = [&](Color c) { return selected ? brighten(c) : c; };
         auto cell_st = [&](Color c) { return Style{}.with_fg(lift(c)); };
         const Color quiet  = selected ? pal::text  : pal::dim;    // dim ink, lifted
         const Color hushed = selected ? pal::label : pal::faint;  // faint ink, lifted
@@ -284,7 +282,7 @@ private:
         // bold, muted ink — they're scaffolding, not results.
         if (row_context && !selected && !culprit)
             name_st = Style{}.with_fg(mix(pal::dim, pal::bg_panel, 0.15));
-        Style cpu_st = cell_st(load_color(disp_cpu_frac));
+        Style cpu_st = cell_st(cpu_color(disp_cpu));
         if (disp_cpu > 50) cpu_st = cpu_st.with_bold();
         const bool cpu_zero = disp_cpu < 0.05;
         if (cpu_zero) cpu_st = cell_st(hushed);
@@ -297,15 +295,22 @@ private:
         // table is ranked by reads as the "spine" of the list.
         const SortKey sk = view_.sort;
 
-        // root-owned rows get a quiet warm tint on the user column — enough
-        // to pick out privileged processes without shouting.
-        Color user_c = p.user == "root" ? mix(pal::hot, pal::label, 0.55) : pal::label;
+        // root-owned rows wear the caution yellow — privileged processes pop
+        // without shouting; everyone else gets the classic htop teal so the
+        // USER column reads as its own colored band, distinct from NAME.
+        Color user_c = p.user == "root" ? pal::warn : pal::teal;
 
         char cpu_txt[16];
         std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", disp_cpu);
         char memp_txt[16];
         std::snprintf(memp_txt, sizeof memp_txt, "%4.1f", p.mem_share.percent());
-        const bool memp_zero = p.mem_share.percent() < 0.05;
+        const double memp = p.mem_share.percent();
+        const bool memp_zero = memp < 0.05;
+        // Memory ramp: hogs wear escalating heat so the MEM pair carries
+        // color even when sorting by CPU. ≥5% warn · ≥10% hot · ≥20% crit.
+        const Color mem_heat = memp >= 20 ? pal::crit
+                             : memp >= 10 ? pal::hot
+                             : memp >= 5  ? pal::warn : pal::text;
 
         // Ports: ":80" / ":80 +2" — lowest port plus how many more. Sky color
         // makes network-facing processes pop out of the table.
@@ -342,10 +347,11 @@ private:
         row.cells.push_back(Meter{disp_cpu_frac}.groove(false).table_cell());
         row.cells.emplace_back(cpu_txt, cpu_st);
         row.cells.emplace_back(humanize_bytes(static_cast<std::uint64_t>(disp_rss)),
-                               sk == SortKey::Mem ? cell_st(pal::white).with_bold()
-                                                  : cell_st(pal::text));
+                               sk == SortKey::Mem
+                                   ? cell_st(memp >= 5 ? mem_heat : pal::white).with_bold()
+                                   : cell_st(mem_heat));
         row.cells.emplace_back(memp_txt,
-                               cell_st(mem_frac > 0.1 ? pal::hot
+                               cell_st(memp >= 5 ? mem_heat
                                        : memp_zero ? hushed : quiet));
         row.cells.emplace_back(std::move(io_txt),
                                sk == SortKey::Io && iorate > 512
@@ -361,6 +367,16 @@ private:
             row.edge_color = pal::crit;
         }
         return row;
+    }
+
+    // Per-process CPU ramp. load_color() is calibrated for SYSTEM load
+    // (green until 55%); for a single process 55% is already heavy, so the
+    // table uses tighter stops — a hog turns warm long before it pegs a core.
+    [[nodiscard]] static maya::Color cpu_color(double pct) {
+        if (pct < 25) return pal::good;
+        if (pct < 60) return pal::warn;
+        if (pct < 85) return pal::hot;
+        return pal::crit;
     }
 
     // The NAME cell: tree furniture + name + collapse badge + a dim command
@@ -399,11 +415,11 @@ private:
             const double scpu = idx < static_cast<int>(view_.sub_cpu.size())
                                 ? view_.sub_cpu[I] : 0.0;
 
-            // Heat of this branch: subtree CPU on the load ramp, with a
-            // dim floor so idle branches recede to structure.
+            // Heat of this branch: subtree CPU on the per-process ramp, with
+            // a dim floor so idle branches recede to structure.
             const bool warm = scpu >= 0.5;
             Color heat = warm
-                ? lift(load_color(std::clamp(scpu / 100.0, 0.0, 1.0)))
+                ? lift(cpu_color(scpu))
                 : (selected ? mix(pal::label, pal::white, 0.2)
                             : mix(pal::dim, pal::bg_panel, 0.25));
 
