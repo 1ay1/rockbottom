@@ -100,7 +100,7 @@ public:
                 }
                 const int cells = std::max(1, w - 6 - 1);   // axis(6) + gap(1)
                 Graph g{rxn.data(), hl};
-                g.cells(cells).rows(ah).color(pal::good)
+                g.cells(cells).rows(ah).color(pal::good).line_only().gamma(0.5f)
                  .overlay(txn.data(), hl, pal::hot);
                 return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
                         | gap(1)).build();
@@ -130,7 +130,7 @@ public:
                                 | w_<6> | justify(Justify::End)).build());
             }
             Graph g{rxn.data(), busy->hist_len};
-            g.fill().rows(graph_h_).color(pal::good)
+            g.fill().rows(graph_h_).color(pal::good).line_only().gamma(0.5f)
              .overlay(txn.data(), busy->hist_len, pal::hot);
             rows.push_back((h(
                 v(std::move(axis)) | w_<6>,

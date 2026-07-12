@@ -45,6 +45,11 @@ class Graph {
     // a shape, while the peak stays pinned at the top. Off (=1) for percent
     // graphs (cpu/mem/gpu) whose 0..1 axis is already the real quantity.
     float gamma_ = 1.0f;
+    // Fill style below the trace. Full = the checker-dither mountain (default,
+    // historic). Light = a single dot-column rail every few cells (a faint
+    // "rain" under the line, far less busy). None = a bare line, no fill.
+    enum class Fill { Full, Light, None };
+    Fill fillmode_ = Fill::Full;
 
 public:
     Graph(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
@@ -55,6 +60,10 @@ public:
     Graph& fill()               { cells_ = 0; return *this; }
     // gamma<1 compresses the top / expands the bottom (0.5 = sqrt).
     Graph& gamma(float g)       { gamma_ = std::max(0.05f, g); return *this; }
+    // A bare line, no area fill — the cleanest trace, reads as a curve.
+    Graph& line_only()          { fillmode_ = Fill::None; return *this; }
+    // A faint sparse rain under the line instead of the solid dither wall.
+    Graph& light_fill()         { fillmode_ = Fill::Light; return *this; }
     // Overlay a second history series (drawn as a thin line in `c`).
     Graph& overlay(const float* data, int len, maya::Color c) {
         overlay_ = data; overlay_len_ = std::max(0, len); overlay_color_ = c; return *this;
@@ -121,6 +130,7 @@ public:
         // A short graph gets the 50% midline only; a tall one adds 25/75%.
         auto is_grid = [&](int gy, int gx) {
             if (gh < 8) return false;
+            if (fillmode_ == Fill::None) return false;   // a bare line stands alone
             if (gx % 8 != 0) return false;
             const int q2 = gh / 2;
             if (gy == q2) return true;
@@ -196,10 +206,16 @@ public:
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
                         if (gy == ly)      line_bits |= kDot[dr][dc];
-                        // Half-density dither: only every other dot (checker
-                        // parity) inks, so the mountain reads as translucent
-                        // shading instead of a solid dot wall.
-                        else if (gy > ly && ((gx + gy) & 1)) fill_bits |= kDot[dr][dc];
+                        // Fill below the trace. Full = checker dither (a
+                        // translucent mountain). Light = a sparse rail (one
+                        // dot every 4 cols) so the area reads as faint rain,
+                        // not a wall. None = nothing below the line.
+                        else if (gy > ly) {
+                            if (fillmode_ == Fill::Full && ((gx + gy) & 1))
+                                fill_bits |= kDot[dr][dc];
+                            else if (fillmode_ == Fill::Light && (gx % 8 == 0))
+                                fill_bits |= kDot[dr][dc];
+                        }
                         // The overlay is a LINE ONLY — a second dithered
                         // mountain over the primary's fill reads as noise
                         // (two checker patterns interfere into a moiré band).

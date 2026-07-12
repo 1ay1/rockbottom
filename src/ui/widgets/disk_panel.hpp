@@ -11,6 +11,7 @@
 #include "meter.hpp"
 #include "spark.hpp"
 #include "graph.hpp"
+#include "bars.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
@@ -49,12 +50,18 @@ public:
         // to consume the height left after the rate row + mounts. fill() hands
         // the render the REAL (w, h) so the graph is exactly as tall as its
         // slot — no estimate to drift.
+        // Disk I/O is BURSTY (a sync flushes hard for one tick, then idle) —
+        // a column histogram reads each spike as its own crisp bar far better
+        // than a smeared braille mountain, and stays visually distinct from
+        // the CPU line and MEM level bars. One combined read+write total per
+        // column (the split lives in the rate row spark below), on a sqrt
+        // curve so a modest flush still stands off the floor.
         if (grow_ > 0) {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
-                peak = std::max({peak,
-                                 io_.read_history[static_cast<std::size_t>(i)],
-                                 io_.write_history[static_cast<std::size_t>(i)]});
+                peak = std::max(peak,
+                                io_.read_history[static_cast<std::size_t>(i)] +
+                                io_.write_history[static_cast<std::size_t>(i)]);
             const float* rh = io_.read_history.data();
             const float* wh = io_.write_history.data();
             const int hl = io_.hist_len;
@@ -62,13 +69,10 @@ public:
                 using namespace maya;
                 using namespace maya::dsl;
                 if (ah < 2) return blank().build();
-                // Normalize into a per-thread scratch; build_fixed() bakes the
-                // glyphs immediately so the buffer needn't outlive this call.
-                static thread_local std::array<float, 48> rn{}, wn{};
-                for (int i = 0; i < hl && i < 48; ++i) {
-                    rn[static_cast<std::size_t>(i)] = rh[static_cast<std::size_t>(i)] / peak;
-                    wn[static_cast<std::size_t>(i)] = wh[static_cast<std::size_t>(i)] / peak;
-                }
+                static thread_local std::array<float, 48> tot{};
+                for (int i = 0; i < hl && i < 48; ++i)
+                    tot[static_cast<std::size_t>(i)] =
+                        (rh[static_cast<std::size_t>(i)] + wh[static_cast<std::size_t>(i)]) / peak;
                 std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
                 std::vector<Element> axis;
                 for (int r = 0; r < ah; ++r) {
@@ -76,27 +80,26 @@ public:
                     axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
                                     | w_<6> | justify(Justify::End)).build());
                 }
-                Graph g{rn.data(), hl};
-                g.cells(std::max(1, w - 6 - 1)).rows(ah).color(pal::sky)
-                 .overlay(wn.data(), hl, pal::pink);
+                BarChart g{tot.data(), hl};
+                g.cells(std::max(1, w - 6 - 1)).rows(ah).color(pal::disk_ac).gamma(0.5f);
                 return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
                         | gap(1)).build();
             }, 0, 2));
         }
-        // Wide/graph mode: a system I/O mountain (read fill + write overlay)
-        // above the live rate row and the mount meters. A peak-labelled y-axis
-        // gives the mountain height a real magnitude.
+        // Wide/graph mode: the same bursty I/O column histogram above the live
+        // rate row and the mount meters. A peak-labelled y-axis gives the bars
+        // a real magnitude.
         else if (graph_h_ >= 2) {
             float peak = 1.0f;
             for (int i = 0; i < io_.hist_len; ++i)
-                peak = std::max({peak,
-                                 io_.read_history[static_cast<std::size_t>(i)],
-                                 io_.write_history[static_cast<std::size_t>(i)]});
-            static thread_local std::array<float, 48> rn{}, wn{};
-            for (int i = 0; i < io_.hist_len; ++i) {
-                rn[static_cast<std::size_t>(i)] = io_.read_history[static_cast<std::size_t>(i)] / peak;
-                wn[static_cast<std::size_t>(i)] = io_.write_history[static_cast<std::size_t>(i)] / peak;
-            }
+                peak = std::max(peak,
+                                io_.read_history[static_cast<std::size_t>(i)] +
+                                io_.write_history[static_cast<std::size_t>(i)]);
+            static thread_local std::array<float, 48> tot{};
+            for (int i = 0; i < io_.hist_len; ++i)
+                tot[static_cast<std::size_t>(i)] =
+                    (io_.read_history[static_cast<std::size_t>(i)] +
+                     io_.write_history[static_cast<std::size_t>(i)]) / peak;
             std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
             std::vector<Element> axis;
             for (int r = 0; r < graph_h_; ++r) {
@@ -104,9 +107,8 @@ public:
                 axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
                                 | w_<6> | justify(Justify::End)).build());
             }
-            Graph g{rn.data(), io_.hist_len};
-            g.fill().rows(graph_h_).color(pal::sky)
-             .overlay(wn.data(), io_.hist_len, pal::pink);
+            BarChart g{tot.data(), io_.hist_len};
+            g.fill().rows(graph_h_).color(pal::disk_ac).gamma(0.5f);
             rows.push_back((h(
                 v(std::move(axis)) | w_<6>,
                 Element{g} | grow(1)

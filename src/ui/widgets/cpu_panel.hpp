@@ -87,7 +87,7 @@ public:
                 // reads on the header row above.
                 if (ah < 2) return (blank() | height(0)).build();
                 Graph g{hist, hlen};
-                g.cells(std::max(1, w - 3 - 1)).rows(ah);   // y-axis(3) + gap(1)
+                g.cells(std::max(1, w - 3 - 1)).rows(ah).line_only();   // y-axis(3) + gap(1)
                 if (memh) g.overlay(memh, memlen, pal::mem_ac);
                 return (h(y_axis(ah, 100.0, 3), Element{g.build_fixed()})
                         | gap(1)).build();
@@ -95,7 +95,7 @@ public:
         } else if (graph_h_ >= 2) {
             // Graph with a labelled left y-axis: 100/75/50/25/0 down the side.
             Graph g{cpu_.total_history.data(), cpu_.total_hist_len};
-            g.cells(graph_w_).rows(graph_h_);
+            g.cells(graph_w_).rows(graph_h_).line_only();
             if (mem_) g.overlay(mem_->usage_history.data(), mem_->hist_len, pal::mem_ac);
             rows.push_back((h(
                 y_axis(graph_h_, 100.0, 3),

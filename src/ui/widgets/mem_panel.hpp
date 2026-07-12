@@ -12,6 +12,7 @@
 #include "../fmt.hpp"
 #include "meter.hpp"
 #include "graph.hpp"
+#include "bars.hpp"
 #include "panel.hpp"
 
 #include <string>
@@ -78,6 +79,10 @@ public:
         // after the meters. fill() hands the render the REAL allocated (w, h),
         // so the graph is exactly as tall as its slot — the app never has to
         // estimate a graph_h that then drifts from the real box.
+        // Memory is a slowly-varying LEVEL — a block-column histogram reads
+        // it as discrete bars (each sample its own column) rather than a
+        // smeared braille mountain, and stays visually distinct from the CPU
+        // panel's line trace right above it.
         if (grow_ > 0) {
             const float* hist = mem_.usage_history.data();
             const int hlen = mem_.hist_len;
@@ -86,18 +91,18 @@ public:
                 using namespace maya::dsl;
                 if (ah < 2) return blank().build();
                 const int cells = std::max(1, w - 3 - 1);   // y-axis(3) + gap(1)
-                Graph g{hist, hlen};
+                BarChart g{hist, hlen};
                 g.cells(cells).rows(ah).color(pal::mem_ac);
                 return (h(y_axis(ah, 100.0, 3), Element{g.build_fixed()})
                         | gap(1)).build();
             }, 0, 2));
         }
-        // Wide/graph mode: a usage-over-time mountain above the meters, so a
+        // Wide/graph mode: a usage-over-time histogram above the meters, so a
         // slow leak is visible as a rising trend, not just a single number.
         // A left y-axis (100 at top, 0 at the floor) makes the height mean
         // something instead of being an unlabelled squiggle.
         else if (graph_h_ >= 2) {
-            Graph g{mem_.usage_history.data(), mem_.hist_len};
+            BarChart g{mem_.usage_history.data(), mem_.hist_len};
             g.fill().rows(graph_h_).color(pal::mem_ac);
             rows.push_back((h(
                 y_axis(graph_h_, 100.0, 3),
