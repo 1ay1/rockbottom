@@ -195,31 +195,29 @@ public:
                         fs_badge()
                     ) | gap(1)).build();
                 }
-                // One mount per row, on the SAME grid as the I/O row above:
-                //   I/O   ▼ 8.8M/s ▂▃▁  ▲ 320K/s ▁▁▁
-                //   /       89%    ███████  411G / 460G  [apfs]
-                // label(8) · numeric right-aligned to the rate column's right
-                // edge (▼+gap+rate = 9 cells) · meter starts where the first
-                // spark starts · capacity + fs badge at the right end.
+                // One mount per row:
+                //   /home    27% ███████████████  61G / 223G  [btrfs]
+                // label(8) · tight pct(5) · a growing meter that eats the
+                // slack (so the row can NEVER overrun the panel border — the
+                // meter shrinks, capacity/badge never clip) · capacity + fs
+                // badge shed from the right as the panel narrows.
                 return Element{ComponentElement{
                     .render = [=](int w, int) -> Element {
-                        const bool show_fs  = w >= 44;
-                        const bool show_cap = w >= 32;
+                        const bool show_fs  = w >= 46;
+                        const bool show_cap = w >= 34;
                         const bool show_pct = w >= 20;
-                        // Fixed fstype cell width so EVERY row's meter has the
-                        // same width and the capacity/badge columns hang on one
-                        // rail — a per-row fsw (btrfs=7 vs vfat=6) made each
-                        // meter a different length and the whole block ragged.
+                        // Fixed fstype cell width so EVERY row's badge column
+                        // hangs on one rail — a per-row fsw (btrfs=7 vs
+                        // vfat=6) made the block ragged.
                         const int fs_cell = 8;   // "[btrfs]" etc, padded
-                        int used = 8 + (show_pct ? 9 + 1 : 0)
-                                 + (show_cap ? 12 + 1 : 0) + (show_fs ? fs_cell + 1 : 0) + 1;
-                        int mw = std::max(4, w - used);
                         std::vector<Element> cols;
                         cols.push_back((text(mnt) | nowrap | fgc(pal::disk_ac) | w_<8>).build());
                         if (show_pct)
                             cols.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f))
-                                            | width(9) | justify(Justify::End)).build());
-                        cols.push_back(Meter{f}.width(mw).build_fixed());
+                                            | w_<5>).build());
+                        // Meter grows into the slack instead of a hand-computed
+                        // width — no off-by-one to push the tail past the edge.
+                        cols.push_back(Element{Meter{f}.fill().color(load_color(f))} | grow(1));
                         if (show_cap)
                             cols.push_back((text(cap) | nowrap | fgc(pal::text)
                                             | w_<12> | justify(Justify::End)).build());
