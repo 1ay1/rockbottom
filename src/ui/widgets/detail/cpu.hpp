@@ -126,7 +126,20 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     int cols = core_w >= 140 ? 4 : core_w >= 104 ? 3 : core_w >= 68 ? 2 : 1;
     if (n <= 4) cols = 1;
     else if (n <= 8 && cols > 2) cols = 2;
+    // A per-core row reads BEST when it can carry its own history sparkline
+    // (id + meter + spark + % + freq — needs ~40 cells). Column count above
+    // maximizes density, but in the ultrawide SPLIT layout the per-core block
+    // owns only half the pane and the OTHER half runs out of content long
+    // before this one does — leaving a tall band of dead space below the split.
+    // So when we're split and a narrower grid would let every core show its
+    // spark, step DOWN one column: fewer, richer rows that stack TALLER fill
+    // that vertical room with real per-core trend history instead of blanks.
+    if (split && cols > 1 && core_w / cols < 40 && core_w / (cols - 1) >= 40)
+        --cols;
     const int per = (n + cols - 1) / cols;
+    // Spark width scales with the room each column actually has — a wide split
+    // column gets a longer history trace, a tight one the compact 12-cell run.
+    const int spark_cells = core_w / std::max(1, cols) >= 56 ? 18 : 12;
     for (int r = 0; r < per; ++r) {
         std::vector<Element> line;
         for (int col = 0; col < cols; ++col) {
@@ -150,7 +163,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                                             ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.5))
                     | width(hetero ? 5 : 3),
                 Element{Meter{f}.fill().groove(false)} | grow(1),
-                room ? Spark{core.history.data(), core.hist_len}.cells(12).build_fixed()
+                room ? Spark{core.history.data(), core.hist_len}.cells(spark_cells).build_fixed()
                      : Element{blank()} | width(0),
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | width(5) | justify(Justify::End),
                 text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)
@@ -168,7 +181,10 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         for (const auto& p : s.procs) top.push_back(&p);
         std::sort(top.begin(), top.end(),
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->cpu > b2->cpu; });
-        const int show = std::min<int>(cx.tall ? 8 : 4, static_cast<int>(top.size()));
+        // On a tall ultrawide the right column has room to spare below the
+        // per-core grid — show a deeper top-N there instead of blank rows.
+        const int cap = split && cx.tall ? 12 : cx.tall ? 8 : 4;
+        const int show = std::min<int>(cap, static_cast<int>(top.size()));
         R.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac, "top " + std::to_string(show)));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
