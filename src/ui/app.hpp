@@ -207,7 +207,10 @@ struct App {
         // floored at the compact right stack) so proc_rows / scroll clamping
         // stays in lockstep with the self-filling band.
         const int band_content = std::max(10, m.height - (2 + 3 + 1));
-        const int band_px = L.narrow ? L.top_h
+        const int narrow_min = 2 + mem_h + net_h + disk_h + 8;
+        const int band_px = L.narrow
+            ? std::clamp(band_content * 38 / 100, narrow_min,
+                         std::max(narrow_min, band_content - 8))
             : std::clamp(band_content * 45 / 100,
                          right_stack_h, std::max(right_stack_h, band_content - 8));
         // Wide 2-col: the process table runs the full band height beside the
@@ -1265,7 +1268,14 @@ struct App {
         // height, but never below what the compact right stack needs to render
         // its meters/mounts. The process table takes the remaining ~55%.
         const int band_content = std::max(10, m.height - (2 + 3 + 1));
-        const int band_px = narrow ? top_h
+        // Narrow stacks CPU/MEM/NET/DISK then the proc list; the band gets a
+        // bounded ~38% share (never below its natural minimum) so the CPU
+        // mountain breathes while the list keeps the majority. Classic split
+        // uses ~45%. Both floor at the compact right stack.
+        const int narrow_min = 2 + mem_h + net_h + disk_h + 8;
+        const int band_px = narrow
+            ? std::clamp(band_content * 38 / 100, narrow_min,
+                         std::max(narrow_min, band_content - 8))
             : std::clamp(band_content * 45 / 100,
                          right_stack_h, std::max(right_stack_h, band_content - 8));
 
@@ -1392,13 +1402,24 @@ struct App {
             ) | padding(0, 1, 0, 1)).build();
         }
 
+        // Narrow: the stacked stat band gets a bounded share of the height so
+        // the CPU mountain can breathe on a tall phone-shaped terminal, while
+        // the process list (the primary view on a narrow screen) still keeps
+        // the majority. MEM/NET/DISK sit at natural height inside; the CPU
+        // panel's .expand(1) soaks the slack, growing its graph.
         Element top = narrow
-            ? col({Element{CpuPanel{s.cpu, cpu_cols, graph_w, graph_h, &s.mem, /*heat=*/true}}
+            ? (v(col({// CPU self-fills (fill() mountain) with a grow weight so
+                   // the graph is sized to the REAL box it lands in, not a
+                   // fixed graph_h estimate that flex-shrinks and clips the
+                   // mountain floor (the "0" line) behind the cores strip on a
+                   // phone-shaped terminal. MEM/NET/DISK keep natural heights.
+                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem, /*heat=*/true}.expand(1)}
                        | hit(ui::hit_band(ui::Detail::Cpu)),
                    Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
                    Element{DiskPanel{s.disks, s.disk_io, false}}
-                       | hit(ui::hit_band(ui::Detail::Disk))})
+                       | hit(ui::hit_band(ui::Detail::Disk))}))
+                   | height(band_px)).build()
             : (h(
                   // CPU column self-fills its slot (fill() mountain) exactly
                   // like MEM/NET on the right — NO fixed graph_h estimate, so
