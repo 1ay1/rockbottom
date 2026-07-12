@@ -116,6 +116,27 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     const int n = static_cast<int>(c.cores.size());
     const bool hetero = c.perf_cores > 0 && c.eff_cores > 0 &&
                         c.perf_cores + c.eff_cores == n;
+
+    // Per-core temperature, where the platform reports it. Intel coretemp
+    // labels each die sensor "Core 0".."Core N" — map those onto the logical
+    // core ids so a hot core shows its °C right in its own row (AMD k10temp /
+    // Apple only expose a package/die sensor, so this map is simply empty and
+    // the temp column never appears — no wasted space).
+    std::vector<float> core_temp(static_cast<std::size_t>(std::max(0, n)), 0.0f);
+    bool have_core_temp = false;
+    for (const Sensor& sn : s.sensors) {
+        if (sn.zone != "cpu") continue;
+        const std::string& L = sn.label;
+        // Accept "Core 5", "core5", "Core 5 Temp" — grab the first integer.
+        std::size_t p = L.find_first_of("0123456789");
+        if (p == std::string::npos) continue;
+        if (L.find("ore") == std::string::npos) continue;   // must say "Core"
+        int idx = std::atoi(L.c_str() + p);
+        if (idx >= 0 && idx < n && sn.temp_c > 0) {
+            core_temp[static_cast<std::size_t>(idx)] = sn.temp_c;
+            have_core_temp = true;
+        }
+    }
     // Responsive column count. In split mode the per-core block owns only HALF
     // the pane width, so use fewer columns; single-column uses the full width.
     const int core_w = split ? cx.w / 2 : cx.w;
@@ -150,6 +171,14 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                 std::snprintf(id, sizeof id, "%2d", i);
             std::string fq = core.freq.value > 0
                 ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
+            // Per-core temperature cell, when the platform exposes it and the
+            // column is wide enough to carry it after the meter/spark/%/freq.
+            const float ct = core_temp[static_cast<std::size_t>(i)];
+            const bool show_temp = have_core_temp && ct > 0
+                                   && core_w / cols >= 44;
+            std::string tp = show_temp
+                ? std::to_string(static_cast<int>(ct + 0.5f)) + "\xc2\xb0" : "";
+            const maya::Color tp_c = load_color(std::clamp((ct - 40.0) / 50.0, 0.0, 1.0));
             // Per-core load sparkline: the core's own recent history, so you
             // see WHICH cores have been busy over time, not just this instant.
             // Shown when the column is wide enough to carry a meter + a spark.
@@ -162,7 +191,9 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                 room ? Spark{core.history.data(), core.hist_len}.cells(spark_cells).build_fixed()
                      : Element{blank()} | width(0),
                 text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | width(5) | justify(Justify::End),
-                text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)
+                text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End),
+                show_temp ? (text(tp) | nowrap | Bold | fgc(tp_c) | width(5) | justify(Justify::End)).build()
+                          : (Element{blank()} | width(0))
             ) | gap(1)).build()} | grow(1));
         }
         R.push_back((h(line) | gap(3)).build());
@@ -203,6 +234,12 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                             std::to_string(s.sensors.size()) + " probes"));
         std::string cur_zone = "\x01";   // sentinel so the first row prints its zone
         for (const Sensor& sn : s.sensors) {
+            // Per-core "Core N" temps are already shown inline in the PER-CORE
+            // grid — don't repeat them here as a long redundant list.
+            if (have_core_temp && sn.zone == "cpu"
+                && sn.label.find("ore") != std::string::npos
+                && sn.label.find_first_of("0123456789") != std::string::npos)
+                continue;
             if (sn.zone != cur_zone) {
                 cur_zone = sn.zone;
                 R.push_back((text("  " + cur_zone) | nowrap | fgc(pal::faint)).build());
