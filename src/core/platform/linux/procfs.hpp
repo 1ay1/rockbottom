@@ -13,6 +13,7 @@ namespace rockbottom::procfs {
 
 using rockbottom::sys::first_line;
 using rockbottom::sys::push_hist;
+using rockbottom::sys::push_hist2;
 using rockbottom::sys::slurp;
 using rockbottom::sys::trim;
 using rockbottom::sys::user_of;

@@ -74,12 +74,9 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
             : static_cast<double>(iface.tx_packets > ppt ? iface.tx_packets - ppt : 0) / dt;
         prev_net_pkts_[name] = {iface.rx_packets, iface.tx_packets};
 
-        sys::push_hist(iface.rx_history, iface.hist_len, static_cast<float>(iface.rx.per_sec));
-        for (int i = 1; i < iface.hist_len; ++i)
-            iface.tx_history[static_cast<std::size_t>(i - 1)] =
-                iface.tx_history[static_cast<std::size_t>(i)];
-        iface.tx_history[static_cast<std::size_t>(std::min(iface.hist_len - 1, 47))] =
-            static_cast<float>(iface.tx.per_sec);
+        sys::push_hist2(iface.rx_history, iface.tx_history, iface.hist_len,
+                        static_cast<float>(iface.rx.per_sec),
+                        static_cast<float>(iface.tx.per_sec));
 
         prev_net_[name] = {rx, tx};
     }

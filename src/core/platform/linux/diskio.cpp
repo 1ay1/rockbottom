@@ -61,11 +61,9 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
     prev_io_rops_ = rd_ops;
     prev_io_wops_ = wr_ops;
 
-    push_hist(io_read_hist_, io_hist_len_, static_cast<float>(io.read.per_sec));
-    for (int i = 1; i < io_hist_len_; ++i)
-        io_write_hist_[static_cast<std::size_t>(i - 1)] = io_write_hist_[static_cast<std::size_t>(i)];
-    io_write_hist_[static_cast<std::size_t>(std::min(io_hist_len_ - 1, 47))] =
-        static_cast<float>(io.write.per_sec);
+    push_hist2(io_read_hist_, io_write_hist_, io_hist_len_,
+               static_cast<float>(io.read.per_sec),
+               static_cast<float>(io.write.per_sec));
 
     io.read_history = io_read_hist_;
     io.write_history = io_write_hist_;

@@ -37,13 +37,9 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
         iface.rx_total = Bytes{rx};
         iface.tx_total = Bytes{tx};
 
-        push_hist(iface.rx_history, iface.hist_len, static_cast<float>(iface.rx.per_sec));
-        // tx_history rides the same length counter — shift it in lockstep.
-        for (int i = 1; i < iface.hist_len; ++i)
-            iface.tx_history[static_cast<std::size_t>(i - 1)] =
-                iface.tx_history[static_cast<std::size_t>(i)];
-        iface.tx_history[static_cast<std::size_t>(std::min(iface.hist_len - 1, 47))] =
-            static_cast<float>(iface.tx.per_sec);
+        push_hist2(iface.rx_history, iface.tx_history, iface.hist_len,
+                   static_cast<float>(iface.rx.per_sec),
+                   static_cast<float>(iface.tx.per_sec));
 
         prev_net_[name] = {rx, tx};
     }

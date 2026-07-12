@@ -48,6 +48,25 @@ inline void push_hist(std::array<float, N>& ring, int& len, float v) {
     ring[N - 1] = v;
 }
 
+// Push a sample onto TWO parallel rings that share one length counter (e.g.
+// rx+tx, read+write). Advancing them together keeps the two series index-
+// aligned; doing it as two separate hand-shifts injects a stale zero into the
+// second ring during the growth phase (the shift reads an index the first
+// push already vacated). One counter, one shift, both newest at len-1.
+template <std::size_t N>
+inline void push_hist2(std::array<float, N>& a, std::array<float, N>& b,
+                       int& len, float va, float vb) {
+    if (len < static_cast<int>(N)) {
+        a[static_cast<std::size_t>(len)] = va;
+        b[static_cast<std::size_t>(len)] = vb;
+        ++len;
+        return;
+    }
+    for (std::size_t i = 1; i < N; ++i) { a[i - 1] = a[i]; b[i - 1] = b[i]; }
+    a[N - 1] = va;
+    b[N - 1] = vb;
+}
+
 inline std::string user_of(uid_t uid) {
     if (passwd* pw = ::getpwuid(uid)) return pw->pw_name;
     return std::to_string(uid);
