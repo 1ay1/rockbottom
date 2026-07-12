@@ -481,15 +481,39 @@ inline Element gap_row() {
 // sets the row height; the shorter one just leaves space below it. Returns a
 // SINGLE body row (the h-stack) so the scroller treats the whole split as one
 // unit — panes stay scroll-safe because two_col output is short by design.
+//
+// Each column is CAPPED at a comfortable reading width (kColDesign) rather
+// than each taking half of a 200-col ultrawide: a 100-col-wide column still
+// smears its graph and strands its meter values. The two capped columns sit
+// left-anchored with the gutter between them; on an extremely wide screen
+// the surplus becomes quiet right margin. Built as a component so the cap is
+// resolved against the REAL slot width (and collapses gracefully when the
+// slot can't even hold two design columns — then each just takes half).
 inline std::vector<Element> two_col(std::vector<Element> left,
                                     std::vector<Element> right) {
     using namespace maya; using namespace maya::dsl;
+    constexpr int kColDesign = 92;   // comfortable per-column reading width
+    constexpr int kGutter    = 2;
+    auto sl = std::make_shared<std::vector<Element>>(std::move(left));
+    auto sr = std::make_shared<std::vector<Element>>(std::move(right));
     std::vector<Element> out;
-    out.push_back((h(
-        v(std::move(left))  | grow(1),
-        text("  ") | nowrap,
-        v(std::move(right)) | grow(1)
-    ) | gap(2)).build());
+    out.push_back(Element{maya::ComponentElement{
+        .render = [sl, sr, kColDesign, kGutter](int w, int) -> Element {
+            using namespace maya::dsl;
+            // Column width: half the slot (minus gutter), capped at the design
+            // measure so wider screens spill into right margin, not stretch.
+            const int half = std::max(20, (w - kGutter) / 2);
+            const int cw = std::min(half, kColDesign);
+            std::vector<Element> lcol(sl->begin(), sl->end());
+            std::vector<Element> rcol(sr->begin(), sr->end());
+            return (h(
+                v(std::move(lcol)) | width(cw),
+                text("  ") | nowrap,
+                v(std::move(rcol)) | width(cw),
+                Element{blank()} | grow(1)
+            )).build();
+        },
+    }});
     return out;
 }
 
@@ -502,19 +526,32 @@ inline std::vector<Element> two_col(std::vector<Element> left,
 // bar. Heights come from measure_element over the real fragments at the
 // real width; the proportional scrollbar runs on rows, not element counts.
 inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
-                        maya::Color ac) {
+                        maya::Color ac, bool cap_width = true) {
     using namespace maya; using namespace maya::dsl;
     auto shared = std::make_shared<const std::vector<Element>>(std::move(body));
     const int scroll_in = std::max(0, scroll);
     maya::ComponentElement ce{
-        .render = [shared, scroll_in, ac](int slot_w, int slot_h) -> Element {
+        .render = [shared, scroll_in, ac, cap_width](int slot_w, int slot_h) -> Element {
             const auto& all = *shared;
             const int total = static_cast<int>(all.size());
             const int view_h = std::max(1, slot_h);
-            const int inner_w = std::max(1, slot_w - 2);   // minus " "+bar gutter
+            const int gutter_w = std::max(1, slot_w - 2);  // minus " "+bar gutter
 
-            // Measure every element at the real width — the same fragments
-            // that will paint, so window and paint can never disagree.
+            // ── READABLE DESIGN WIDTH ──
+            // Full-width content on a 200-col ultrawide reads badly: a load
+            // graph smears across 90 cols into a flat dotted line, a meter's
+            // groove runs the whole width with its value stranded far right,
+            // section rules trail 90 dashes. Cap the CONTENT width at a
+            // comfortable reading measure and left-anchor it — the surplus
+            // becomes quiet right margin, NOT dead vertical space.
+            //   Panes that reflowed into two side-by-side columns pass
+            //   cap_width=false: two_col already caps each of its OWN columns
+            //   at a reading width, so the scroller must hand it the full slot.
+            constexpr int kDesign = 104;   // comfortable single-column measure
+            const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
+
+            // Measure every element at the SAME width we'll paint at — window
+            // and paint can never disagree.
             std::vector<int> rows(static_cast<std::size_t>(total), 1);
             long long total_rows = 0;
             for (int i = 0; i < total; ++i) {
@@ -524,9 +561,22 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
                 total_rows += rows[static_cast<std::size_t>(i)];
             }
 
+            // Wrap the windowed column at the (possibly capped) width and
+            // left-anchor it; a trailing spacer soaks the surplus so the
+            // scrollbar still pins to the far right edge of the slot.
+            const int pad_w = std::max(0, gutter_w - inner_w);
+            auto place = [&](std::vector<Element> col) -> Element {
+                Element body = (v(std::move(col)) | width(inner_w)).build();
+                if (pad_w <= 0) return (Element{std::move(body)} | grow(1)).build();
+                return (h(
+                    Element{std::move(body)} | width(inner_w),
+                    Element{blank()} | grow(1)
+                )).build();
+            };
+
             if (total_rows <= view_h) {
                 std::vector<Element> win(all.begin(), all.end());
-                return (v(std::move(win)) | grow(1)).build();
+                return place(std::move(win));
             }
 
             // Last useful start element: the first index from which the tail
@@ -567,14 +617,14 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             std::vector<Element> barcol;
             for (int r = 0; r < view_h; ++r) {
                 const bool on = r >= pos && r < pos + thumb;
-                const char* g = r == 0 && start > 0 ? "▲"
-                              : r == view_h - 1 && start < max_start ? "▼"
-                              : on ? "█" : "│";
+                const char* g = r == 0 && start > 0 ? "\xe2\x96\xb2"
+                              : r == view_h - 1 && start < max_start ? "\xe2\x96\xbc"
+                              : on ? "\xe2\x96\x88" : "\xe2\x94\x82";
                 barcol.push_back((text(g) | nowrap | fgc(on ? ac : pal::faint)).build());
             }
 
             return (h(
-                v(std::move(win)) | grow(1),
+                place(std::move(win)) | grow(1),
                 text(" ") | nowrap,
                 v(std::move(barcol)) | width(1)
             )).build();
