@@ -139,15 +139,44 @@ private:
         if (s_.dstate)  { dot(); fig(std::to_string(s_.dstate), " blocked", pal::crit); }
         std::string batt;
         if (s_.battery.present)
-            batt = "  🔋 " + std::to_string(s_.battery.percent) + "%" + (s_.battery.charging ? " ↑" : "");
+            batt = "  \xf0\x9f\x94\x8b " + std::to_string(s_.battery.percent) + "%" + (s_.battery.charging ? " \xe2\x86\x91" : "");
+        // The top identity row is width-aware: hostname + kernel on the left,
+        // uptime + battery on the right, a flex spacer between. At narrow
+        // widths a plain h-stack of nowrap cells has no slack in the spacer,
+        // so the fixed cells BUTT together ("7.1.3-zeup 1d" — kernel fused into
+        // "up"). Build it as a component that measures the real width and
+        // sheds from the left: full kernel → clipped kernel → kernel dropped,
+        // always preserving a 2-cell gap before the right group.
+        const std::string host = s_.hostname;
+        const std::string kern = s_.kernel;
+        const std::string upt = "up " + humanize_duration(s_.uptime_sec);
+        Element id_row = Element{maya::ComponentElement{
+            .render = [host, kern, upt, batt](int w, int) -> Element {
+                using namespace maya; using namespace maya::dsl;
+                const int hostw = static_cast<int>(string_width(host));
+                const int rightw = static_cast<int>(string_width(upt))
+                                 + static_cast<int>(string_width(batt));
+                // Cells that must always show: host (left) + up/batt (right)
+                // + a 2-cell minimum gap. Whatever's left after that is the
+                // kernel's budget; below ~6 cells it's not worth showing.
+                const int kern_room = w - hostw - rightw - 4;
+                std::string k;
+                if (kern_room >= 6)
+                    k = "  " + std::string(fmt::clip(kern,
+                            static_cast<std::size_t>(kern_room - 2)));
+                std::vector<Element> row;
+                row.push_back((text(host) | nowrap | Bold | fgc(pal::white)).build());
+                if (!k.empty())
+                    row.push_back((text(k) | nowrap | fgc(pal::dim)).build());
+                row.push_back((Element{blank()} | grow(1)).build());
+                row.push_back((text(upt) | nowrap | fgc(pal::label)).build());
+                if (!batt.empty())
+                    row.push_back((text(batt) | nowrap | fgc(pal::good)).build());
+                return (h(std::move(row))).build();
+            },
+        }};
         return (v(
-            h(
-                text(s_.hostname) | nowrap | Bold | fgc(pal::white),
-                text("  " + s_.kernel) | nowrap | fgc(pal::dim),
-                Element{blank()} | grow(1),
-                text("up " + humanize_duration(s_.uptime_sec)) | nowrap | fgc(pal::label),
-                text(batt) | nowrap | fgc(pal::good)
-            ),
+            std::move(id_row),
             h(std::move(census)),
             blank()
         )).build();
