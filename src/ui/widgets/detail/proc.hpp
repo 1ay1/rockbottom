@@ -13,6 +13,7 @@
 
 #include "common.hpp"
 
+#include <cmath>
 #include <unordered_map>
 
 namespace rockbottom::ui::detail {
@@ -26,6 +27,74 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         return b;
     }
     const ProcInfo& p = *proc;
+    const double cpuf = std::clamp(p.cpu / 100.0, 0.0, 1.0);
+
+    // ── CPU hero graph ─────────────────────────────────────────────────────
+    // The headline question for a single process is "how much CPU is it
+    // eating, and is that spiking or steady?" — so lead with a full-width
+    // area graph of this process's own cpu-history ring, the same hero the
+    // CPU / GPU panes open with. The ring stores cpu% of ONE core as a 0..1
+    // fraction; we render it against a y-axis whose top is the window peak
+    // (rounded up to a clean grid) so a task that never breaks 8% still shows
+    // real shape instead of a flat line hugging the floor, while a core-pinned
+    // hog fills the frame. The live figure rides in the stat card on the left.
+    {
+        // Peak of the visible window (in cpu% of one core), floored so a near
+        // idle process doesn't amplify sampling noise into a full-height wall.
+        float ring_peak = 0.0f;
+        for (int i = 0; i < p.hist_len && i < 48; ++i)
+            ring_peak = std::max(ring_peak, p.cpu_history[static_cast<std::size_t>(i)]);
+        const double peak_pct = std::max(static_cast<double>(ring_peak) * 100.0, p.cpu);
+        // Clean axis ceiling: 10 / 25 / 50 / 100 / 200 … so labels read round.
+        const double axis_top = peak_pct <= 8    ? 10.0
+                              : peak_pct <= 20   ? 25.0
+                              : peak_pct <= 40   ? 50.0
+                              : peak_pct <= 100  ? 100.0
+                              : std::ceil(peak_pct / 100.0) * 100.0;
+        // Normalize the ring to the axis top so the trace's height matches the
+        // percentage the y-axis prints. hero_graph / Graph defer their read to
+        // PAINT time (a fill() component resolved against the real slot width),
+        // so the sample buffer must OUTLIVE this function — a stack std::array
+        // would dangle. Own it in a shared_ptr the render lambda captures.
+        auto ring = std::make_shared<std::array<float, 48>>();
+        const int hlen = std::min(p.hist_len, 48);
+        for (int i = 0; i < hlen; ++i)
+            (*ring)[static_cast<std::size_t>(i)] =
+                std::clamp(p.cpu_history[static_cast<std::size_t>(i)] * 100.0f
+                           / static_cast<float>(axis_top), 0.0f, 1.0f);
+
+        b.push_back(section("CPU OVER TIME", pal::proc_ac,
+                            "% of one core · peak " + fmt::fixed1(peak_pct) + "%"));
+        // Match the CPU pane's hero height exactly (full cx.graph_h) so the two
+        // panes' hero bands are the same size.
+        const int gh = cx.graph_h;
+        const maya::Color gc = load_color(cpuf);
+        // A SECOND owned buffer holding the ring as real cpu%-of-core fractions
+        // (0..1, NOT axis-relative), so the stat card's avg / peak / trend
+        // arrow are honest — the same genuine trend the CPU pane's card shows,
+        // rather than a bogus reading off a [cur, peak] stub.
+        auto card_hist = std::make_shared<std::array<float, 48>>();
+        for (int i = 0; i < hlen; ++i)
+            (*card_hist)[static_cast<std::size_t>(i)] =
+                std::clamp(p.cpu_history[static_cast<std::size_t>(i)], 0.0f, 1.0f);
+        b.push_back(Element{maya::ComponentElement{
+            .render = [ring, card_hist, hlen, gh, gc, cpuf, axis_top]
+                      (int w, int) -> Element {
+                using namespace maya::dsl;
+                std::vector<Element> row;
+                // Big-number stat card on the left when there's room — same
+                // helper + honest history as the CPU pane's hero.
+                if (w >= 64)
+                    row.push_back(stat_card(cpuf, gc, "cpu", card_hist->data(), hlen, gh));
+                row.push_back(y_axis(gh, axis_top, 4, /*percent=*/true));
+                Graph g{ring->data(), hlen};
+                g.fill().rows(gh).color(gc);
+                row.push_back(Element{g.build()});
+                return (h(std::move(row)) | gap(1) | height(gh)).build();
+            },
+        }});
+        b.push_back(gap_row());
+    }
 
     // ── identity ─────────────────────────────────────────────────────────────
     // Name + pid headline; underneath, the full command line and the family
@@ -66,26 +135,25 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
 
     // ── resources + ranking ──────────────────────────────────────────────────
     b.push_back(section("RESOURCES", pal::proc_ac));
-    const double cpuf = std::clamp(p.cpu / 100.0, 0.0, 1.0);
-    b.push_back(bar("cpu", cpuf, fmt::fixed1(p.cpu) + "% of one core", load_color(cpuf), cx.wide ? 34 : 0));
-    b.push_back(bar("memory", p.mem_share.v, humanize_bytes(p.rss) + " resident", pal::mem_ac, cx.wide ? 34 : 0));
-
-    // Per-process CPU trend — htop's graph meter, but for the one process you
-    // drilled into. Peak-normalized (floor 5% of a core) so a quiet task still
-    // shows shape. Laid out on the SAME grid as bar() above (14-col label rail,
-    // 2-col gutter, growing track, 5-col value) so the spark's left edge and
-    // its read-out line up flush with the cpu/memory meters directly above it.
-    if (p.hist_len > 1) {
-        float pk = 0;
-        auto spk = norm_unit(p.cpu_history.data(), p.hist_len, 0.05f, &pk);
-        std::vector<Element> row;
-        row.push_back((text("trend") | nowrap | fgc(pal::faint) | width(14)).build());
-        row.push_back(Element{Spark{spk.data(), p.hist_len}.fill().color(load_color(cpuf)).baseline(true)} | grow(1));
-        row.push_back((text(fmt::fixed1(p.cpu) + "%") | nowrap | Bold | fgc(load_color(cpuf)) | width(5) | justify(Justify::End)).build());
-        if (cx.wide)
-            row.push_back((text("peak " + fmt::fixed1(pk * 100.0f) + "%") | nowrap | fgc(pal::dim) | width(34)).build());
-        b.push_back((h(std::move(row)) | gap(2)).build());
+    // p.cpu is % of a SINGLE core (top's convention), so a multithreaded
+    // process legitimately exceeds 100% — 312% means it's using 3.1 cores'
+    // worth of CPU. A bare "312% of one core" reads like a bug, so when it
+    // crosses a core, spell it out in core-equivalents and scale the meter
+    // against the WHOLE machine (all cores = full bar) instead of pinning it
+    // maxed at 100%.
+    const int ncores = std::max(1, s.cpu.logical);
+    std::string cpu_read;
+    double cpu_meter;
+    if (p.cpu > 100.0 && ncores > 1) {
+        cpu_read = fmt::fixed1(p.cpu) + "% · " + fmt::fixed1(p.cpu / 100.0) +
+                   " of " + std::to_string(ncores) + " cores";
+        cpu_meter = std::clamp(p.cpu / (100.0 * ncores), 0.0, 1.0);
+    } else {
+        cpu_read = fmt::fixed1(p.cpu) + "% of one core";
+        cpu_meter = cpuf;
     }
+    b.push_back(bar("cpu", cpu_meter, cpu_read, load_color(cpuf), cx.wide ? 34 : 0));
+    b.push_back(bar("memory", p.mem_share.v, humanize_bytes(p.rss) + " resident", pal::mem_ac, cx.wide ? 34 : 0));
 
     // Rank against every process so you know if THIS is the culprit.
     int cpu_rank = 1, mem_rank = 1;

@@ -86,6 +86,14 @@ public:
         if (grow_ > 0) {
             const float* hist = mem_.usage_history.data();
             const int hlen = mem_.hist_len;
+            // Legend: label the single usage trace + its live value so the
+            // mountain is never an unlabelled squiggle.
+            rows.push_back((h(
+                text("USED") | nowrap | Bold | fgc(pal::mem_ac) | w_<8>,
+                Element{blank()} | grow(1),
+                text("\xe2\x94\x80\xe2\x94\x80 ram ") | nowrap | Bold | fgc(pal::mem_ac),
+                text(fmt::pct_pad(mf)) | nowrap | fgc(pal::mem_ac)
+            ) | gap(1)).build());
             rows.push_back(fill([hist, hlen](int w, int ah) -> Element {
                 using namespace maya;
                 using namespace maya::dsl;
@@ -104,6 +112,12 @@ public:
         else if (graph_h_ >= 2) {
             BarChart g{mem_.usage_history.data(), mem_.hist_len};
             g.fill().rows(graph_h_).color(pal::mem_ac);
+            rows.push_back((h(
+                text("USED") | nowrap | Bold | fgc(pal::mem_ac) | w_<8>,
+                Element{blank()} | grow(1),
+                text("\xe2\x94\x80\xe2\x94\x80 ram ") | nowrap | Bold | fgc(pal::mem_ac),
+                text(fmt::pct_pad(mf)) | nowrap | fgc(pal::mem_ac)
+            ) | gap(1)).build());
             rows.push_back((h(
                 y_axis(graph_h_, 100.0, 3),
                 Element{g} | grow(1)

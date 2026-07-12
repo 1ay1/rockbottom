@@ -57,15 +57,23 @@ public:
         if (nets_.empty())
             rows.push_back((text("no active interfaces") | fgc(pal::dim)).build());
 
-        // Pick the busiest interface for the mountain (shared by fill mode
-        // and the fixed-height graph mode below).
-        const NetIface* busy = nets_.empty() ? nullptr : &nets_.front();
-        if (busy) {
+        // Pick the interface for the mountain by SUSTAINED windowed traffic
+        // (sum over its history), not the instantaneous front() rate. The net
+        // list is re-sorted every sample by momentary rate, so front() flips
+        // between interfaces frame-to-frame — which made the mountain jump to
+        // a different iface's history each tick and read as random spikes
+        // instead of one continuous timelapse. The windowed sum is stable.
+        const NetIface* busy = nullptr;
+        if (!nets_.empty()) {
             double best = -1;
             for (const auto& n : nets_) {
-                double r = n.rx.per_sec + n.tx.per_sec;
-                if (r > best) { best = r; busy = &n; }
+                double sum = 0;
+                for (int i = 0; i < n.hist_len; ++i)
+                    sum += static_cast<double>(n.rx_history[static_cast<std::size_t>(i)])
+                         + static_cast<double>(n.tx_history[static_cast<std::size_t>(i)]);
+                if (sum > best) { best = sum; busy = &n; }
             }
+            if (!busy) busy = &nets_.front();
         }
 
         // Fill mode: a throughput mountain that expands to consume the height
@@ -80,12 +88,30 @@ public:
             const float* rxh = busy->rx_history.data();
             const float* txh = busy->tx_history.data();
             const int hl = busy->hist_len;
+            // Legend header: which trace is which, with live rates. The down
+            // (rx) trace is the good/green fill; up (tx) is the hot/orange
+            // overlay line — swatches match the graph ink exactly.
+            {
+                std::string rx = std::string(humanize_rate(busy->rx));
+                std::string tx = std::string(humanize_rate(busy->tx));
+                std::string ifn = std::string(fmt::clip(busy->name, 7));
+                rows.push_back((h(
+                    text(ifn) | nowrap | Bold | fgc(pal::net_ac) | w_<8>,
+                    Element{blank()} | grow(1),
+                    text("\xe2\x94\x80\xe2\x94\x80 down ") | nowrap | Bold | fgc(pal::good),
+                    text(rx) | nowrap | fgc(pal::good),
+                    text("  \xe2\x94\x80\xe2\x94\x80 up ") | nowrap | Bold | fgc(pal::hot),
+                    text(tx) | nowrap | fgc(pal::hot)
+                ) | gap(1)).build());
+            }
             rows.push_back(fill([rxh, txh, hl, peak](int w, int ah) -> Element {
                 using namespace maya;
                 using namespace maya::dsl;
                 if (ah < 2) return blank().build();
                 // Normalize into a per-thread scratch; build_fixed() bakes the
                 // glyphs immediately so the buffer needn't outlive this call.
+                // Even a flat-idle link draws its (floor-hugging) trace — a
+                // real connected line reads as "up, quiet", never a dead box.
                 static thread_local std::array<float, 48> rxn{}, txn{};
                 for (int i = 0; i < hl && i < 48; ++i) {
                     rxn[static_cast<std::size_t>(i)] = rxh[static_cast<std::size_t>(i)] / peak;
@@ -100,7 +126,7 @@ public:
                 }
                 const int cells = std::max(1, w - 6 - 1);   // axis(6) + gap(1)
                 Graph g{rxn.data(), hl};
-                g.cells(cells).rows(ah).color(pal::good).line_only().gamma(0.5f)
+                g.cells(cells).rows(ah).color(pal::good).light_fill().gamma(0.5f)
                  .overlay(txn.data(), hl, pal::hot);
                 return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
                         | gap(1)).build();
@@ -130,8 +156,16 @@ public:
                                 | w_<6> | justify(Justify::End)).build());
             }
             Graph g{rxn.data(), busy->hist_len};
-            g.fill().rows(graph_h_).color(pal::good).line_only().gamma(0.5f)
+            g.fill().rows(graph_h_).color(pal::good).light_fill().gamma(0.5f)
              .overlay(txn.data(), busy->hist_len, pal::hot);
+            rows.push_back((h(
+                text(std::string(fmt::clip(busy->name, 7))) | nowrap | Bold | fgc(pal::net_ac) | w_<8>,
+                Element{blank()} | grow(1),
+                text("\xe2\x94\x80\xe2\x94\x80 down ") | nowrap | Bold | fgc(pal::good),
+                text(std::string(humanize_rate(busy->rx))) | nowrap | fgc(pal::good),
+                text("  \xe2\x94\x80\xe2\x94\x80 up ") | nowrap | Bold | fgc(pal::hot),
+                text(std::string(humanize_rate(busy->tx))) | nowrap | fgc(pal::hot)
+            ) | gap(1)).build());
             rows.push_back((h(
                 v(std::move(axis)) | w_<6>,
                 Element{g} | grow(1)

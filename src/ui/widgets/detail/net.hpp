@@ -231,11 +231,11 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         hdr.push_back((text(" ── up ") | nowrap | Bold | fgc(pal::good)).build());
         b.push_back((h(std::move(hdr)) | gap(1)).build());
         const int gh = std::max(4, cx.graph_h - 1);
-        b.push_back(center((h(
-            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false, /*gamma=*/0.5f),
-            Element{Graph{rn.data(), hlen}.fill().rows(gh).color(pal::sky).gamma(0.5f)
-                        .overlay(tn.data(), hlen, pal::good)} | grow(1)
-        ) | gap(1) | height(gh)).build()));
+        // traffic_hero owns its sample buffers (rn/tn are stack locals that die
+        // when this block ends, but the graph reads at paint time).
+        b.push_back(center(traffic_hero(rn.data(), tn.data(), hlen,
+                                        static_cast<double>(shared_pk),
+                                        pal::sky, pal::good, gh)));
         b.push_back(gap_row());
     }
 

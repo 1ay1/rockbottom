@@ -65,6 +65,20 @@ public:
             const float* rh = io_.read_history.data();
             const float* wh = io_.write_history.data();
             const int hl = io_.hist_len;
+            // Legend: the mountain is the combined read+write total; show the
+            // live split so the single accent trace is unambiguous.
+            {
+                std::string rd = std::string(humanize_rate(io_.read));
+                std::string wr = std::string(humanize_rate(io_.write));
+                rows.push_back((h(
+                    text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<8>,
+                    Element{blank()} | grow(1),
+                    text("\xe2\x94\x80\xe2\x94\x80 read ") | nowrap | Bold | fgc(pal::disk_ac),
+                    text(rd) | nowrap | fgc(pal::text),
+                    text("  write ") | nowrap | fgc(pal::dim),
+                    text(wr) | nowrap | fgc(pal::text)
+                ) | gap(1)).build());
+            }
             rows.push_back(fill([rh, wh, hl, peak](int w, int ah) -> Element {
                 using namespace maya;
                 using namespace maya::dsl;
@@ -109,6 +123,14 @@ public:
             }
             BarChart g{tot.data(), io_.hist_len};
             g.fill().rows(graph_h_).color(pal::disk_ac).gamma(0.5f);
+            rows.push_back((h(
+                text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<8>,
+                Element{blank()} | grow(1),
+                text("\xe2\x94\x80\xe2\x94\x80 read ") | nowrap | Bold | fgc(pal::disk_ac),
+                text(std::string(humanize_rate(io_.read))) | nowrap | fgc(pal::text),
+                text("  write ") | nowrap | fgc(pal::dim),
+                text(std::string(humanize_rate(io_.write))) | nowrap | fgc(pal::text)
+            ) | gap(1)).build());
             rows.push_back((h(
                 v(std::move(axis)) | w_<6>,
                 Element{g} | grow(1)

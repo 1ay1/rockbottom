@@ -59,6 +59,8 @@ public:
          .border_color(frame)
          .border_text_end(" " + chip + " ", BorderTextPos::Top)
          .padding(0, 1, 0, 1);
+        if (theme_paints_canvas())
+            b.bg(theme_canvas());   // frame reads on the theme bg, not default
 
         // One TextElement + StyledRuns: flex can never shrink the headline —
         // overflow truncates the tail of the detail instead (TruncateEnd).

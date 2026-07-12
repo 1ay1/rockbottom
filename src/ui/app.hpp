@@ -31,6 +31,7 @@
 #include "widgets/proc_panel.hpp"
 #include "widgets/footer.hpp"
 #include "widgets/help.hpp"
+#include "widgets/theme_menu.hpp"
 #include "widgets/signal_menu.hpp"
 #include "widgets/nice_menu.hpp"
 #include "widgets/detail.hpp"
@@ -111,6 +112,16 @@ struct App {
             int  val = 0;    // the value being dialed in
         };
         std::optional<NiceMenu> nicemenu;
+
+        // Theme picker (T): an overlay listing the whole deck. `sel` is both
+        // the cursor AND the LIVE-previewed theme (moving it applies the theme
+        // immediately); `restore` is the index that was active when the menu
+        // opened, reverted on Esc / dismiss.
+        struct ThemeMenu {
+            int sel = 0;
+            int restore = 0;
+        };
+        std::optional<ThemeMenu> thememenu;
 
         // Verdict pulse: when health DEGRADES the banner border flares and
         // fades over the next few ticks so the state change catches the eye.
@@ -291,22 +302,20 @@ struct App {
             if (m.show_help) {
                 m.help_scroll += 3; clamp_help_scroll(m); return {std::move(m), C{}};
             }
-            if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
+            if (m.detail != ui::Detail::None) {
                 m.detail_scroll += 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
             m.sel += 3; clamp_sel(m);
-            if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
             return {std::move(m), C{}};
         }
         if (me.button == MouseButton::ScrollUp) {
             if (m.show_help) {
                 m.help_scroll -= 3; clamp_help_scroll(m); return {std::move(m), C{}};
             }
-            if (m.detail != ui::Detail::None && m.detail != ui::Detail::Proc) {
+            if (m.detail != ui::Detail::None) {
                 m.detail_scroll -= 3; clamp_detail_scroll(m); return {std::move(m), C{}};
             }
             m.sel -= 3; clamp_sel(m);
-            if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
             return {std::move(m), C{}};
         }
 
@@ -342,6 +351,9 @@ struct App {
             return {std::move(m), C{}};
         }
         if (m.nicemenu) { m.nicemenu.reset(); return {std::move(m), C{}}; }
+        // A click on the theme picker COMMITS the previewed theme (you clicked
+        // on what you were looking at) — unlike Esc, which reverts.
+        if (m.thememenu) { m.thememenu.reset(); return {std::move(m), C{}}; }
 
         // ── Everything else routes through the paint-time hit registry ──
         if (hit) {
@@ -399,6 +411,9 @@ struct App {
         m.tree       = cfg.tree;
         m.refresh_ms = cfg.refresh_ms;
         m.filter     = cfg.filter;
+        // Apply the saved/CLI theme (falls back to native if the name is stale).
+        if (int ti = ui::theme_index_by_name(cfg.theme); ti >= 0)
+            ui::set_theme(static_cast<std::size_t>(ti));
         // The very first sample runs synchronously: there is no event loop yet
         // to block, and the first frame should paint with real data instead of
         // an empty snapshot. Every sample AFTER this is a background effect.
@@ -425,6 +440,7 @@ struct App {
         c.tree       = m.tree;
         c.refresh_ms = m.refresh_ms;
         c.filter     = m.filter;
+        c.theme      = ui::active_theme_name();
         c.save();
     }
 
@@ -493,6 +509,35 @@ struct App {
         using C = maya::Cmd<Msg>;
         maya::Event ev{ke};
         using maya::key;
+
+        // 0−. Theme picker intercepts everything while open. ↑↓/j k move the
+        //     cursor and LIVE-APPLY that theme (the whole UI repaints behind
+        //     the card); Enter keeps it, Esc/q reverts to the theme that was
+        //     active when the menu opened.
+        if (m.thememenu) {
+            const int n = static_cast<int>(ui::theme_count());
+            auto preview = [&](int sel) {
+                m.thememenu->sel = std::clamp(sel, 0, n - 1);
+                ui::set_theme(static_cast<std::size_t>(m.thememenu->sel));
+            };
+            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                ui::set_theme(static_cast<std::size_t>(m.thememenu->restore));
+                m.thememenu.reset();
+                return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Enter) || key(ev, 'T') || key(ev, ' ')) {
+                m.toast = Toast{"theme \u00b7 " + std::string(ui::active_theme_name()), false};
+                m.thememenu.reset();
+                return {std::move(m), C{}};
+            }
+            if (key(ev, maya::SpecialKey::Down)  || key(ev, 'j')) { preview(m.thememenu->sel + 1); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::Up)    || key(ev, 'k')) { preview(m.thememenu->sel - 1); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { preview(m.thememenu->sel + 8); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { preview(m.thememenu->sel - 8); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { preview(0); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { preview(n - 1); return {std::move(m), C{}}; }
+            return {std::move(m), C{}};
+        }
 
         // 0. Signal picker intercepts everything. Number keys 1-9 jump to a
         //    signal; ↑↓ move; enter/y arms the confirm; esc/n backs out.
@@ -697,6 +742,15 @@ struct App {
         }
         if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
+        // Theme deck: T opens the picker overlay — a scrolling list of every
+        // theme with a live preview as you move the cursor. Enter keeps the
+        // choice (persisted on clean exit), Esc reverts. Seeded on the active
+        // theme so it opens where you already are.
+        if (key(ev, 'T')) {
+            const int cur = static_cast<int>(ui::active_theme_index());
+            m.thememenu = Model::ThemeMenu{cur, cur};
+            return {std::move(m), C{}};
+        }
 
         // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
         // the selected process's detail.
@@ -1130,6 +1184,7 @@ struct App {
         fold(static_cast<std::uint64_t>(m.scroll_top));
         fold(m.paused ? 1 : 0);
         fold(static_cast<std::uint64_t>(m.refresh_ms));
+        fold(static_cast<std::uint64_t>(ui::active_theme_index()));  // T repaints all
         fold(m.filtering ? 1 : 0);
         fold_str(m.filter);
         fold(static_cast<std::uint64_t>(m.detail));
@@ -1149,6 +1204,9 @@ struct App {
         // Renice dial: which process + the dialed value.
         if (m.nicemenu) { fold(29); fold(static_cast<std::uint64_t>(m.nicemenu->pid));
                           fold(static_cast<std::uint64_t>(m.nicemenu->val + 64)); }
+        // Theme picker: presence + cursor (the previewed theme index is
+        // already folded via active_theme_index() above).
+        if (m.thememenu) { fold(31); fold(static_cast<std::uint64_t>(m.thememenu->sel)); }
         // Toast: text + error tint (its ttl countdown is what expires it).
         if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
 
@@ -1188,25 +1246,38 @@ struct App {
         using namespace maya::dsl;
         using namespace rockbottom::ui;
 
-        if (m.show_help) return HelpOverlay{m.width, m.height, m.help_scroll};
+        // RGB themes own a dark canvas: paint the whole frame so ink contrast
+        // holds and punch-out badges read correctly. Native defers to the
+        // terminal (no fill). Applied to every root return below.
+        auto canvas = [](Element e) -> Element {
+            return ui::theme_paints_canvas()
+                ? (Element{std::move(e)} | bgc(ui::theme_canvas())).build()
+                : e;
+        };
+
+        if (m.show_help) return canvas(HelpOverlay{m.width, m.height, m.help_scroll});
 
         if (m.sigmenu) {
             const bool group = m.sigmenu->pids.size() > 1;
             std::string target = group
                 ? std::to_string(m.sigmenu->pids.size()) + " × " + m.sigmenu->name
                 : m.sigmenu->name + " (" + std::to_string(m.sigmenu->anchor_pid) + ")";
-            return SignalMenu{m.width, m.height, std::move(target), m.sigmenu->sel};
+            return canvas(SignalMenu{m.width, m.height, std::move(target), m.sigmenu->sel});
         }
 
         if (m.nicemenu) {
             std::string target = m.nicemenu->name + " (" + std::to_string(m.nicemenu->pid) + ")";
-            return NiceMenu{m.width, m.height, std::move(target), m.nicemenu->cur, m.nicemenu->val};
+            return canvas(NiceMenu{m.width, m.height, std::move(target), m.nicemenu->cur, m.nicemenu->val});
+        }
+
+        if (m.thememenu) {
+            return canvas(ThemeMenu{m.width, m.height, m.thememenu->sel});
         }
 
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
-            return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
-                              m.pending ? &*m.pending : nullptr};
+            return canvas(DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
+                              m.pending ? &*m.pending : nullptr});
         }
 
         const Snapshot& s = m.snap;
@@ -1408,13 +1479,13 @@ struct App {
                 Element{ProcPanel{s, pv}} | grow(1)
             ) | gap(gap_w) | height(band_h)).build();
 
-            return (v(
+            return canvas((v(
                 Header{s, m.paused},
                 VerdictBanner{s, m.verdict_pulse},
                 std::move(body),
                 Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                        m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
-            ) | padding(0, 1, 0, 1)).build();
+            ) | padding(0, 1, 0, 1)).build());
         }
 
         // Narrow: the stacked stat band gets a bounded share of the height so
@@ -1444,33 +1515,40 @@ struct App {
                   // terminal height instead of being clamped at ~22 rows.
                   Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem}.expand(1)}
                       | width(left_w) | hit(ui::hit_band(ui::Detail::Cpu)),
-                  // Self-filling right column. NETWORK carries the fill; its
-                  // maya fill() graph consumes whatever height is left after
-                  // the meters/iface rows. MEMORY sits at NATURAL height (just
-                  // the RAM + SWP meters) — its usage-over-time mountain is
-                  // REDUNDANT here because the CPU panel already overlays the
-                  // same RAM series (the "── ram" trace), so drawing it twice
-                  // wasted a tall slot. DISK sits at natural height too.
-                  //   MEMORY  natural (meters only)
-                  //   NETWORK (grow) fills · DISK natural
-                  v(Element{MemPanel{s.mem}}
-                        | hit(ui::hit_band(ui::Detail::Mem)),
-                    v(Element{NetPanel{s.nets}.expand(1)}
-                          | hit(ui::hit_band(ui::Detail::Net)),
-                      Element{DiskPanel{s.disks, s.disk_io, false}}
-                          | hit(ui::hit_band(ui::Detail::Disk)))
-                        | grow(1))
-                    | width(right_w)
+                  // Self-filling right column. Whichever of NETWORK / DISK is
+                  // actually MOVING carries the fill mountain; the other sits at
+                  // natural height. On an idle-network machine (a laptop at
+                  // rest) this hands the tall slot to DISK instead of drawing a
+                  // giant empty NET box — the band always fills with something
+                  // that has a real signal. MEMORY stays natural (its trend is
+                  // already overlaid on the CPU graph as the "── ram" trace).
+                  [&] {
+                      double net_rate = 0, disk_rate = s.disk_io.read.per_sec + s.disk_io.write.per_sec;
+                      for (const auto& ni : s.nets) net_rate += ni.rx.per_sec + ni.tx.per_sec;
+                      // Prefer NET as the star unless it's idle AND disk is busy.
+                      const bool net_star = !(net_rate < 512.0 && disk_rate > net_rate);
+                      return v(Element{MemPanel{s.mem}}
+                                   | hit(ui::hit_band(ui::Detail::Mem)),
+                        v(Element{NetPanel{s.nets}.expand(net_star ? 1.0f : 0.0f)}
+                              | (net_star ? grow(1) : grow(0))
+                              | hit(ui::hit_band(ui::Detail::Net)),
+                          Element{DiskPanel{s.disks, s.disk_io, false}
+                                      .expand(net_star ? 0.0f : 1.0f)}
+                              | (net_star ? grow(0) : grow(1))
+                              | hit(ui::hit_band(ui::Detail::Disk)))
+                            | grow(1))
+                        | width(right_w);
+                  }()
               ) | gap(gap_w) | height(band_px)).build();
 
-        return (v(
+        return canvas((v(
             Header{s, m.paused},
             VerdictBanner{s, m.verdict_pulse},
             std::move(top),
             Element{ProcPanel{s, pv}} | grow(1),
             Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                    m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
-        ) | padding(0, 1, 0, 1)).build();
+        ) | padding(0, 1, 0, 1)).build());
     }
 };
 

@@ -153,13 +153,41 @@ public:
         };
 
         // line[gx] = dot-row (0=top) of the trace; fill everything below.
+        // A value maps into [floor_gy .. 0]: even a dead-flat 0 sits `lift`
+        // dot-rows above the very bottom so an idle series still draws a
+        // visible baseline trace (with a thin fill band beneath it) rather
+        // than collapsing to a 1-dot sliver on the floor.
+        const int lift = gh >= 8 ? 2 : 1;
+        const int floor_gy = gh - 1 - lift;
         std::vector<int> line(static_cast<std::size_t>(gw));
         double latest = len_ > 0 ? std::clamp<double>(data_[len_ - 1], 0.0, 1.0) : 0.0;
         for (int gx = 0; gx < gw; ++gx) {
             double v = curve(sample(gx));
-            int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
+            int gy = floor_gy - static_cast<int>(std::lround(v * floor_gy));
             line[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
         }
+
+        // Connected stroke: at each dot-column the trace occupies not just its
+        // own dot-row but the whole vertical span up to the MIDPOINT of its
+        // neighbours — so a bumpy series reads as one continuous curve instead
+        // of a field of disconnected dots (the confetti look). stroke_lo/hi
+        // bracket the inked dot-rows for column gx.
+        auto stroke_span = [&](int gx, int& lo, int& hi) {
+            const int y  = line[static_cast<std::size_t>(gx)];
+            lo = y; hi = y;
+            if (gx > 0) {
+                const int yl = line[static_cast<std::size_t>(gx - 1)];
+                const int mid = (y + yl) / 2;   // meet the left neighbour halfway
+                lo = std::min(lo, std::min(y, mid));
+                hi = std::max(hi, std::max(y, mid));
+            }
+            if (gx < gw - 1) {
+                const int yr = line[static_cast<std::size_t>(gx + 1)];
+                const int mid = (y + yr + 1) / 2; // meet the right neighbour halfway
+                lo = std::min(lo, std::min(y, mid));
+                hi = std::max(hi, std::max(y, mid));
+            }
+        };
 
         // Optional overlay series: its own dot-row line on the same grid.
         const bool has_overlay = overlay_ && overlay_len_ > 0;
@@ -179,10 +207,23 @@ public:
             oline.resize(static_cast<std::size_t>(gw));
             for (int gx = 0; gx < gw; ++gx) {
                 double v = curve(osample(gx));
-                int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
+                int gy = floor_gy - static_cast<int>(std::lround(v * floor_gy));
                 oline[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
             }
         }
+        // Same connected-stroke bracket for the overlay line.
+        auto ostroke_span = [&](int gx, int& lo, int& hi) {
+            const int y = oline[static_cast<std::size_t>(gx)];
+            lo = y; hi = y;
+            if (gx > 0) {
+                const int mid = (y + oline[static_cast<std::size_t>(gx - 1)]) / 2;
+                lo = std::min(lo, std::min(y, mid)); hi = std::max(hi, std::max(y, mid));
+            }
+            if (gx < gw - 1) {
+                const int mid = (y + oline[static_cast<std::size_t>(gx + 1)] + 1) / 2;
+                lo = std::min(lo, std::min(y, mid)); hi = std::max(hi, std::max(y, mid));
+            }
+        };
 
         const Color lc = color_ ? *color_ : load_color(latest);
 
@@ -199,53 +240,72 @@ public:
                 uint8_t fill_bits = 0;
                 uint8_t over_bits = 0;
                 uint8_t grid_bits = 0;
+                // Track the deepest fill dot-row in this cell so the area's
+                // color can fade smoothly with real height, not just row index.
+                int fill_gy_sum = 0, fill_gy_n = 0;
                 for (int dc = 0; dc < 2; ++dc) {
                     int gx = c * 2 + dc;
                     int ly = line[static_cast<std::size_t>(gx)];
+                    int slo, shi; stroke_span(gx, slo, shi);
                     int oy = has_overlay ? oline[static_cast<std::size_t>(gx)] : -1;
+                    int olo = -1, ohi = -1;
+                    if (has_overlay) ostroke_span(gx, olo, ohi);
                     for (int dr = 0; dr < 4; ++dr) {
                         int gy = r * 4 + dr;
-                        if (gy == ly)      line_bits |= kDot[dr][dc];
-                        // Fill below the trace. Full = checker dither (a
-                        // translucent mountain). Light = a sparse rail (one
-                        // dot every 4 cols) so the area reads as faint rain,
-                        // not a wall. None = nothing below the line.
-                        else if (gy > ly) {
-                            if (fillmode_ == Fill::Full && ((gx + gy) & 1))
-                                fill_bits |= kDot[dr][dc];
-                            else if (fillmode_ == Fill::Light && (gx % 8 == 0))
-                                fill_bits |= kDot[dr][dc];
+                        // Connected trace: the whole bracket between this
+                        // column and its neighbours' midpoints inks, so the
+                        // curve is unbroken instead of a scatter of dots.
+                        const bool on_line = gy >= slo && gy <= shi;
+                        if (on_line) line_bits |= kDot[dr][dc];
+                        // Solid area fill under the trace. A smooth mountain
+                        // (every dot below the stroke), colored by a vertical
+                        // gradient later. Fill::None = a bare line only.
+                        else if (gy > shi && fillmode_ != Fill::None) {
+                            fill_bits |= kDot[dr][dc];
+                            fill_gy_sum += gy; ++fill_gy_n;
                         }
-                        // The overlay is a LINE ONLY — a second dithered
-                        // mountain over the primary's fill reads as noise
-                        // (two checker patterns interfere into a moiré band).
-                        if (has_overlay && gy == oy) over_bits |= kDot[dr][dc];
-                        if (gy < ly && (!has_overlay || gy < oy) && is_grid(gy, gx))
+                        // Overlay is a connected LINE ONLY (no second fill —
+                        // two areas interfere into visual noise).
+                        if (has_overlay && gy >= olo && gy <= ohi)
+                            over_bits |= kDot[dr][dc];
+                        if (!on_line && gy < ly && (!has_overlay || gy < oy)
+                            && is_grid(gy, gx))
                             grid_bits |= kDot[dr][dc];
                     }
                 }
                 // Combine everything into one braille glyph. A glyph carries
-                // ONE color, so pick by priority: where BOTH crests share the
-                // cell, blend the hues (an idle primary hugging the floor
-                // must never be fully painted over by the overlay); else
-                // whichever crest is present > primary fill.
+                // ONE color, so pick by priority: line > overlay > fill > grid.
+                // Where the primary line and overlay share the cell, blend.
                 const uint8_t bits = line_bits | fill_bits | over_bits | grid_bits;
                 if (bits) {
                     std::size_t off = content.size();
                     utf8(U'\u2800' + bits, content);
-                    const double depth = rows_ > 1 ? static_cast<double>(r) / (rows_ - 1) : 1.0;
+                    // The trace hue tracks the value at THIS cell (gradient
+                    // graphs glow amber/red at a spike); fixed-color graphs
+                    // use their color throughout.
                     const Color bright = color_ ? *color_
-                        : load_color(1.0 - line[static_cast<std::size_t>(c * 2)] / double(std::max(1, gh - 1)));
+                        : load_color(1.0 - line[static_cast<std::size_t>(c * 2)]
+                                            / double(std::max(1, gh - 1)));
                     Color cc;
                     if (line_bits && over_bits) {
                         cc = mix(bright, overlay_color_, 0.5);
+                    } else if (line_bits) {
+                        // The crest edge is the brightest thing on the graph —
+                        // a small lift makes the leading stroke glow above its
+                        // own gradient body.
+                        cc = brighten(bright);
                     } else if (over_bits) {
                         cc = overlay_color_;
-                    } else if (line_bits) {
-                        cc = bright;
                     } else if (fill_bits) {
-                        // Depth fade: rows further from the top are dimmer.
-                        cc = mix(bright, pal::bg_panel, 0.45 + 0.25 * depth);
+                        // Smooth vertical gradient: the area is brightest just
+                        // under the crest and fades toward the panel bg at the
+                        // floor, so the mountain has real depth. frac 0=top
+                        // dot-row, 1=floor.
+                        const double avg_gy = fill_gy_n
+                            ? static_cast<double>(fill_gy_sum) / fill_gy_n
+                            : (r * 4 + 1.5);
+                        const double frac = std::clamp(avg_gy / std::max(1, gh - 1), 0.0, 1.0);
+                        cc = mix(bright, pal::bg_panel, 0.42 + 0.46 * frac);
                     } else {
                         cc = pal::track;   // gridline dots
                     }

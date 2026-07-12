@@ -89,10 +89,19 @@ public:
         // the table's own build carries the grow so it fills its slot in the
         // outer vstack without a second nested grow compounding (which
         // over-subscribed the band and starved the top stat panels).
+        // RGB themes own a dark canvas: the maya Table draws its ╭╮ frame with
+        // no bg of its own, so wrap it in a box tinted with the theme canvas —
+        // the ambient box bg carries under the border line + padding instead of
+        // leaking the terminal default. Native defers (no wrap).
+        auto themed = [](Element e) -> Element {
+            return theme_paints_canvas()
+                ? (Element{std::move(e)} | grow(1) | bgc(theme_canvas())).build()
+                : (Element{std::move(e)} | grow(1)).build();
+        };
         if (view_.pending) {
-            return v(confirm_strip(), (tbl.build() | grow(1)).build()) | grow(1);
+            return themed(v(confirm_strip(), (tbl.build() | grow(1)).build()).build());
         }
-        return tbl.build() | grow(1);
+        return themed(tbl.build());
     }
 
 private:
@@ -156,6 +165,11 @@ private:
         cfg.show_border  = true;                  // ╭ PROCESSES ─╮ frame
         cfg.title        = title_with_chip();
         cfg.border_color = pal::border;
+        // RGB themes own a dark canvas; the maya Table draws its ╭╮ frame
+        // with no bg of its own, so hand it the theme canvas — the frame
+        // glyphs + padding read on the theme bg instead of leaking the
+        // terminal default. Native (index 0) leaves it unset (transparent).
+        if (theme_paints_canvas()) cfg.box_bg = theme_canvas();
         cfg.show_header  = view_.pending == nullptr;  // strip replaces it
         cfg.header_bg    = pal::rail;             // filled header pill band
         cfg.header_style = Style{}.with_fg(pal::text);  // band-safe fallback ink

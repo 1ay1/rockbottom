@@ -49,6 +49,12 @@ public:
              .border_color(mix(pal::border, self.accent_, self.tint_))
              .border_text(" " + self.glyph_ + " " + self.title_ + " ", BorderTextPos::Top)
              .padding(0, 1, 0, 1);
+            // RGB themes own a dark canvas: fill the panel box (border line +
+            // interior padding) with it so the frame reads on the theme bg
+            // instead of leaking the terminal's default background. Native
+            // defers to the terminal (no fill).
+            if (theme_paints_canvas())
+                b.bg(theme_canvas());
             if (with_chip && !self.chip_.empty())
                 b.border_text_end(" " + self.chip_ + " ", BorderTextPos::Top);
             Element body = b(std::move(kids));

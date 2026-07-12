@@ -412,6 +412,41 @@ inline Element hero_graph(double frac, maya::Color card_c, const char* label,
     }};
 }
 
+// ── DUAL-SERIES TRAFFIC HERO ─────────────────────────────────────────
+// The rx/tx (and disk read/write) hero: a filled mountain (`fill_c`) with a
+// second series overlaid as a line (`over_c`), on a shared sqrt-curve axis
+// labelled in byte rates. Both `fill`/`over` are 0..1 fractions of `axis_top`.
+//
+// CRITICAL: Graph.fill() defers its sample read to PAINT time (a component
+// resolved against the real slot width). So the sample buffers must OUTLIVE
+// the calling function — a caller's stack std::array would dangle and the
+// graph would read freed memory (garbage trace / corruption). This helper
+// OWNS copies of both series in shared_ptrs the render lambda captures, so
+// callers can pass transient locals safely.
+inline Element traffic_hero(const float* fill, const float* over, int len,
+                            double axis_top, maya::Color fill_c,
+                            maya::Color over_c, int gh, float gamma = 0.5f,
+                            int axis_w = 5) {
+    auto f = std::make_shared<std::array<float, 48>>();
+    auto o = std::make_shared<std::array<float, 48>>();
+    const int n = std::min(len, 48);
+    for (int i = 0; i < n; ++i) {
+        (*f)[static_cast<std::size_t>(i)] = fill ? fill[i] : 0.0f;
+        (*o)[static_cast<std::size_t>(i)] = over ? over[i] : 0.0f;
+    }
+    return Element{maya::ComponentElement{
+        .render = [f, o, n, axis_top, fill_c, over_c, gh, gamma, axis_w]
+                  (int, int) -> Element {
+            using namespace maya; using namespace maya::dsl;
+            return (h(
+                y_axis(gh, axis_top, axis_w, /*percent=*/false, gamma),
+                Element{Graph{f->data(), n}.fill().rows(gh).color(fill_c).gamma(gamma)
+                            .overlay(o->data(), n, over_c)} | grow(1)
+            ) | gap(1) | height(gh)).build();
+        },
+    }};
+}
+
 // ── STACKED COMPOSITION BAR ──────────────────────────────────────────
 // One full-width bar whose colored segments show HOW a total is composed
 // (the Activity-Monitor / htop memory idiom) — far more legible than a

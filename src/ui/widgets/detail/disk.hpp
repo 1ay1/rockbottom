@@ -97,11 +97,11 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     H.push_back(section("SYSTEM I/O", pal::disk_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
-        H.push_back((h(
-            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false, /*gamma=*/0.5f),
-            Element{Graph{rds.data(), s.disk_io.hist_len}.fill().rows(gh).color(pal::teal).gamma(0.5f)
-                        .overlay(wrs.data(), s.disk_io.hist_len, pal::hot)} | grow(1)
-        ) | gap(1) | height(gh)).build());
+        // traffic_hero owns its sample buffers: rds/wrs are stack locals but the
+        // fill()-mode graph reads them at paint time, so it must copy.
+        H.push_back(traffic_hero(rds.data(), wrs.data(), s.disk_io.hist_len,
+                                 static_cast<double>(shared_pk),
+                                 pal::teal, pal::hot, gh));
     }
     // Live figures + peaks for each direction, keyed by the graph's colors.
     // Width-aware: iops then peak shed right-to-left on a thin pane so the

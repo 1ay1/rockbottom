@@ -29,6 +29,7 @@ struct Config {
     bool        tree = false;          // flat is the default view
     int         refresh_ms = 1000;
     std::string filter;                // startup filter query ("" = none)
+    std::string theme = "native";      // active palette name (see ui/theme.hpp)
     bool        show_help_on_exit = false;   // never persisted; reserved
 
     // ── SortKey <-> name ──
@@ -85,6 +86,7 @@ struct Config {
             else if (key == "tree")      c.tree = (val == "1" || val == "true");
             else if (key == "refresh_ms") { int v = std::atoi(val.c_str()); if (v >= 250 && v <= 5000) c.refresh_ms = v; }
             else if (key == "filter")    c.filter = val;
+            else if (key == "theme")     c.theme = val;
         }
         return c;
     }
@@ -100,6 +102,7 @@ struct Config {
         f << "tree=" << (tree ? 1 : 0) << "\n";
         f << "refresh_ms=" << refresh_ms << "\n";
         f << "filter=" << filter << "\n";
+        f << "theme=" << theme << "\n";
     }
 
     // ── CLI parsing: returns false + fills `exit_msg` for --help/--version or
@@ -114,6 +117,8 @@ struct Config {
                 "  --flat            open in the flat list view (default)\n"
                 "  --refresh=MS      sample cadence 250..5000ms  (default: 1000)\n"
                 "  --filter=QUERY    startup filter, e.g. --filter='cpu:>5'\n"
+                "  --theme=NAME      color theme — 35 total (native, mocha, tokyo,\n"
+                "                    dracula, gruvbox, nord, synthwave, matrix, …)\n"
                 "  --no-config       ignore ~/.config/rockbottom/config this run\n"
                 "  -h, --help        show this help and exit\n"
                 "  -v, --version     show version and exit\n\n"
@@ -141,6 +146,7 @@ struct Config {
                 c.refresh_ms = v; continue;
             }
             if (auto q = val("--filter=")) { c.filter = *q; continue; }
+            if (auto th = val("--theme=")) { c.theme = *th; continue; }
             exit_msg = "unknown option: " + a + "\n" + usage();
             return false;
         }
