@@ -81,7 +81,11 @@ public:
             rows.push_back(fill([hist, hlen, memh, memlen](int w, int ah) -> Element {
                 using namespace maya;
                 using namespace maya::dsl;
-                if (ah < 2) return blank().build();
+                // No room for even a 2-row mountain — collapse to nothing
+                // (height 0) so a tiny band spends its rows on the header +
+                // cores strip instead of a dead blank line. The live % still
+                // reads on the header row above.
+                if (ah < 2) return (blank() | height(0)).build();
                 Graph g{hist, hlen};
                 g.cells(std::max(1, w - 3 - 1)).rows(ah);   // y-axis(3) + gap(1)
                 if (memh) g.overlay(memh, memlen, pal::mem_ac);

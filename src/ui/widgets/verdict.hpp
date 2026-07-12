@@ -86,7 +86,12 @@ public:
             .wrap    = TextWrap::TruncateEnd,
             .runs    = std::move(runs),
         }});
-        return b(std::move(line));
+        // Pin to exactly 3 rows (top border + headline + bottom border). On a
+        // short terminal the vstack's grow child (the proc table) would
+        // otherwise flex-shrink the banner, clipping its single content row
+        // and leaving an empty ╭──╮/╰──╯ shell. A fixed height makes the
+        // headline non-negotiable — it's the whole reason the tool exists.
+        return (b(std::move(line)) | height(3)).build();
     }
 };
 
