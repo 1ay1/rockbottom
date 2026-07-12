@@ -233,35 +233,24 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             ifcol.push_back((h(std::move(idr))).build());
         }
         if (split) {
-            ifcol.push_back((h(
-                text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
-                Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
-                text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
-                text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
-            ) | gap(1)).build());
-            ifcol.push_back((h(
-                text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
-                Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
-                text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
-                text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End)
-            ) | gap(1)).build());
+            ifcol.push_back(flow_row("  \xe2\x96\xbc rx", pal::sky, rxn.data(), ni.hist_len, pal::sky,
+                std::string(humanize_rate(ni.rx)), pal::sky,
+                {{"pk " + std::string(humanize_rate(ByteRate{rxpk})), pal::dim, 10}}));
+            ifcol.push_back(flow_row("  \xe2\x96\xb2 tx", pal::good, txn.data(), ni.hist_len, pal::good,
+                std::string(humanize_rate(ni.tx)), pal::good,
+                {{"pk " + std::string(humanize_rate(ByteRate{txpk})), pal::dim, 10}}));
         } else {
-            ifcol.push_back((h(
-                text("  ▼ rx") | nowrap | fgc(pal::sky) | width(7),
-                Element{Spark{rxn.data(), ni.hist_len}.fill().color(pal::sky).baseline(true)} | grow(1),
-                text(humanize_rate(ni.rx)) | nowrap | Bold | fgc(pal::sky) | width(10) | justify(Justify::End),
-                text(fmt::count(ni.rx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
-                text("pk " + std::string(humanize_rate(ByteRate{rxpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-                text("↓ " + std::string(humanize_bytes(ni.rx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
-            ) | gap(1)).build());
-            ifcol.push_back((h(
-                text("  ▲ tx") | nowrap | fgc(pal::good) | width(7),
-                Element{Spark{txn.data(), ni.hist_len}.fill().color(pal::good).baseline(true)} | grow(1),
-                text(humanize_rate(ni.tx)) | nowrap | Bold | fgc(pal::good) | width(10) | justify(Justify::End),
-                text(fmt::count(ni.tx_pps) + " p/s") | nowrap | fgc(pal::dim) | width(10) | justify(Justify::End),
-                text("pk " + std::string(humanize_rate(ByteRate{txpk}))) | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-                text("↑ " + std::string(humanize_bytes(ni.tx_total))) | nowrap | fgc(pal::label) | width(9) | justify(Justify::End)
-            ) | gap(1)).build());
+            ifcol.push_back(flow_row("  \xe2\x96\xbc rx", pal::sky, rxn.data(), ni.hist_len, pal::sky,
+                std::string(humanize_rate(ni.rx)), pal::sky,
+                {// priority order: pps, then peak, then lifetime total
+                 {fmt::count(ni.rx_pps) + " p/s", pal::dim, 8},
+                 {"pk " + std::string(humanize_rate(ByteRate{rxpk})), pal::dim, 10},
+                 {"\xe2\x86\x93 " + std::string(humanize_bytes(ni.rx_total)), pal::label, 8}}));
+            ifcol.push_back(flow_row("  \xe2\x96\xb2 tx", pal::good, txn.data(), ni.hist_len, pal::good,
+                std::string(humanize_rate(ni.tx)), pal::good,
+                {{fmt::count(ni.tx_pps) + " p/s", pal::dim, 8},
+                 {"pk " + std::string(humanize_rate(ByteRate{txpk})), pal::dim, 10},
+                 {"\xe2\x86\x91 " + std::string(humanize_bytes(ni.tx_total)), pal::label, 8}}));
         }
         // Packet-rate + lifetime packet counts — a link can be saturated on
         // packets-per-second (tiny-packet floods, VoIP) while byte rate looks

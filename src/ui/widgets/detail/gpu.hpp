@@ -65,15 +65,10 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
-            Graph gr{g.util_history.data(), g.hist_len};
-            gr.fill().rows(gh).color(pal::proc_ac)
-              .overlay(g.mem_history.data(), g.mem_hist_len, pal::mem_ac);
-            L.push_back((h(
-                stat_card(g.usage.v, load_color(g.usage.v), "gpu busy",
-                          g.util_history.data(), g.hist_len, gh),
-                y_axis(gh, 100.0, 3),
-                Element{std::move(gr)} | grow(1)
-            ) | gap(1) | height(gh)).build());
+            L.push_back(hero_graph(g.usage.v, load_color(g.usage.v), "gpu busy",
+                                   g.util_history.data(), g.hist_len, gh,
+                                   pal::proc_ac,
+                                   g.mem_history.data(), g.mem_hist_len, pal::mem_ac));
         }
         L.push_back(gap_row());
 

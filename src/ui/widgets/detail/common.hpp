@@ -338,6 +338,38 @@ inline Element stat_card(double frac, maya::Color c, const std::string& label,
     return (v(std::move(col)) | width(16)).build();
 }
 
+// ── HERO GRAPH ───────────────────────────────────────────────
+// The shared "big-number stat card + y-axis + filled mountain" hero used by
+// the CPU / MEM / GPU panes. Width-aware: the block-digit stat card needs
+// ~16 cols, so on a thin pane it's DROPPED and the trace (with its labelled
+// y-axis) owns the full width instead of being crushed to a 6-cell sliver.
+// Optional overlay draws a second series (RAM over CPU, VRAM over GPU).
+inline Element hero_graph(double frac, maya::Color card_c, const char* label,
+                          const float* hist, int hist_len, int gh,
+                          std::optional<maya::Color> graph_c = std::nullopt,
+                          const float* overlay = nullptr, int overlay_len = 0,
+                          maya::Color overlay_c = pal::mem_ac,
+                          double axis_top = 100.0, bool axis_pct = true,
+                          int axis_w = 3) {
+    using namespace maya;
+    return Element{maya::ComponentElement{
+        .render = [=](int w, int) -> Element {
+            using namespace maya::dsl;
+            std::vector<Element> row;
+            // Card only when there's genuine room for it AND the trace.
+            if (w >= 64)
+                row.push_back(stat_card(frac, card_c, label, hist, hist_len, gh));
+            row.push_back(y_axis(gh, axis_top, axis_w, axis_pct));
+            Graph g{hist, hist_len};
+            g.fill().rows(gh);
+            if (graph_c) g.color(*graph_c);
+            if (overlay) g.overlay(overlay, overlay_len, overlay_c);
+            row.push_back(Element{g.build_fixed()} | grow(1));
+            return (h(std::move(row)) | gap(1) | height(gh)).build();
+        },
+    }};
+}
+
 // ── STACKED COMPOSITION BAR ──────────────────────────────────────────
 // One full-width bar whose colored segments show HOW a total is composed
 // (the Activity-Monitor / htop memory idiom) — far more legible than a
@@ -472,6 +504,50 @@ inline std::array<float, 48> norm_unit(const float* h, int len, float floor,
 inline Element gap_row() {
     using namespace maya; using namespace maya::dsl;
     return blank();
+}
+
+// ── WIDTH-AWARE THROUGHPUT ROW ───────────────────────────────────────
+// The rx/tx (and disk read/write) strip: an arrow+label, a live sparkline
+// that fills the slack, the current rate, and OPTIONAL trailing figures
+// (packets/s, window peak, lifetime total). At full width all four show;
+// as the pane narrows they SHED right-to-left — lifetime first, then peak,
+// then pps — so the rate and spark stay readable instead of every column
+// truncating into stubs ("pk 6", "↓ 9.", "0 p/"). Built as a component so
+// the shed decision runs against the real solved width every frame.
+struct FlowTail { std::string text; maya::Color color; int min_w; };
+
+inline Element flow_row(const std::string& arrow_label, maya::Color label_c,
+                        const float* hist, int hist_len, maya::Color spark_c,
+                        const std::string& rate, maya::Color rate_c,
+                        std::vector<FlowTail> tails = {}) {
+    using namespace maya;
+    std::array<float, 48> hn{};
+    for (int i = 0; i < hist_len && i < 48; ++i)
+        hn[static_cast<std::size_t>(i)] = std::clamp(hist[i], 0.0f, 1.0f);
+    const int hlen = std::min(hist_len, 48);
+    return Element{maya::ComponentElement{
+        .render = [=](int w, int) -> Element {
+            using namespace maya::dsl;
+            constexpr int kLabelW = 7, kRateW = 10, kGap = 1, kSparkMin = 6;
+            // Reserve label + rate + a minimal spark; whatever's left funds
+            // the optional tails (shed right-to-left when they don't fit).
+            int budget = w - kLabelW - kRateW - kSparkMin - 3 * kGap;
+            std::vector<const FlowTail*> keep;
+            for (const auto& t : tails) {
+                if (budget >= t.min_w + kGap) { keep.push_back(&t); budget -= t.min_w + kGap; }
+                else break;   // once one doesn't fit, drop the rest (order = priority)
+            }
+            std::vector<Element> row;
+            row.push_back((text(arrow_label) | nowrap | fgc(label_c) | width(kLabelW)).build());
+            row.push_back(Element{Spark{hn.data(), hlen}.fill().color(spark_c).baseline(true)} | grow(1));
+            row.push_back((text(rate) | nowrap | Bold | fgc(rate_c) | width(kRateW) | justify(Justify::End)).build());
+            for (const FlowTail* t : keep)
+                row.push_back((text(t->text) | nowrap | fgc(t->color)
+                               | width(std::max(t->min_w, static_cast<int>(string_width(t->text))))
+                               | justify(Justify::End)).build());
+            return (h(std::move(row)) | gap(kGap)).build();
+        },
+    }};
 }
 
 // ── TWO-COLUMN BODY ──────────────────────────────────────────────────

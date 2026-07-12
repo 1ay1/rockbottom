@@ -12,6 +12,51 @@
 
 namespace rockbottom::ui::detail {
 
+// A width-aware FILESYSTEMS row (shared by the header and every mount). The
+// mount name, the usage meter, and the pct always render; the trailing
+// figures (free → used/size → inodes → fs) shed right-to-left as the pane
+// narrows, so a thin DISK pane reads "/home ███ 27%" cleanly instead of
+// crushing every column into an unreadable stub. `meter` is nullopt on the
+// header row (its slot becomes the "usage" label spanning the groove).
+struct FsTail { std::string text; maya::Color color; int min_w; };
+
+inline Element build_fs_line(std::string mount, maya::Color mount_c,
+                             std::optional<double> meter, std::string pct,
+                             maya::Color pct_c, std::vector<FsTail> tails,
+                             bool header) {
+    using namespace maya;
+    return Element{maya::ComponentElement{
+        .render = [=](int w, int) -> Element {
+            using namespace maya::dsl;
+            constexpr int kMountW = 15, kPctW = 5, kMeterMin = 6, kGap = 1;
+            int budget = w - kMountW - kPctW - kMeterMin - 3 * kGap;
+            std::vector<const FsTail*> keep;
+            for (const auto& t : tails) {
+                const int need = std::max(t.min_w, static_cast<int>(string_width(t.text))) + kGap;
+                if (budget >= need) { keep.push_back(&t); budget -= need; }
+                else break;   // priority order: once one won't fit, drop the rest
+            }
+            std::vector<Element> row;
+            Style mst = Style{}.with_fg(mount_c);
+            if (!header) mst = mst.with_bold();
+            row.push_back((text(std::string(fmt::clip(mount, kMountW)), mst)
+                           | nowrap | width(kMountW + 1)).build());
+            if (meter)
+                row.push_back(Element{Meter{*meter}.fill().color(pal::disk_ac)} | grow(1));
+            else
+                row.push_back((text("usage") | nowrap | fgc(pal::dim) | grow(1)).build());
+            row.push_back((text(pct) | nowrap | Bold | fgc(pct_c) | width(kPctW) | justify(Justify::End)).build());
+            for (const FsTail* t : keep)
+                row.push_back((text(t->text) | nowrap | fgc(t->color)
+                               | width(std::max(t->min_w, static_cast<int>(string_width(t->text))))
+                               | justify(Justify::End)).build());
+            Element line = (h(std::move(row)) | gap(kGap)).build();
+            if (header) return (Element{std::move(line)} | bgc(pal::track)).build();
+            return line;
+        },
+    }};
+}
+
 inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
 
@@ -51,18 +96,16 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         ) | gap(1) | height(gh)).build());
     }
     // Live figures + peaks for each direction, keyed by the graph's colors.
-    L.push_back((h(
-        text("  ▼ read") | nowrap | fgc(pal::teal) | width(10),
-        text(humanize_rate(s.disk_io.read)) | nowrap | Bold | fgc(pal::teal) | width(11) | justify(Justify::End),
-        text(fmt::count(s.disk_io.read_iops) + " iops") | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-        text("pk " + std::string(humanize_rate(ByteRate{rpk}))) | nowrap | fgc(pal::dim) | width(13) | justify(Justify::End)
-    ) | gap(1)).build());
-    L.push_back((h(
-        text("  ▲ write") | nowrap | fgc(pal::hot) | width(10),
-        text(humanize_rate(s.disk_io.write)) | nowrap | Bold | fgc(pal::hot) | width(11) | justify(Justify::End),
-        text(fmt::count(s.disk_io.write_iops) + " iops") | nowrap | fgc(pal::dim) | width(12) | justify(Justify::End),
-        text("pk " + std::string(humanize_rate(ByteRate{wpk}))) | nowrap | fgc(pal::dim) | width(13) | justify(Justify::End)
-    ) | gap(1)).build());
+    // Width-aware: iops then peak shed right-to-left on a thin pane so the
+    // rate stays readable instead of every column truncating to a stub.
+    L.push_back(flow_row("  \xe2\x96\xbc rd", pal::teal, rds.data(), s.disk_io.hist_len, pal::teal,
+        std::string(humanize_rate(s.disk_io.read)), pal::teal,
+        {{fmt::count(s.disk_io.read_iops) + " iops", pal::dim, 9},
+         {"pk " + std::string(humanize_rate(ByteRate{rpk})), pal::dim, 10}}));
+    L.push_back(flow_row("  \xe2\x96\xb2 wr", pal::hot, wrs.data(), s.disk_io.hist_len, pal::hot,
+        std::string(humanize_rate(s.disk_io.write)), pal::hot,
+        {{fmt::count(s.disk_io.write_iops) + " iops", pal::dim, 9},
+         {"pk " + std::string(humanize_rate(ByteRate{wpk})), pal::dim, 10}}));
     // Combined IOPS strip — operations/sec is the metric SSDs bottleneck on
     // long before bandwidth does, so surface it as its own honest row.
     L.push_back(kv3(
@@ -82,31 +125,26 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     // ── filesystems ─────────────────────────────────────
     R.push_back(section("FILESYSTEMS", pal::disk_ac,
                         std::to_string(static_cast<int>(s.disks.size())) + " mounted"));
+    // The row is width-aware: mount + meter + pct always show; free, then
+    // used/size, then inodes, then fs shed right-to-left as the pane narrows,
+    // so at 30 cols you read "/home \u2588\u2588 27%" cleanly instead of every column
+    // truncating into stubs ("61G /", "btr"). Header + data share the same
+    // shed logic so labels never drift off their values.
     {
-        // Header columns MUST mirror the data-row layout below exactly, or the
-        // labels drift off their values. The data row is:
-        //   mount(16) · meter(grow) · pct(5) · free(9) · used/size(16) · inodes(7) · fs(10)
-        // so the header carries the same 7 slots — "usage" spans the meter,
-        // an empty slot sits over the pct column.
-        auto col = [](const char* t) { return text(t) | nowrap | fgc(pal::dim); };
-        R.push_back((h(
-            col("mount") | width(16),
-            col("usage") | grow(1),
-            col("") | width(5) | justify(Justify::End),
-            col("free") | width(9) | justify(Justify::End),
-            col("used / size") | width(16) | justify(Justify::End),
-            col("inodes") | width(7) | justify(Justify::End),
-            col("  fs") | width(10)
-        ) | gap(1) | bgc(pal::track)).build());
+        // Header carries the same slots the data rows do; both funnel through
+        // build_fs_line so the shed decisions match exactly.
+        R.push_back(build_fs_line(
+            /*mount=*/"mount", pal::dim, /*meter=*/std::nullopt, /*pct=*/"",
+            pal::dim, {{"free", pal::dim, 8}, {"used / size", pal::dim, 13},
+                       {"inodes", pal::dim, 6}, {"fs", pal::dim, 6}},
+            /*header=*/true));
     }
     const DiskInfo* worst = nullptr;
     for (const DiskInfo& d : s.disks) {
         const double f = d.usage().v;
         const std::uint64_t freeb = d.total.value > d.used.value ? d.total.value - d.used.value : 0;
         if (!worst || f > worst->usage().v) worst = &d;
-        // Inode pressure — the disk-full failure nobody checks for until
-        // "No space left on device" with 40G free.
-        std::string ino = "·";
+        std::string ino = "\xc2\xb7";
         maya::Color ino_c = pal::faint;
         if (d.inodes_total > 0) {
             const double iused = 1.0 - static_cast<double>(d.inodes_free) /
@@ -114,19 +152,18 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             ino = fmt::pct(iused);
             ino_c = iused > 0.9 ? pal::crit : iused > 0.7 ? pal::hot : pal::dim;
         }
-        std::string fstag = "  " + d.fstype + (d.read_only ? " ro" : "");
-        R.push_back((h(
-            text(fmt::clip(d.mount, 15)) | nowrap | Bold | fgc(pal::text) | width(16),
-            Element{Meter{f}.fill().color(pal::disk_ac)} | grow(1),
-            text(fmt::pct_pad(f)) | nowrap | Bold | fgc(load_color(f)) | width(5) | justify(Justify::End),
-            text(humanize_bytes(freeb)) | nowrap | fgc(f > 0.9 ? pal::crit : pal::good) | width(9) | justify(Justify::End),
-            text(humanize_bytes(d.used) + " / " + humanize_bytes(d.total)) | nowrap | fgc(pal::label) | width(16) | justify(Justify::End),
-            text(ino) | nowrap | fgc(ino_c) | width(7) | justify(Justify::End),
-            text(fstag) | nowrap | fgc(d.read_only ? pal::hot : mix(pal::disk_ac, pal::dim, 0.4)) | width(10)
-        ) | gap(1)).build());
+        std::string fstag = d.fstype + (d.read_only ? " ro" : "");
+        R.push_back(build_fs_line(
+            std::string(fmt::clip(d.mount, 15)), pal::text, f, fmt::pct_pad(f),
+            load_color(f),
+            {{std::string(humanize_bytes(freeb)), f > 0.9 ? pal::crit : pal::good, 8},
+             {std::string(humanize_bytes(d.used)) + " / " + std::string(humanize_bytes(d.total)), pal::label, 13},
+             {ino, ino_c, 6},
+             {fstag, d.read_only ? pal::hot : mix(pal::disk_ac, pal::dim, 0.4), 6}},
+            /*header=*/false));
         // On wide terminals, show the backing device under the mount.
         if (cx.wide && !d.device.empty())
-            R.push_back((text("  └ " + d.device) | nowrap | fgc(pal::faint)).build());
+            R.push_back((text("  \xe2\x94\x94 " + d.device) | nowrap | fgc(pal::faint)).build());
         // Inode fullness as its own meter where the fs reports it — the
         // second way a disk fills up (millions of tiny files) that a byte
         // meter can't see. Shown on tall/wide screens so idle rows stay

@@ -30,12 +30,9 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     L.push_back(section("USAGE TREND", pal::mem_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
-        L.push_back((h(
-            stat_card(m.usage().v, pal::mem_ac, "ram used",
-                      m.usage_history.data(), m.hist_len, gh),
-            y_axis(gh, 100.0, 3),
-            Element{Graph{m.usage_history.data(), m.hist_len}.fill().rows(gh).color(pal::mem_ac)} | grow(1)
-        ) | gap(1) | height(gh)).build());
+        L.push_back(hero_graph(m.usage().v, pal::mem_ac, "ram used",
+                               m.usage_history.data(), m.hist_len, gh,
+                               pal::mem_ac));
     }
     L.push_back(gap_row());
 
