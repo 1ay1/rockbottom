@@ -43,20 +43,24 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     ) | gap(1)).build());
     b.push_back((text("  " + (p.cmd.empty() ? p.name : p.cmd)) | fgc(pal::dim)).build());
     {
-        // Family strip: parent (with its name if it's in the table), owner, age.
+        // Family strip. Parent gets its OWN full-width row so a long parent
+        // name ("tmux: server", "systemd --user") is never clipped into a
+        // "tmux: se…" stub the way it was when crammed into a kv3 third;
+        // owner + age ride together on the line below.
         std::string parent = p.ppid > 0 ? std::to_string(p.ppid) : "?";
         for (const auto& q : s.procs)
-            if (q.pid == p.ppid) { parent += " " + maya::truncate_end(q.name, 18); break; }
+            if (q.pid == p.ppid) { parent += "  " + q.name; break; }
         std::uint64_t now = 0;
         std::string age_txt = "n/a";
         if (p.start_sec > 0) {
             now = static_cast<std::uint64_t>(std::time(nullptr));
             age_txt = now > p.start_sec ? fmt::age(now - p.start_sec) : "just now";
         }
+        b.push_back(kv("parent", parent, pal::label, 14));
         b.push_back(kv3(
-            "parent", parent, pal::label,
             "owner", p.user, p.user == "root" ? pal::warn : pal::teal,
-            "age", age_txt, pal::text));
+            "age", age_txt, pal::text,
+            "", "", pal::dim));
     }
     b.push_back(gap_row());
 
@@ -68,16 +72,19 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
 
     // Per-process CPU trend — htop's graph meter, but for the one process you
     // drilled into. Peak-normalized (floor 5% of a core) so a quiet task still
-    // shows shape; the live value + windowed peak ride the right rail.
+    // shows shape. Laid out on the SAME grid as bar() above (14-col label rail,
+    // 2-col gutter, growing track, 5-col value) so the spark's left edge and
+    // its read-out line up flush with the cpu/memory meters directly above it.
     if (p.hist_len > 1) {
         float pk = 0;
         auto spk = norm_unit(p.cpu_history.data(), p.hist_len, 0.05f, &pk);
-        b.push_back((h(
-            text("  cpu") | nowrap | fgc(pal::faint) | width(14),
-            Element{Spark{spk.data(), p.hist_len}.fill().color(load_color(cpuf)).baseline(true)} | grow(1),
-            text(fmt::fixed1(p.cpu) + "%") | nowrap | Bold | fgc(load_color(cpuf)) | width(8) | justify(Justify::End),
-            text("pk " + fmt::fixed1(pk * 100.0f) + "%") | nowrap | fgc(pal::dim) | width(11) | justify(Justify::End)
-        ) | gap(1)).build());
+        std::vector<Element> row;
+        row.push_back((text("trend") | nowrap | fgc(pal::faint) | width(14)).build());
+        row.push_back(Element{Spark{spk.data(), p.hist_len}.fill().color(load_color(cpuf)).baseline(true)} | grow(1));
+        row.push_back((text(fmt::fixed1(p.cpu) + "%") | nowrap | Bold | fgc(load_color(cpuf)) | width(5) | justify(Justify::End)).build());
+        if (cx.wide)
+            row.push_back((text("peak " + fmt::fixed1(pk * 100.0f) + "%") | nowrap | fgc(pal::dim) | width(34)).build());
+        b.push_back((h(std::move(row)) | gap(2)).build());
     }
 
     // Rank against every process so you know if THIS is the culprit.
