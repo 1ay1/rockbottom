@@ -30,7 +30,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
     std::vector<Element>& R = split ? right : single;
 
     if (s.gpus.empty()) {
-        single.push_back(section("NO GPU DETECTED", pal::proc_ac));
+        single.push_back(section("NO GPU DETECTED", pal::gpu_ac));
         single.push_back(verdict("no GPU telemetry available on this machine.", pal::dim));
         single.push_back(verdict("NVIDIA needs the driver + nvidia-smi on PATH; AMD/Intel expose", pal::dim));
         single.push_back(verdict("stats under /sys/class/drm; Apple GPUs publish IOAccelerator nodes.", pal::dim));
@@ -48,7 +48,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         if (g.unified) sub += sub.empty() ? "unified memory" : " · unified memory";
         if (!g.driver.empty()) sub += (sub.empty() ? "" : " · ") + ("driver " + g.driver);
         L.push_back((h(
-            text(head) | nowrap | Bold | fgc(pal::proc_ac),
+            text(head) | nowrap | Bold | fgc(pal::gpu_ac),
             Element{blank()} | grow(1),
             text(sub) | nowrap | fgc(pal::dim)
         )).build());
@@ -58,8 +58,8 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // ── hero: BIG number + graph ─────────────────────────────────
         {
             std::vector<Element> hdr;
-            hdr.push_back(Element{section("UTILISATION OVER TIME", pal::proc_ac)} | grow(1));
-            hdr.push_back((text("── core ") | nowrap | Bold | fgc(pal::proc_ac)).build());
+            hdr.push_back(Element{section("UTILISATION OVER TIME", pal::gpu_ac)} | grow(1));
+            hdr.push_back((text("── core ") | nowrap | Bold | fgc(pal::gpu_ac)).build());
             hdr.push_back((text(" ── vram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
             L.push_back((h(std::move(hdr)) | gap(1)).build());
         }
@@ -67,7 +67,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
             L.push_back(hero_graph(g.usage.v, load_color(g.usage.v), "gpu busy",
                                    g.util_history.data(), g.hist_len, gh,
-                                   pal::proc_ac,
+                                   pal::gpu_ac,
                                    g.mem_history.data(), g.mem_hist_len, pal::mem_ac));
         }
         L.push_back(gap_row());
@@ -76,13 +76,13 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // Every engine the card reports, one meter each. Apple splits the
         // pipeline into renderer (3D/fragment) and tiler (geometry); NVIDIA
         // reports NVENC/NVDEC video engines.
-        L.push_back(section("ENGINES", pal::proc_ac));
+        L.push_back(section("ENGINES", pal::gpu_ac));
         L.push_back(bar("core", g.usage.v, "overall GPU busy", load_color(g.usage.v), cx.wide ? 34 : 0));
         // Gate the extra engine rows on the VENDOR, not the live value — a
         // renderer at 0% must render as an empty meter, not vanish, or the
         // pane's layout breathes with the workload.
         if (g.vendor == "Apple") {
-            L.push_back(bar("renderer", g.renderer_usage.v, "3D / fragment work", pal::proc_ac, cx.wide ? 34 : 0));
+            L.push_back(bar("renderer", g.renderer_usage.v, "3D / fragment work", pal::gpu_ac, cx.wide ? 34 : 0));
             L.push_back(bar("tiler", g.tiler_usage.v, "geometry / vertex work", pal::sky, cx.wide ? 34 : 0));
         }
         if (g.vendor == "NVIDIA") {
@@ -92,7 +92,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         L.push_back(gap_row());
 
         // ── memory ──────────────────────────────────────────────────
-        R.push_back(section("MEMORY", pal::proc_ac));
+        R.push_back(section("MEMORY", pal::gpu_ac));
         if (g.mem_total.value) {
             R.push_back(bar("vram", g.mem_usage.v,
                             humanize_bytes(g.mem_used) + " / " + humanize_bytes(g.mem_total),
@@ -127,7 +127,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
                 cells.push_back({"fan", std::to_string(g.fan_pct) + "%",
                                  g.fan_pct > 80 ? pal::hot : pal::text});
             if (g.core_clock.value > 0)
-                cells.push_back({"core clock", humanize_hz(g.core_clock), pal::proc_ac});
+                cells.push_back({"core clock", humanize_hz(g.core_clock), pal::gpu_ac});
             if (g.mem_clock.value > 0)
                 cells.push_back({"mem clock", humanize_hz(g.mem_clock), pal::mem_ac});
             if (!g.pstate.empty()) {
@@ -137,7 +137,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
                                  : g.pstate == "P0" ? pal::hot : pal::dim});
             }
             if (!cells.empty()) {
-                L.push_back(section("TELEMETRY", pal::proc_ac));
+                L.push_back(section("TELEMETRY", pal::gpu_ac));
                 for (std::size_t i = 0; i < cells.size(); i += 3) {
                     auto at = [&](std::size_t j) -> const Cell* {
                         return j < cells.size() ? &cells[j] : nullptr;
@@ -170,13 +170,13 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // ── VRAM consumers ──────────────────────────────────────────
         if (!g.procs.empty()) {
             const int show = std::min<int>(cx.tall ? 8 : 5, static_cast<int>(g.procs.size()));
-            R.push_back(section("USING THIS GPU", pal::proc_ac, "top " + std::to_string(show)));
+            R.push_back(section("USING THIS GPU", pal::gpu_ac, "top " + std::to_string(show)));
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
                 const double frac = g.mem_total.value ? Ratio::of(p.mem, g.mem_total).v : 0;
                 R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
-                                     frac, pal::proc_ac,
-                                     humanize_bytes(p.mem), pal::proc_ac, 10));
+                                     frac, pal::gpu_ac,
+                                     humanize_bytes(p.mem), pal::gpu_ac, 10));
             }
         }
 

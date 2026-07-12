@@ -103,7 +103,7 @@ private:
             case Detail::Cpu:  glyph = "◈"; title = "CPU · " + fmt::short_model(s_.cpu.model); ac = pal::cpu_ac; break;
             case Detail::Mem:  glyph = "▤"; title = "MEMORY";  ac = pal::mem_ac;  break;
             case Detail::Net:  glyph = "⇅"; title = "NETWORK"; ac = pal::net_ac;  break;
-            case Detail::Gpu:  glyph = "◆"; title = "GPU";     ac = pal::proc_ac; break;
+            case Detail::Gpu:  glyph = "◆"; title = "GPU";     ac = pal::gpu_ac;  break;
             case Detail::Disk: glyph = "◇"; title = "DISK";    ac = pal::disk_ac; break;
             case Detail::Proc: glyph = "≡"; title = "PROCESS"; ac = pal::proc_ac; break;
             default:           glyph = " "; title = "";        ac = pal::text;    break;
@@ -202,7 +202,7 @@ private:
             {Detail::Cpu,  "1", "◈", "cpu",  pal::cpu_ac},
             {Detail::Mem,  "2", "▤", "mem",  pal::mem_ac},
             {Detail::Net,  "3", "⇅", "net",  pal::net_ac},
-            {Detail::Gpu,  "4", "◆", "gpu",  pal::proc_ac},
+            {Detail::Gpu,  "4", "◆", "gpu",  pal::gpu_ac},
             {Detail::Disk, "5", "◇", "disk", pal::disk_ac},
             {Detail::Proc, "6", "≡", "proc", pal::proc_ac},
         };

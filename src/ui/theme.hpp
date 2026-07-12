@@ -32,23 +32,36 @@ inline constexpr auto label    = maya::Color::white();
 inline constexpr auto dim      = maya::Color::bright_black();
 inline constexpr auto faint    = maya::Color::bright_black();
 
-// Semantic hues — the terminal decides what "green" looks like.
+// Semantic hues — the terminal decides what "green" looks like. The
+// escalation ramp needs FOUR visibly distinct steps, so it climbs through
+// slots that stay separable under most terminal themes:
+//   good green → warn yellow → hot bright-red (the "orange" slot most
+//   16-color themes render warm) → crit red. Using bright_yellow for "hot"
+//   collapsed against warn's yellow on many palettes — the middle of the
+//   ramp vanished. bright_red gives a real orange rung before full red.
 inline constexpr auto good     = maya::Color::green();
 inline constexpr auto warn     = maya::Color::yellow();
-inline constexpr auto hot      = maya::Color::bright_yellow();
+inline constexpr auto hot      = maya::Color::bright_red();    // orange rung
 inline constexpr auto crit     = maya::Color::red();
 inline constexpr auto blue     = maya::Color::blue();
 inline constexpr auto mauve    = maya::Color::magenta();
 inline constexpr auto teal     = maya::Color::cyan();
 inline constexpr auto sky      = maya::Color::bright_cyan();
 inline constexpr auto pink     = maya::Color::bright_magenta();
+inline constexpr auto amber    = maya::Color::bright_yellow();  // freed-up warm accent
 
-// Per-domain signature accents.
+// Per-domain signature accents — six distinguishable hues so a glance at any
+// border, tab, or graph tells you which subsystem you're reading. proc no
+// longer borrows "hot", so promoting hot to the orange rung doesn't tint the
+// whole process table like a health warning. net keeps green (its rx graph is
+// green); gpu takes bright-green so it's adjacent-but-distinct from net.
+//   cpu blue · mem magenta · disk cyan · net green · gpu bright-green · proc magenta+
 inline constexpr auto cpu_ac  = blue;
 inline constexpr auto mem_ac  = mauve;
 inline constexpr auto disk_ac = teal;
 inline constexpr auto net_ac  = good;
-inline constexpr auto proc_ac = hot;
+inline constexpr auto gpu_ac  = maya::Color::bright_green();
+inline constexpr auto proc_ac = pink;
 }  // namespace pal
 
 // With native ANSI colors there's no RGB to interpolate — a "blend" just
