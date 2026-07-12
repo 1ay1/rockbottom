@@ -1408,17 +1408,21 @@ struct App {
         // the majority. MEM/NET/DISK sit at natural height inside; the CPU
         // panel's .expand(1) soaks the slack, growing its graph.
         Element top = narrow
-            ? (v(col({// CPU self-fills (fill() mountain) with a grow weight so
+            ? (col({// CPU self-fills (fill() mountain) with a grow weight so
                    // the graph is sized to the REAL box it lands in, not a
                    // fixed graph_h estimate that flex-shrinks and clips the
                    // mountain floor (the "0" line) behind the cores strip on a
                    // phone-shaped terminal. MEM/NET/DISK keep natural heights.
+                   // col() is a plain vstack: `.expand(1)` drives the panel's
+                   // INTERNAL mountain fill, but the vstack only hands the
+                   // leftover band height to the child piped `| grow(1)` — so
+                   // BOTH are required or the band leaves dead rows below DISK.
                    Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem, /*heat=*/true}.expand(1)}
-                       | hit(ui::hit_band(ui::Detail::Cpu)),
+                       | grow(1) | hit(ui::hit_band(ui::Detail::Cpu)),
                    Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)),
                    Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)),
                    Element{DiskPanel{s.disks, s.disk_io, false}}
-                       | hit(ui::hit_band(ui::Detail::Disk))}))
+                       | hit(ui::hit_band(ui::Detail::Disk))})
                    | height(band_px)).build()
             : (h(
                   // CPU column self-fills its slot (fill() mountain) exactly
