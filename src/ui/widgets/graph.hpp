@@ -39,6 +39,12 @@ class Graph {
     const float* overlay_ = nullptr;
     int overlay_len_ = 0;
     maya::Color overlay_color_ = pal::mem_ac;
+    // Perceptual height curve. Byte-rate traffic is bursty: one old spike
+    // sets the peak and every quieter sample crushes to a floor line. A sqrt
+    // curve lifts low values off the floor so a 2 KB/s trickle still reads as
+    // a shape, while the peak stays pinned at the top. Off (=1) for percent
+    // graphs (cpu/mem/gpu) whose 0..1 axis is already the real quantity.
+    float gamma_ = 1.0f;
 
 public:
     Graph(const float* data, int len) : data_(data), len_(std::max(0, len)) {}
@@ -47,9 +53,17 @@ public:
     Graph& rows(int n)          { rows_ = std::max(1, n); return *this; }
     Graph& color(maya::Color c) { color_ = c; return *this; }
     Graph& fill()               { cells_ = 0; return *this; }
+    // gamma<1 compresses the top / expands the bottom (0.5 = sqrt).
+    Graph& gamma(float g)       { gamma_ = std::max(0.05f, g); return *this; }
     // Overlay a second history series (drawn as a thin line in `c`).
     Graph& overlay(const float* data, int len, maya::Color c) {
         overlay_ = data; overlay_len_ = std::max(0, len); overlay_color_ = c; return *this;
+    }
+
+    // Apply the perceptual curve to a 0..1 fraction (identity when gamma==1).
+    [[nodiscard]] double curve(double v) const {
+        if (gamma_ == 1.0f) return v;
+        return std::pow(std::clamp(v, 0.0, 1.0), static_cast<double>(gamma_));
     }
 
     operator maya::Element() const { return build(); }
@@ -99,13 +113,22 @@ public:
         const int gh = rows_ * 4;           // dot rows
         const int start = len_ > cells_ * 2 ? len_ - cells_ * 2 : 0;
 
-        // Gridline dot-rows at 25/50/75% — faint dotted guides that keep an
-        // idle graph composed instead of a black void (dashboard-example
-        // idiom). Drawn only where no data inks the cell.
+        // Gridline dot-rows — faint dotted guides that keep an idle graph
+        // composed instead of a black void (dashboard-example idiom). Drawn
+        // only where no data inks the cell. Kept SPARSE on purpose: one dot
+        // every 4 character-cells (gx % 8) so the sky reads as a light ruled
+        // guide, not a solid field of dots that drowns a floor-hugging trace.
+        // A short graph gets the 50% midline only; a tall one adds 25/75%.
         auto is_grid = [&](int gy, int gx) {
             if (gh < 8) return false;
-            const int q1 = gh / 4, q2 = gh / 2, q3 = 3 * gh / 4;
-            return (gy == q1 || gy == q2 || gy == q3) && (gx % 4 == 0);
+            if (gx % 8 != 0) return false;
+            const int q2 = gh / 2;
+            if (gy == q2) return true;
+            if (gh >= 16) {
+                const int q1 = gh / 4, q3 = 3 * gh / 4;
+                return gy == q1 || gy == q3;
+            }
+            return false;
         };
 
         auto sample = [&](int gx) -> double {     // value at dot-column gx
@@ -123,7 +146,7 @@ public:
         std::vector<int> line(static_cast<std::size_t>(gw));
         double latest = len_ > 0 ? std::clamp<double>(data_[len_ - 1], 0.0, 1.0) : 0.0;
         for (int gx = 0; gx < gw; ++gx) {
-            double v = sample(gx);
+            double v = curve(sample(gx));
             int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
             line[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
         }
@@ -145,7 +168,7 @@ public:
             };
             oline.resize(static_cast<std::size_t>(gw));
             for (int gx = 0; gx < gw; ++gx) {
-                double v = osample(gx);
+                double v = curve(osample(gx));
                 int gy = gh - 1 - static_cast<int>(std::lround(v * (gh - 1)));
                 oline[static_cast<std::size_t>(gx)] = std::clamp(gy, 0, gh - 1);
             }
@@ -236,12 +259,18 @@ public:
 // default). The column is `w` cells wide, right-aligned, in faint ink so it
 // frames the graph without competing with the trace.
 inline maya::Element y_axis(int rows, double top_val = 100.0, int w = 4,
-                           bool percent = true) {
+                           bool percent = true, float gamma = 1.0f) {
     using namespace maya; using namespace maya::dsl;
     std::vector<std::string> labels(static_cast<std::size_t>(std::max(1, rows)));
 
     auto fmt_val = [&](double frac) -> std::string {
-        const double val = top_val * frac;
+        // frac is the fraction of GRAPH HEIGHT; invert the plot curve so the
+        // label reads the real byte value that lands at that row (a sqrt plot
+        // puts value^gamma at height frac → value = top * frac^(1/gamma)).
+        const double vfrac = gamma == 1.0f
+            ? frac
+            : std::pow(std::clamp(frac, 0.0, 1.0), 1.0 / static_cast<double>(gamma));
+        const double val = top_val * vfrac;
         char buf[16];
         if (percent) std::snprintf(buf, sizeof buf, "%d", static_cast<int>(std::lround(val)));
         else {

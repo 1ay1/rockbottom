@@ -212,12 +212,14 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             rpk = std::max(rpk, arx[static_cast<std::size_t>(i)]);
             tpk = std::max(tpk, atx[static_cast<std::size_t>(i)]);
         }
-        // 25% headroom above the true peak: without it the busiest sample
-        // pins to the very top row and a sustained burst fills the whole
-        // graph as a solid wall with no shape. The padded ceiling leaves sky
-        // above the crest so the trace reads as a mountain. The y-axis is
-        // labelled with this SAME padded top so the scale stays honest.
-        const float shared_pk = std::max(rpk, tpk) * 1.25f;
+        // The traffic hero plots on a sqrt curve (gamma 0.5): byte rates are
+        // bursty, so on a linear axis one spike sets the peak and every quiet
+        // sample crushes to a floor line. The curve lifts the low end so a
+        // trickle still reads as a shape while the peak stays at the top. A
+        // small 1.1× headroom keeps the crest just off the very top row; the
+        // y-axis is labelled with this padded top AND the same curve, so the
+        // scale stays honest (ticks map to real byte values).
+        const float shared_pk = std::max(rpk, tpk) * 1.1f;
         std::array<float, 48> rn{}, tn{};
         for (int i = 0; i < hlen && i < 48; ++i) {
             rn[static_cast<std::size_t>(i)] = arx[static_cast<std::size_t>(i)] / shared_pk;
@@ -230,8 +232,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         b.push_back((h(std::move(hdr)) | gap(1)).build());
         const int gh = std::max(4, cx.graph_h - 1);
         b.push_back(center((h(
-            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false),
-            Element{Graph{rn.data(), hlen}.fill().rows(gh).color(pal::sky)
+            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false, /*gamma=*/0.5f),
+            Element{Graph{rn.data(), hlen}.fill().rows(gh).color(pal::sky).gamma(0.5f)
                         .overlay(tn.data(), hlen, pal::good)} | grow(1)
         ) | gap(1) | height(gh)).build()));
         b.push_back(gap_row());

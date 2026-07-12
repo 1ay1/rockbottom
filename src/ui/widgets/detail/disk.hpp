@@ -82,11 +82,13 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
     // Re-normalize both to a SHARED peak so read fill and write overlay are
     // on the same scale (norm48 peaks each series independently otherwise).
-    // 25% headroom above the true peak keeps the busiest sample off the top
-    // row — without it a single spike (or a sustained burst) pins the trace
-    // to the ceiling and the fill becomes a shapeless wall. The y-axis reads
-    // this SAME padded top so the labelled scale stays honest.
-    const float shared_pk = std::max({rpk, wpk, 1.0f}) * 1.25f;
+    // The I/O hero plots on a sqrt curve (gamma 0.5): disk byte rates are
+    // bursty, so on a linear axis one spike sets the peak and every quiet
+    // sample crushes to a floor line. The curve lifts the low end so a
+    // trickle still reads as a shape while the peak stays at the top. A small
+    // 1.1× headroom keeps the crest just off the top row; the y-axis reads
+    // this padded top AND the same curve, so the labelled scale stays honest.
+    const float shared_pk = std::max({rpk, wpk, 1.0f}) * 1.1f;
     std::array<float, 48> rds{}, wrs{};
     for (int i = 0; i < s.disk_io.hist_len && i < 48; ++i) {
         rds[static_cast<std::size_t>(i)] = s.disk_io.read_history[static_cast<std::size_t>(i)] / shared_pk;
@@ -96,8 +98,8 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     {
         const int gh = std::max(4, cx.graph_h - 1);
         H.push_back((h(
-            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false),
-            Element{Graph{rds.data(), s.disk_io.hist_len}.fill().rows(gh).color(pal::teal)
+            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false, /*gamma=*/0.5f),
+            Element{Graph{rds.data(), s.disk_io.hist_len}.fill().rows(gh).color(pal::teal).gamma(0.5f)
                         .overlay(wrs.data(), s.disk_io.hist_len, pal::hot)} | grow(1)
         ) | gap(1) | height(gh)).build());
     }
