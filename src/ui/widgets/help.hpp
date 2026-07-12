@@ -175,7 +175,14 @@ private:
         // Window through the shared scroller (only bites on a very short term),
         // then a hint bar, all inside a full-frame card — the detail-pane idiom.
         const int view_h = std::max(3, height_ - 6);
-        Element windowed = detail::scroller(std::move(body), scroll_, view_h, pal::sky);
+        // A wider design cap than the domain panes (150 vs 104): the help is a
+        // two-column reference table whose descriptions run ~50 cols each, so
+        // the 104 cap would clip them. 150 lets both columns print in full,
+        // and the scroller still CENTERS the capped block so a 240-col
+        // terminal shows symmetric margin, not a stretched sparse table.
+        Element windowed = detail::scroller(std::move(body), scroll_, view_h,
+                                            pal::sky, /*cap_width=*/true,
+                                            /*design_w=*/150);
         Element hintbar = (h(
             text(" esc") | nowrap | Bold | fgc(pal::sky),
             text("·close   ") | nowrap | fgc(pal::dim),

@@ -660,12 +660,12 @@ inline std::vector<Element> two_col(std::vector<Element> left,
 // bar. Heights come from measure_element over the real fragments at the
 // real width; the proportional scrollbar runs on rows, not element counts.
 inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
-                        maya::Color ac, bool cap_width = true) {
+                        maya::Color ac, bool cap_width = true, int design_w = 104) {
     using namespace maya; using namespace maya::dsl;
     auto shared = std::make_shared<const std::vector<Element>>(std::move(body));
     const int scroll_in = std::max(0, scroll);
     maya::ComponentElement ce{
-        .render = [shared, scroll_in, ac, cap_width](int slot_w, int slot_h) -> Element {
+        .render = [shared, scroll_in, ac, cap_width, design_w](int slot_w, int slot_h) -> Element {
             const auto& all = *shared;
             const int total = static_cast<int>(all.size());
             const int view_h = std::max(1, slot_h);
@@ -681,7 +681,8 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             //   Panes that reflowed into two side-by-side columns pass
             //   cap_width=false: two_col already caps each of its OWN columns
             //   at a reading width, so the scroller must hand it the full slot.
-            constexpr int kDesign = 104;   // comfortable single-column measure
+            constexpr int kDesignDefault = 104;   // comfortable single-column measure
+            const int kDesign = design_w > 0 ? design_w : kDesignDefault;
             const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
 
             // Measure every element at the SAME width we'll paint at — window

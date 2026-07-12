@@ -37,7 +37,10 @@ private:
         using namespace maya::dsl;
 
         const auto& cat = signal_catalog();
-        const int card_w = std::clamp(width_ - 6, 34, 54);
+        // Min 46 so the widest gloss ("hang up / reload") and the hint row fit
+        // without clipping mid-word; never exceed the terminal (clamp upper to
+        // width_-4 so a 44-col terminal still shows a bordered, padded card).
+        const int card_w = std::clamp(width_ - 6, std::min(46, std::max(30, width_ - 4)), 54);
 
         std::vector<Element> body;
         {
@@ -67,7 +70,11 @@ private:
             row.push_back((text(s.name) | nowrap | Bold | fgc(ink) | width(10)).build());
             row.push_back((text(std::to_string(s.num)) | nowrap
                            | fgc(pal::dim) | width(4) | justify(Justify::End)).build());
-            row.push_back((text("  " + std::string(s.gloss)) | nowrap
+            // Gloss fills the remaining card width; truncate (display-safe) so
+            // a long one can't overrun the panel border into a clipped stub.
+            // Fixed cells before it: bar(1)+hot(2)+name(10)+num(4)+"  "(2) = 19.
+            const int gloss_w = std::max(6, card_w - 2 /*pad*/ - 19);
+            row.push_back((text("  " + std::string(truncate_end(s.gloss, gloss_w))) | nowrap
                            | fgc(on ? pal::label : pal::dim)).build());
             Element r = h(std::move(row)) | gap(0);
             if (on) r = std::move(r) | bgc(pal::track);
@@ -75,15 +82,26 @@ private:
         }
 
         body.push_back(blank());
-        body.push_back((h(
-            text("  ") | nowrap,
-            text("1-9 / ↑↓", Style{}.with_fg(pal::text).with_bold()) | nowrap | width(11),
-            text("pick   ", Style{}.with_fg(pal::dim)) | nowrap,
-            text("enter / y", Style{}.with_fg(pal::text).with_bold()) | nowrap | width(11),
-            text("send   ", Style{}.with_fg(pal::dim)) | nowrap,
-            text("esc", Style{}.with_fg(pal::text).with_bold()) | nowrap | width(5),
-            text("cancel", Style{}.with_fg(pal::dim)) | nowrap
-        ) | gap(0)).build());
+        // Hint row: full labels when the card is roomy, keys-only when tight —
+        // pick() renders the first alternative whose measured width fits, so
+        // the fixed cells can never fuse ("1-9 /pick enter /send").
+        {
+            const Style k = Style{}.with_fg(pal::text).with_bold();
+            const Style d = Style{}.with_fg(pal::dim);
+            Element full = (h(
+                text("  ") | nowrap,
+                text("1-9 / ↑↓", k) | nowrap, text(" pick   ", d) | nowrap,
+                text("enter / y", k) | nowrap, text(" send   ", d) | nowrap,
+                text("esc", k) | nowrap, text(" cancel", d) | nowrap
+            ) | gap(0)).build();
+            Element compact = (h(
+                text("  ") | nowrap,
+                text("1-9↑↓", k) | nowrap, text(" pick  ", d) | nowrap,
+                text("↵", k) | nowrap, text(" send  ", d) | nowrap,
+                text("esc", k) | nowrap, text(" cancel", d) | nowrap
+            ) | gap(0)).build();
+            body.push_back(Element{pick({full, compact})});
+        }
 
         Element card = Panel("⚑", "SEND SIGNAL", pal::hot)({v(std::move(body))});
         return (v((std::move(card) | width(card_w)))

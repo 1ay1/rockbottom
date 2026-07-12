@@ -117,7 +117,14 @@ private:
              .header_style = sortable, .hit_index = static_cast<int>(SortKey::Pid)},
             {.header = "USER", .keep = kKeepAlways,
              .header_style = inert, .hit_index = kNoHeaderHit},
-            {.header = "NAME", .keep = kKeepAlways, .weight = 3.0f, .min_width = 8,
+            {.header = "NAME", .keep = kKeepAlways, .weight = 3.0f,
+             // In FLOW (tree) mode the NAME cell also carries the tree
+             // furniture (gutter + rail prefix + chevron), which can eat most
+             // of a weight-3 share on a narrow terminal, crushing the actual
+             // process name to "sys…". Raise the floor in tree mode so the
+             // column solver SHEDS the low-priority columns (PORT, THR, MEM%,
+             // DISK) before starving the name.
+             .min_width = view_.tree ? 20 : 8,
              .header_style = sortable, .hit_index = static_cast<int>(SortKey::Name)},
             {.header = "PORT", .align = ColumnAlign::Right, .keep = 1,
              .header_style = sortable, .hit_index = static_cast<int>(SortKey::Port)},
