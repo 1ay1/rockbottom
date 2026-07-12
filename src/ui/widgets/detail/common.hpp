@@ -651,6 +651,26 @@ inline std::vector<Element> two_col(std::vector<Element> left,
     return out;
 }
 
+// ── HERO-THEN-SPLIT BODY ─────────────────────────────────────────────
+// The house layout for every drill-down: a BIG full-width hero (the domain's
+// headline graph + its section title) owns the whole first band, then the
+// detail reflows into two side-by-side columns beneath it. `hero` is the
+// full-width rows (section + hero_graph, kept OUT of either column so the
+// trace spans the entire pane instead of being crushed into a half-width
+// sliver); `left`/`right` are the two_col lists. The hero rides at full slot
+// width; a blank separates it from the columns. Returns the composed body
+// (hero rows first, then the single two_col row) so the scroller windows the
+// whole thing coherently.
+inline std::vector<Element> hero_split(std::vector<Element> hero,
+                                       std::vector<Element> left,
+                                       std::vector<Element> right) {
+    std::vector<Element> out = std::move(hero);
+    out.push_back(gap_row());
+    for (auto& e : two_col(std::move(left), std::move(right)))
+        out.push_back(std::move(e));
+    return out;
+}
+
 // ── SCROLLER ──────────────────────────────────────────────────────────────────────────────
 // Take a full body (may be taller than the viewport) and window it to the
 // slot the layout actually hands us. `scroll` indexes ELEMENTS (the app's

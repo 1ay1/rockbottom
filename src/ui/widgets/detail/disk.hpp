@@ -65,10 +65,12 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     // (per-filesystem list + busiest processes). In normal mode both point at
     // the same vector and everything stacks as before.
     std::vector<Element> single;
-    std::vector<Element> left, right;
+    std::vector<Element> hero, left, right;
     const bool split = cx.ultrawide;
     std::vector<Element>& L = split ? left : single;
     std::vector<Element>& R = split ? right : single;
+    // The SYSTEM I/O graph rides the full pane width in split mode.
+    std::vector<Element>& H = split ? hero : single;
 
     // ── system I/O ────────────────────────────────────────────────────────────────────────
     // A single hero graph carries BOTH directions: read as the filled
@@ -86,10 +88,10 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         rds[static_cast<std::size_t>(i)] = s.disk_io.read_history[static_cast<std::size_t>(i)] / shared_pk;
         wrs[static_cast<std::size_t>(i)] = s.disk_io.write_history[static_cast<std::size_t>(i)] / shared_pk;
     }
-    L.push_back(section("SYSTEM I/O", pal::disk_ac));
+    H.push_back(section("SYSTEM I/O", pal::disk_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
-        L.push_back((h(
+        H.push_back((h(
             y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false),
             Element{Graph{rds.data(), s.disk_io.hist_len}.fill().rows(gh).color(pal::teal)
                         .overlay(wrs.data(), s.disk_io.hist_len, pal::hot)} | grow(1)
@@ -226,7 +228,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
-    if (split) return two_col(std::move(left), std::move(right));
+    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
     return single;
 }
 

@@ -135,9 +135,11 @@ inline std::string conn_summary(const Snapshot& s, int& established, int& listen
 inline int net_conn_scroll_max(const Snapshot& s, const Ctx& cx) {
     if (!net_is_split(s, cx)) return -1;   // not split → let the generic path clamp
     const int total = static_cast<int>(s.connections.size());
-    // Rows above the table = aggregate block (agg_rows) + the CONNECTIONS rule.
+    // Rows above the table = hero traffic band (header + graph + gap) +
+    // aggregate block (agg_rows) + the CONNECTIONS rule.
+    const int hero_rows = std::max(4, cx.graph_h - 1) + 2;   // header + graph + gap
     const int agg_rows = 5;               // section + 2×kv3 + gap
-    const int band_h = std::max(3, cx.body_h - agg_rows - 1);   // -1 for the rule
+    const int band_h = std::max(3, cx.body_h - hero_rows - agg_rows - 1);   // -1 for the rule
     const int table_view = std::max(1, band_h - 1);   // minus the header row
     return std::max(0, total - table_view);
 }
@@ -189,6 +191,46 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             Element{blank()} | grow(1)
         )).build();
     };
+
+    // ── hero: aggregate traffic over time (full-width, spans the pane) ─────
+    // The house hero band: total download (filled) + upload (overlay line)
+    // across ALL interfaces, on one shared peak so the two are comparable.
+    // There's no aggregate history ring in the sampler, so sum every
+    // interface's rx/tx history element-wise (the rings are index-aligned).
+    {
+        std::array<float, 48> arx{}, atx{};
+        int hlen = 0;
+        for (const NetIface& ni : s.nets) {
+            hlen = std::max(hlen, ni.hist_len);
+            for (int i = 0; i < ni.hist_len && i < 48; ++i) {
+                arx[static_cast<std::size_t>(i)] += ni.rx_history[static_cast<std::size_t>(i)];
+                atx[static_cast<std::size_t>(i)] += ni.tx_history[static_cast<std::size_t>(i)];
+            }
+        }
+        float rpk = 1024.0f, tpk = 1024.0f;
+        for (int i = 0; i < hlen && i < 48; ++i) {
+            rpk = std::max(rpk, arx[static_cast<std::size_t>(i)]);
+            tpk = std::max(tpk, atx[static_cast<std::size_t>(i)]);
+        }
+        const float shared_pk = std::max(rpk, tpk);
+        std::array<float, 48> rn{}, tn{};
+        for (int i = 0; i < hlen && i < 48; ++i) {
+            rn[static_cast<std::size_t>(i)] = arx[static_cast<std::size_t>(i)] / shared_pk;
+            tn[static_cast<std::size_t>(i)] = atx[static_cast<std::size_t>(i)] / shared_pk;
+        }
+        std::vector<Element> hdr;
+        hdr.push_back(Element{center(section("TRAFFIC OVER TIME", pal::net_ac))} | grow(1));
+        hdr.push_back((text("── down ") | nowrap | Bold | fgc(pal::sky)).build());
+        hdr.push_back((text(" ── up ") | nowrap | Bold | fgc(pal::good)).build());
+        b.push_back((h(std::move(hdr)) | gap(1)).build());
+        const int gh = std::max(4, cx.graph_h - 1);
+        b.push_back(center((h(
+            y_axis(gh, static_cast<double>(shared_pk), 5, /*percent=*/false),
+            Element{Graph{rn.data(), hlen}.fill().rows(gh).color(pal::sky)
+                        .overlay(tn.data(), hlen, pal::good)} | grow(1)
+        ) | gap(1) | height(gh)).build()));
+        b.push_back(gap_row());
+    }
 
     b.push_back(center(section("ALL INTERFACES", pal::net_ac)));
     b.push_back(center(kv3(
@@ -341,8 +383,9 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // scroller renders it whole (no outer clipping) while the connections
     // column windows itself over the pane scroll offset — the two halves
     // scroll independently: paging sockets never moves the interfaces.
+    const int hero_rows = std::max(4, cx.graph_h - 1) + 2;   // header + graph + gap
     const int agg_rows = 5;
-    const int band_h   = std::max(3, cx.body_h - agg_rows - 1);   // -1 for CONNECTIONS rule
+    const int band_h   = std::max(3, cx.body_h - hero_rows - agg_rows - 1);   // -1 for CONNECTIONS rule
 
     // Geometry: roster capped ~52, the surplus to the denser socket table.
     // The band shares the SAME centered inner width as the aggregate header

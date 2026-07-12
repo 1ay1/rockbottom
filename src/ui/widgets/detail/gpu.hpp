@@ -24,10 +24,12 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
     // and the inter-GPU separator still works. In normal mode both point at the
     // same vector.
     std::vector<Element> single;
-    std::vector<Element> left, right;
+    std::vector<Element> hero, left, right;
     const bool split = cx.ultrawide && s.gpus.size() == 1;
     std::vector<Element>& L = split ? left : single;
     std::vector<Element>& R = split ? right : single;
+    // Header + hero graph ride the full pane width in split mode.
+    std::vector<Element>& H = split ? hero : single;
 
     if (s.gpus.empty()) {
         single.push_back(section("NO GPU DETECTED", pal::gpu_ac));
@@ -47,12 +49,12 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         if (g.cores > 0) sub += std::to_string(g.cores) + "-core";
         if (g.unified) sub += sub.empty() ? "unified memory" : " · unified memory";
         if (!g.driver.empty()) sub += (sub.empty() ? "" : " · ") + ("driver " + g.driver);
-        L.push_back((h(
+        H.push_back((h(
             text(head) | nowrap | Bold | fgc(pal::gpu_ac),
             Element{blank()} | grow(1),
             text(sub) | nowrap | fgc(pal::dim)
         )).build());
-        L.push_back(gap_row());
+        H.push_back(gap_row());
 
         // ── hero graph ─────────────────────────────────────────────────────
         // ── hero: BIG number + graph ─────────────────────────────────
@@ -61,16 +63,16 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             hdr.push_back(Element{section("UTILISATION OVER TIME", pal::gpu_ac)} | grow(1));
             hdr.push_back((text("── core ") | nowrap | Bold | fgc(pal::gpu_ac)).build());
             hdr.push_back((text(" ── vram ") | nowrap | Bold | fgc(pal::mem_ac)).build());
-            L.push_back((h(std::move(hdr)) | gap(1)).build());
+            H.push_back((h(std::move(hdr)) | gap(1)).build());
         }
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
-            L.push_back(hero_graph(g.usage.v, load_color(g.usage.v), "gpu busy",
+            H.push_back(hero_graph(g.usage.v, load_color(g.usage.v), "gpu busy",
                                    g.util_history.data(), g.hist_len, gh,
                                    pal::gpu_ac,
                                    g.mem_history.data(), g.mem_hist_len, pal::mem_ac));
         }
-        L.push_back(gap_row());
+        if (!split) L.push_back(gap_row());
 
         // ── engines ────────────────────────────────────────────────────────
         // Every engine the card reports, one meter each. Apple splits the
@@ -189,7 +191,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
-    if (split) return two_col(std::move(left), std::move(right));
+    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
     return single;
 }
 

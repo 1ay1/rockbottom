@@ -22,21 +22,24 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // the right (per-core meters + top consumers + sensors). In normal mode
     // both point at the same vector and everything stacks as before.
     std::vector<Element> single;
-    std::vector<Element> left, right;
+    std::vector<Element> hero, left, right;
     const bool split = cx.ultrawide;
     std::vector<Element>& L = split ? left : single;
     std::vector<Element>& R = split ? right : single;
 
-    // ── hero: BIG number + graph ────────────────────────────────────────
+    // ── hero: BIG number + graph ───────────────────────────────
     // Grafana stat-panel idiom: the headline figure in block digits with a
     // trend arrow, parked left of the load graph — readable across the room.
-    L.push_back(section("LOAD OVER TIME", pal::cpu_ac));
+    // In split mode the hero rides the FULL pane width (hero_split) so the
+    // trace spans the whole first band instead of a half-width sliver.
+    std::vector<Element>& H = split ? hero : single;
+    H.push_back(section("LOAD OVER TIME", pal::cpu_ac));
     {
         const int gh = cx.graph_h;
-        L.push_back(hero_graph(c.total.v, load_color(c.total.v), "cpu load",
+        H.push_back(hero_graph(c.total.v, load_color(c.total.v), "cpu load",
                                c.total_history.data(), c.total_hist_len, gh));
     }
-    L.push_back(gap_row());
+    if (!split) L.push_back(gap_row());
 
     // ── right-now stat strip ─────────────────────────────────────────────────
     L.push_back(section("RIGHT NOW", pal::cpu_ac));
@@ -294,7 +297,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
-    if (split) return two_col(std::move(left), std::move(right));
+    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
     return single;
 }
 

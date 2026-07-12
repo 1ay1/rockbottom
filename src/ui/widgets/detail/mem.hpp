@@ -21,20 +21,22 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     // `R` the right (swap + PSI pressure + top consumers). In normal mode both
     // point at the same vector and everything stacks as before.
     std::vector<Element> single;
-    std::vector<Element> left, right;
+    std::vector<Element> hero, left, right;
     const bool split = cx.ultrawide;
     std::vector<Element>& L = split ? left : single;
     std::vector<Element>& R = split ? right : single;
 
-    // ── hero: BIG number + trend graph ──────────────────────────────────
-    L.push_back(section("USAGE TREND", pal::mem_ac));
+    // ── hero: BIG number + trend graph ────────────────────
+    // In split mode the trend rides the FULL pane width (hero_split).
+    std::vector<Element>& H = split ? hero : single;
+    H.push_back(section("USAGE TREND", pal::mem_ac));
     {
         const int gh = std::max(4, cx.graph_h - 1);
-        L.push_back(hero_graph(m.usage().v, pal::mem_ac, "ram used",
+        H.push_back(hero_graph(m.usage().v, pal::mem_ac, "ram used",
                                m.usage_history.data(), m.hist_len, gh,
                                pal::mem_ac));
     }
-    L.push_back(gap_row());
+    if (!split) L.push_back(gap_row());
 
     // ── physical composition ─────────────────────────────────────────────
     // ONE stacked bar shows how RAM is divided (the Activity-Monitor idiom)
@@ -202,7 +204,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
-    if (split) return two_col(std::move(left), std::move(right));
+    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
     return single;
 }
 
