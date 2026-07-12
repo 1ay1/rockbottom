@@ -55,13 +55,25 @@ public:
     [[nodiscard]] maya::Element build() const {
         if (cells_ <= 0) {
             Spark self = *this;
-            return maya::Element{maya::ComponentElement{
+            maya::ComponentElement ce{
                 .render = [self](int w, int) -> maya::Element {
                     Spark s = self;
                     s.cells_ = std::max(1, w);
                     return s.build_fixed();
                 },
-            }};
+                // A fill spark has no natural width — it takes what the row
+                // gives it. Without this the default auto-measure claims the
+                // whole row as this cell's flex basis and yoga shrinks the
+                // fixed-width siblings (label/value truncation bug class).
+                .measure = [](int) -> maya::Size {
+                    return {maya::Columns{1}, maya::Rows{1}};
+                },
+            };
+            // Grow on the COMPONENT (maya fill() contract): a piped grow
+            // wraps in a box that grows while the measured leaf inside
+            // keeps its 1-cell natural width.
+            ce.layout.grow = 1.0f;
+            return maya::Element{std::move(ce)};
         }
         return build_fixed();
     }

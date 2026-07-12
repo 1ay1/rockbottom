@@ -130,7 +130,7 @@ private:
                     text("  ") | nowrap,
                     text(e.keys, Style{}.with_fg(pal::text).with_bold())
                         | nowrap | width(keys_w),
-                    text(e.desc, Style{}.with_fg(pal::label)) | nowrap
+                    text(e.desc, Style{}.with_fg(pal::label)) | clip | grow(1)
                 ) | gap(1)).build());
             }
             into.push_back(blank());

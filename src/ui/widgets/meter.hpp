@@ -49,15 +49,28 @@ public:
     [[nodiscard]] maya::Element build() const {
         // Fill mode: size to whatever width the row hands us. Pair with
         // `| grow(1)` so maya's box layout allocates the leftover space.
+        // measure = 1x1: a fill meter has no natural width of its own — it
+        // takes what the row gives it. Without this the ComponentElement
+        // default measure ({max_width, 1}) claims the WHOLE row as this
+        // cell's flex basis, over-subscribing the h-stack so yoga shrinks
+        // the fixed-width label/value siblings (the "io pressur" bug class).
         if (width_ <= 0) {
             Meter self = *this;
-            return maya::Element{maya::ComponentElement{
+            maya::ComponentElement ce{
                 .render = [self](int w, int) -> maya::Element {
                     Meter m = self;
                     m.width_ = std::max(1, w);
                     return m.build_fixed();
                 },
-            }};
+                .measure = [](int) -> maya::Size {
+                    return {maya::Columns{1}, maya::Rows{1}};
+                },
+            };
+            // Grow on the COMPONENT itself (maya fill() contract): a piped
+            // `| grow(1)` wraps in a box — the box grows but a measured leaf
+            // inside it keeps natural width unless IT also claims the space.
+            ce.layout.grow = 1.0f;
+            return maya::Element{std::move(ce)};
         }
         return build_fixed();
     }

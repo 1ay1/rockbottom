@@ -384,44 +384,101 @@ inline std::vector<Element> two_col(std::vector<Element> left,
     return out;
 }
 
-// ── SCROLLER ───────────────────────────────────────────────────────────────
-// Take a full body (may be taller than the viewport) and return a window of at
-// most `view_h` rows starting at `scroll`, with a slim right-edge scrollbar and
-// top/bottom "more" chevrons so it's obvious there's content off-screen. This
-// is what makes every pane usable no matter how dense or how small the term.
-inline Element scroller(std::vector<Element> body, int scroll, int view_h,
+// ── SCROLLER ──────────────────────────────────────────────────────────────────────────────
+// Take a full body (may be taller than the viewport) and window it to the
+// slot the layout actually hands us. `scroll` indexes ELEMENTS (the app's
+// scroll unit); the window packs elements until their MEASURED heights fill
+// the real slot — a 10-row hero graph counts as 10 rows, not 1, so nothing
+// is crushed by flex-shrink and nothing bleeds past the frame into the hint
+// bar. Heights come from measure_element over the real fragments at the
+// real width; the proportional scrollbar runs on rows, not element counts.
+inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
                         maya::Color ac) {
     using namespace maya; using namespace maya::dsl;
-    const int total = static_cast<int>(body.size());
-    if (total <= view_h) {
-        // Fits — no scrollbar needed, just pad to fill so the frame is stable.
-        return (v(std::move(body)) | grow(1)).build();
-    }
-    const int max_scroll = total - view_h;
-    scroll = std::clamp(scroll, 0, max_scroll);
+    auto shared = std::make_shared<const std::vector<Element>>(std::move(body));
+    const int scroll_in = std::max(0, scroll);
+    maya::ComponentElement ce{
+        .render = [shared, scroll_in, ac](int slot_w, int slot_h) -> Element {
+            const auto& all = *shared;
+            const int total = static_cast<int>(all.size());
+            const int view_h = std::max(1, slot_h);
+            const int inner_w = std::max(1, slot_w - 2);   // minus " "+bar gutter
 
-    std::vector<Element> win;
-    for (int i = scroll; i < scroll + view_h && i < total; ++i)
-        win.push_back(std::move(body[static_cast<std::size_t>(i)]));
+            // Measure every element at the real width — the same fragments
+            // that will paint, so window and paint can never disagree.
+            std::vector<int> rows(static_cast<std::size_t>(total), 1);
+            long long total_rows = 0;
+            for (int i = 0; i < total; ++i) {
+                rows[static_cast<std::size_t>(i)] = std::max(1,
+                    measure_element(all[static_cast<std::size_t>(i)], inner_w)
+                        .height.value);
+                total_rows += rows[static_cast<std::size_t>(i)];
+            }
 
-    // Scrollbar thumb: proportional, at least 1 row.
-    const int thumb = std::max(1, view_h * view_h / total);
-    const int track = view_h - thumb;
-    const int pos = max_scroll > 0 ? scroll * track / max_scroll : 0;
-    std::vector<Element> barcol;
-    for (int r = 0; r < view_h; ++r) {
-        const bool on = r >= pos && r < pos + thumb;
-        const char* g = r == 0 && scroll > 0 ? "▲"
-                      : r == view_h - 1 && scroll < max_scroll ? "▼"
-                      : on ? "█" : "│";
-        barcol.push_back((text(g) | nowrap | fgc(on ? ac : pal::faint)).build());
-    }
+            if (total_rows <= view_h) {
+                std::vector<Element> win(all.begin(), all.end());
+                return (v(std::move(win)) | grow(1)).build();
+            }
 
-    return (h(
-        v(std::move(win)) | grow(1),
-        text(" ") | nowrap,
-        v(std::move(barcol)) | width(1)
-    )).build();
+            // Last useful start element: the first index from which the tail
+            // still fills the viewport — scrolling past it just shows the
+            // same last page.
+            int max_start = total - 1;
+            {
+                long long tail = 0;
+                for (int i = total - 1; i >= 0; --i) {
+                    tail += rows[static_cast<std::size_t>(i)];
+                    if (tail >= view_h) { max_start = i; break; }
+                    max_start = i;
+                }
+            }
+            const int start = std::clamp(scroll_in, 0, max_start);
+
+            // Pack elements until the measured rows fill the slot.
+            std::vector<Element> win;
+            int used = 0;
+            for (int i = start; i < total && used < view_h; ++i) {
+                win.push_back(all[static_cast<std::size_t>(i)]);
+                used += rows[static_cast<std::size_t>(i)];
+            }
+
+            // Scrollbar on ROW basis.
+            long long rows_before = 0;
+            for (int i = 0; i < start; ++i)
+                rows_before += rows[static_cast<std::size_t>(i)];
+            const long long max_scroll_rows =
+                std::max<long long>(1, total_rows - view_h);
+            const int thumb = std::max(1,
+                static_cast<int>(static_cast<long long>(view_h) * view_h
+                                 / std::max<long long>(1, total_rows)));
+            const int track = std::max(0, view_h - thumb);
+            const int pos = static_cast<int>(
+                std::min<long long>(rows_before, max_scroll_rows)
+                * track / max_scroll_rows);
+            std::vector<Element> barcol;
+            for (int r = 0; r < view_h; ++r) {
+                const bool on = r >= pos && r < pos + thumb;
+                const char* g = r == 0 && start > 0 ? "▲"
+                              : r == view_h - 1 && start < max_start ? "▼"
+                              : on ? "█" : "│";
+                barcol.push_back((text(g) | nowrap | fgc(on ? ac : pal::faint)).build());
+            }
+
+            return (h(
+                v(std::move(win)) | grow(1),
+                text(" ") | nowrap,
+                v(std::move(barcol)) | width(1)
+            )).build();
+        },
+        // Fill semantics: full slot width, 1-row basis — grow (baked on the
+        // component, maya fill() contract) expands the height. (A measured
+        // leaf in a COLUMN takes its width from measure, not cross-stretch.)
+        .measure = [](int max_width) -> maya::Size {
+            return {maya::Columns{max_width > 0 ? max_width : 1}, maya::Rows{1}};
+        },
+    };
+    ce.layout.grow = 1.0f;
+    return Element{std::move(ce)};
 }
 
 // Total content rows for a body — used by the app to clamp scroll offsets.

@@ -58,13 +58,26 @@ public:
         using namespace maya;
         if (cells_ <= 0) {
             Graph self = *this;
-            return Element{ComponentElement{
+            const int nat_rows = rows_;
+            ComponentElement ce{
                 .render = [self](int w, int) -> Element {
                     Graph g = self;
                     g.cells_ = std::max(1, w);
                     return g.build_fixed();
                 },
-            }};
+                // A fill graph has no natural width (it stretches to the
+                // slot) but a REAL height (rows_). Without this the default
+                // auto-measure claims the whole row width as flex basis and
+                // yoga shrinks the fixed-width siblings (y-axis, stat card).
+                .measure = [nat_rows](int) -> Size {
+                    return {Columns{1}, Rows{nat_rows}};
+                },
+            };
+            // Grow on the COMPONENT (maya fill() contract): a piped grow
+            // wraps in a box that grows while the measured leaf inside
+            // keeps its 1-cell natural width.
+            ce.layout.grow = 1.0f;
+            return Element{std::move(ce)};
         }
         return build_fixed();
     }

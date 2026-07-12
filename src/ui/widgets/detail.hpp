@@ -80,7 +80,10 @@ public:
         // scrollbar when there's more than fits.
         std::vector<Element> framed;
         framed.push_back(sysbar());
-        framed.push_back(detail::scroller(std::move(rows), cx.scroll, cx.body_h, ac));
+        // The scroller is a fill component (grow baked in) — it takes the
+        // rows left between the sysbar and the hint.
+        framed.push_back(detail::scroller(std::move(rows), cx.scroll,
+                                          cx.body_h, ac));
         framed.push_back(pending_ ? confirm_strip() : hint());
 
         Element card = Panel(glyph, title, ac).grow(1)(std::move(framed));
