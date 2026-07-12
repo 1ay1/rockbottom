@@ -62,9 +62,16 @@ inline constexpr auto proc_ac = hot;
 // bright counterpart (green → bright green). This is what selection ink,
 // glossy meter tips and hot rails use now that mix() can't interpolate —
 // the terminal's own bright variant IS the theme-correct highlight.
+// bright_black (the dim/faint ink) has no brighter grey to go to; on a
+// selection strip that's ALSO bright_black it would disappear, so it lifts
+// to white instead.
 [[nodiscard]] inline maya::Color brighten(maya::Color c) {
-    if (c.kind() == maya::Color::Kind::Named && c.index() < 8)
-        return maya::Color{static_cast<maya::AnsiColor>(c.index() + 8)};
+    if (c.kind() == maya::Color::Kind::Named) {
+        if (c.index() < 8)
+            return maya::Color{static_cast<maya::AnsiColor>(c.index() + 8)};
+        if (c.index() == 8)   // bright_black → white: visible on the strip
+            return maya::Color::white();
+    }
     return c;
 }
 

@@ -99,13 +99,15 @@ private:
     // ── The column set ──
     // Shed order as the panel narrows (lowest keep first): PORT → DISK →
     // meter → THR → MEM%; everything else never sheds. Header ink is a
-    // three-tier hierarchy: the active sort column is the only loud thing
-    // (sort_header_style: accent + bold + ▾), sortable columns sit in mid
-    // ink (they read as clickable), non-sortable ones recede to dim.
+    // three-tier hierarchy ON THE RAIL BAND (bright_black): the active sort
+    // column is the only loud thing (sort_header_style: accent + bold + ▾),
+    // sortable columns are bright white (they read as clickable), inert ones
+    // sit a tier lower in normal white. dim/faint ink is BANNED here — it's
+    // the same ANSI slot as the band, i.e. invisible.
     [[nodiscard]] std::vector<maya::ColumnDef> columns() const {
         using namespace maya;
-        const Style sortable = Style{}.with_fg(pal::label);
-        const Style inert    = Style{}.with_fg(pal::dim);
+        const Style sortable = Style{}.with_bold().with_fg(pal::white);
+        const Style inert    = Style{}.with_fg(pal::text);
         // MEM% shares SortKey::Mem with MEM. Only MEM (the sort_col) gets
         // the arrow; MEM% echoes the accent so the pair reads as one key.
         const Style memp_st = view_.sort == SortKey::Mem
@@ -149,7 +151,7 @@ private:
         cfg.border_color = pal::border;
         cfg.show_header  = view_.pending == nullptr;  // strip replaces it
         cfg.header_bg    = pal::rail;             // filled header pill band
-        cfg.header_style = Style{}.with_fg(pal::label);
+        cfg.header_style = Style{}.with_fg(pal::text);  // band-safe fallback ink
         cfg.sort_header_style = Style{}.with_bold().with_fg(pal::proc_ac);
         cfg.sort_col     = sort_column();
         cfg.sort_desc    = view_.sort_desc;
@@ -387,7 +389,10 @@ private:
     [[nodiscard]] maya::TableCell name_cell(const ProcInfo& p, bool selected,
                                             maya::Style name_st, int idx) const {
         using namespace maya;
-        auto lift = [&](Color c) { return selected ? mix(c, pal::white, 0.45) : c; };
+        // Same bright-slot lift as the data cells — mix() can't tint on the
+        // native palette, and dim ink (bright_black) VANISHES on the
+        // bright_black selection strip, so brighten() lifts it to white.
+        auto lift = [&](Color c) { return selected ? brighten(c) : c; };
 
         TableCell cell;
 
@@ -416,20 +421,17 @@ private:
                                 ? view_.sub_cpu[I] : 0.0;
 
             // Heat of this branch: subtree CPU on the per-process ramp, with
-            // a dim floor so idle branches recede to structure.
+            // a dim floor so idle branches recede to structure. On the cursor
+            // row every rail lifts — dim would melt into the strip.
             const bool warm = scpu >= 0.5;
-            Color heat = warm
-                ? lift(cpu_color(scpu))
-                : (selected ? mix(pal::label, pal::white, 0.2)
-                            : mix(pal::dim, pal::bg_panel, 0.25));
+            Color heat = warm ? lift(cpu_color(scpu))
+                              : lift(pal::dim);
 
             // (1) Weight gutter — always one cell, even at the root, so
             // every row shares a left edge and the bars form a column.
             static const char* kW[] = {"▁","▂","▃","▄","▅","▆","▇","█"};
             int wl = std::clamp(static_cast<int>(share * 7.999), 0, 7);
-            Color gut_c = warm ? heat
-                               : (selected ? pal::label
-                                           : mix(pal::dim, pal::bg_panel, 0.4));
+            Color gut_c = warm ? heat : lift(pal::dim);
             cell.span(kW[wl], warm && scpu > 40
                                   ? Style{}.with_fg(gut_c).with_bold()
                                   : Style{}.with_fg(gut_c));
@@ -456,16 +458,17 @@ private:
             && idx < static_cast<int>(view_.hidden_count.size())) {
             const int hc = view_.hidden_count[static_cast<std::size_t>(idx)];
             cell.span("  +" + std::to_string(hc),
-                      Style{}.with_fg(selected ? pal::label : pal::dim));
+                      Style{}.with_fg(lift(pal::dim)));
         }
 
         // The NAME column owns all the slack; instead of a void, trail the
         // command line in barely-there ink — genuinely useful (which python?
-        // whose agentty?) and it fills the table's dead middle.
+        // whose agentty?) and it fills the table's dead middle. On the cursor
+        // row it lifts to normal text ink: readable on the strip, still a
+        // tier below the bright-white name.
         if (!p.cmd.empty() && p.cmd != p.name)
             cell.span("  " + p.cmd,
-                      Style{}.with_fg(selected ? pal::label
-                                               : mix(pal::dim, pal::bg_panel, 0.35)));
+                      Style{}.with_fg(selected ? pal::text : pal::dim));
         return cell;
     }
 };
