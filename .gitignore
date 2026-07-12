@@ -4,3 +4,6 @@ build/
 compile_commands.json
 .cache/
 .DS_Store
+
+# untracked local render-inspection tooling
+tools/render_lab/
