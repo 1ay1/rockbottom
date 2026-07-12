@@ -111,7 +111,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
             "of total ram", fmt::pct(p.mem_share.v), pal::label,
             "page faults", fmt::count(p.faults_ps) + "/s",
             p.faults_ps > 10000 ? pal::hot : p.faults_ps > 0.5 ? pal::text : pal::dim,
-            "pageins", fmt::count(static_cast<double>(p.pageins)),
+            "disk pageins", fmt::count(static_cast<double>(p.pageins)),
             pal::label));
         if (p.faults_ps > 50000)
             b.push_back(verdict("▲ faulting very hard — allocating or touching new memory at a furious rate", pal::hot));

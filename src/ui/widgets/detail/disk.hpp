@@ -127,17 +127,25 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
                         std::to_string(static_cast<int>(s.disks.size())) + " mounted"));
     // The row is width-aware: mount + meter + pct always show; free, then
     // used/size, then inodes, then fs shed right-to-left as the pane narrows,
-    // so at 30 cols you read "/home \u2588\u2588 27%" cleanly instead of every column
+    // so at 30 cols you read "/home ██ 27%" cleanly instead of every column
     // truncating into stubs ("61G /", "btr"). Header + data share the same
     // shed logic so labels never drift off their values.
+    // The inodes column only appears when at least ONE mount actually reports
+    // inode stats — on filesystems that don't (many btrfs/vfat via statvfs)
+    // it would otherwise be a dead column of "·" under a header that reads as
+    // a promise the data never keeps.
+    bool any_inodes = false;
+    for (const DiskInfo& d : s.disks)
+        if (d.inodes_total > 0) { any_inodes = true; break; }
     {
         // Header carries the same slots the data rows do; both funnel through
         // build_fs_line so the shed decisions match exactly.
+        std::vector<FsTail> htail{{"free", pal::dim, 8}, {"used / size", pal::dim, 13}};
+        if (any_inodes) htail.push_back({"inodes", pal::dim, 6});
+        htail.push_back({"fs", pal::dim, 6});
         R.push_back(build_fs_line(
             /*mount=*/"mount", pal::dim, /*meter=*/std::nullopt, /*pct=*/"",
-            pal::dim, {{"free", pal::dim, 8}, {"used / size", pal::dim, 13},
-                       {"inodes", pal::dim, 6}, {"fs", pal::dim, 6}},
-            /*header=*/true));
+            pal::dim, htail, /*header=*/true));
     }
     const DiskInfo* worst = nullptr;
     for (const DiskInfo& d : s.disks) {
@@ -153,14 +161,14 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             ino_c = iused > 0.9 ? pal::crit : iused > 0.7 ? pal::hot : pal::dim;
         }
         std::string fstag = d.fstype + (d.read_only ? " ro" : "");
+        std::vector<FsTail> tail{
+            {std::string(humanize_bytes(freeb)), f > 0.9 ? pal::crit : pal::good, 8},
+            {std::string(humanize_bytes(d.used)) + " / " + std::string(humanize_bytes(d.total)), pal::label, 13}};
+        if (any_inodes) tail.push_back({ino, ino_c, 6});
+        tail.push_back({fstag, d.read_only ? pal::hot : mix(pal::disk_ac, pal::dim, 0.4), 6});
         R.push_back(build_fs_line(
             maya::truncate_end(d.mount, 15), pal::text, f, fmt::pct_pad(f),
-            load_color(f),
-            {{std::string(humanize_bytes(freeb)), f > 0.9 ? pal::crit : pal::good, 8},
-             {std::string(humanize_bytes(d.used)) + " / " + std::string(humanize_bytes(d.total)), pal::label, 13},
-             {ino, ino_c, 6},
-             {fstag, d.read_only ? pal::hot : mix(pal::disk_ac, pal::dim, 0.4), 6}},
-            /*header=*/false));
+            load_color(f), tail, /*header=*/false));
         // On wide terminals, show the backing device under the mount.
         if (cx.wide && !d.device.empty())
             R.push_back((text("  \xe2\x94\x94 " + d.device) | nowrap | fgc(pal::faint)).build());

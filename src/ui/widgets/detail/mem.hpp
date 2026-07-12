@@ -192,7 +192,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->mem_share.v > b2->mem_share.v; });
         const int show = std::min<int>(cx.tall ? 8 : 4, static_cast<int>(top.size()));
         R.push_back(section("TOP MEMORY CONSUMERS", pal::mem_ac,
-                            "top " + std::to_string(show)));
+                            "top " + std::to_string(show) + " · mem% · rss"));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(maya::truncate_end(p.name, 22)),

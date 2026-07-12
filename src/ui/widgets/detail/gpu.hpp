@@ -170,7 +170,8 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // ── VRAM consumers ──────────────────────────────────────────
         if (!g.procs.empty()) {
             const int show = std::min<int>(cx.tall ? 8 : 5, static_cast<int>(g.procs.size()));
-            R.push_back(section("USING THIS GPU", pal::gpu_ac, "top " + std::to_string(show)));
+            R.push_back(section("USING THIS GPU", pal::gpu_ac,
+                                "top " + std::to_string(show) + " · vram"));
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
                 const double frac = g.mem_total.value ? Ratio::of(p.mem, g.mem_total).v : 0;
