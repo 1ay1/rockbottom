@@ -341,10 +341,21 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     const int right_w = inner - gap_w - left_w;
 
     // Left column: interface roster, top-aligned, padded to the band height so
-    // the two columns are the same height. It does NOT scroll.
-    std::vector<Element> left = std::move(ifcol);
-    while (static_cast<int>(left.size()) < band_h) left.push_back(gap_row());
-    if (static_cast<int>(left.size()) > band_h) left.resize(static_cast<std::size_t>(band_h));
+    // the two columns are the same height. It does NOT scroll. Pack by
+    // MEASURED rows — responsive rows (kv3 reflows to 2 lines at this column
+    // width) count what they'll actually paint, so the roster can never grow
+    // taller than the band and bleed into the hint bar.
+    std::vector<Element> left;
+    {
+        int used = 0;
+        for (auto& e : ifcol) {
+            const int r = std::max(1, measure_element(e, left_w).height.value);
+            if (used + r > band_h) break;
+            used += r;
+            left.push_back(std::move(e));
+        }
+        while (used < band_h) { left.push_back(gap_row()); ++used; }
+    }
 
     // Right column: CONNECTIONS as a windowed maya::Table — the pane's
     // scroll offset drives window_top, the framework draws the ▍ thumb.

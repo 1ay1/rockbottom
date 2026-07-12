@@ -196,12 +196,15 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                 R.push_back((text("  " + cur_zone) | nowrap | fgc(pal::faint)).build());
             }
             // Heat fraction: 30°C floor → crit (or 95°C) ceiling on the load ramp.
-            const float ceil = sn.crit_c > 40 ? sn.crit_c : 95.0f;
+            // Some sensors report garbage thresholds (e.g. 65261°C on nvme
+            // "Sensor 1") — only trust values in a plausible 40..150°C band.
+            auto sane = [](float v) { return v > 40 && v < 150; };
+            const float ceil = sane(sn.crit_c) ? sn.crit_c : 95.0f;
             const double frac = std::clamp((sn.temp_c - 30.0) / (ceil - 30.0), 0.0, 1.0);
             char t[16]; std::snprintf(t, sizeof t, "%.0f°C", sn.temp_c);
-            std::string tail = sn.high_c > 40
+            std::string tail = sane(sn.high_c)
                 ? ("high " + std::to_string(static_cast<int>(sn.high_c)) + "°")
-                : (sn.crit_c > 40 ? "crit " + std::to_string(static_cast<int>(sn.crit_c)) + "°" : "");
+                : (sane(sn.crit_c) ? "crit " + std::to_string(static_cast<int>(sn.crit_c)) + "°" : "");
             R.push_back((h(
                 text("    " + std::string(fmt::clip(sn.label, 18))) | nowrap | fgc(pal::label) | width(20),
                 Element{Meter{frac}.fill().groove(false).color(load_color(frac))} | grow(1),

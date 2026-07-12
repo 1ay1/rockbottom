@@ -85,6 +85,11 @@ inline Element kv(const std::string& k, const std::string& v, maya::Color vc,
 // content size, so a long value in one row would shove its column out of
 // line with the rows above). Labels get the same 14-col width as bar()/kv(),
 // so every label and every value in a pane sits on the same two rails.
+// RESPONSIVE: below ~78 cols three 26-cell columns can't hold label+value,
+// so the strip reflows — two pairs per row at medium widths, one per row
+// when truly cramped (the scroller measures real heights, so the extra rows
+// are windowed correctly). Values are clip-truncated either way: a
+// pathological value ellipsizes instead of colliding with its neighbour.
 inline Element kv3(std::string k1, std::string v1, maya::Color c1,
                    std::string k2 = "", std::string v2 = "", maya::Color c2 = pal::dim,
                    std::string k3 = "", std::string v3 = "", maya::Color c3 = pal::dim) {
@@ -93,24 +98,55 @@ inline Element kv3(std::string k1, std::string v1, maya::Color c1,
     std::array<Cell, 3> cells{Cell{std::move(k1), std::move(v1), c1},
                               Cell{std::move(k2), std::move(v2), c2},
                               Cell{std::move(k3), std::move(v3), c3}};
-    return Element{ComponentElement{
-        .render = [cells](int w, int) -> Element {
+    // Columns the width can hold: 3 × 26 / 2 × 26 / take what you get.
+    auto cols_for = [](int w) { return w >= 78 ? 3 : w >= 52 ? 2 : 1; };
+    auto live = [](const std::array<Cell, 3>& cs) {
+        int n = 0;
+        for (const auto& c : cs) if (!c.k.empty()) ++n;
+        return std::max(1, n);
+    };
+    maya::ComponentElement ce{
+        .render = [cells, cols_for](int w, int) -> Element {
             using namespace maya::dsl;
-            const int cw = std::max(20, w / 3);
+            const int cols = cols_for(w);
+            const int cw = std::max(20, w / cols);
+            std::vector<Element> lines;
             std::vector<Element> row;
-            for (const auto& cell : cells) {
+            int in_row = 0;
+            for (std::size_t i = 0; i < cells.size(); ++i) {
+                const auto& cell = cells[i];
+                // Skip blank spacers when reflowed — they only exist to hold
+                // the 3-column grid; in 2/1-col mode they'd waste a slot.
                 if (cell.k.empty()) {
-                    row.push_back((Element{blank()} | width(cw)).build());
+                    if (cols == 3)
+                        row.push_back((Element{blank()} | width(cw)).build());
                     continue;
                 }
                 row.push_back((h(
                     text(cell.k) | nowrap | fgc(pal::dim) | width(14),
-                    text(cell.v) | nowrap | Bold | fgc(cell.c)
+                    text(cell.v) | clip | Bold | fgc(cell.c) | grow(1)
                 ) | gap(2) | width(cw)).build());
+                if (++in_row == cols) {
+                    lines.push_back((h(std::move(row))).build());
+                    row.clear(); in_row = 0;
+                }
             }
-            return (h(std::move(row))).build();
+            if (!row.empty()) lines.push_back((h(std::move(row))).build());
+            if (lines.empty()) lines.push_back(blank());
+            if (lines.size() == 1) return std::move(lines.front());
+            return (v(std::move(lines))).build();
         },
-    }};
+        // Height depends on the slot width (pairs ÷ columns) — report it so
+        // the detail scroller's row-aware window stays exact.
+        .measure = [cells, cols_for, live](int max_width) -> maya::Size {
+            const int cols = cols_for(max_width > 0 ? max_width : 100);
+            const int n = live(cells);
+            const int rows = (n + cols - 1) / cols;
+            return {maya::Columns{max_width > 0 ? max_width : 1},
+                    maya::Rows{std::max(1, rows)}};
+        },
+    };
+    return Element{std::move(ce)};
 }
 
 // A full-width labelled meter row: "label  ██████░░  42%  <tail>".
@@ -179,12 +215,13 @@ inline Element section(std::string title, maya::Color ac, std::string chip = "")
 
 // A plain-language verdict line — bottom's signature "read it for you" touch.
 // A colored ▌ gutter bar marks it as the pane's editorial voice, distinct
-// from the data rows around it.
+// from the data rows around it. The message clip-truncates with … on narrow
+// terminals instead of hard-cutting at the frame.
 inline Element verdict(const std::string& msg, maya::Color c) {
     using namespace maya; using namespace maya::dsl;
     return (h(
         text(" ▌") | nowrap | fgc(c),
-        text(msg) | nowrap | fgc(c)
+        text(msg) | clip | fgc(c) | grow(1)
     ) | gap(1)).build();
 }
 
@@ -315,19 +352,70 @@ inline Element comp_bar(std::vector<Seg> segs) {
 }
 
 // Legend row for a comp_bar: "■ apps 5.5G   ■ wired 2.2G   …" — swatch in
-// the segment color, label dim, value bold.
+// the segment color, label dim, value bold. Width-aware: when one line can't
+// hold every item, the legend wraps onto extra rows (2 items per row) —
+// letting flex shrink the nowrap cells instead would eat interior spaces
+// ("■ buffers24K").
 struct LegendItem { std::string label, value; maya::Color c; };
 
-inline Element comp_legend(const std::vector<LegendItem>& items) {
-    using namespace maya; using namespace maya::dsl;
-    std::vector<Element> row;
-    for (const LegendItem& it : items) {
-        row.push_back((text("■") | nowrap | fgc(it.c)).build());
-        row.push_back((text(" " + it.label + " ") | nowrap | fgc(pal::dim)).build());
-        row.push_back((text(it.value) | nowrap | Bold | fgc(pal::label)).build());
-        row.push_back((text("   ") | nowrap).build());
-    }
-    return (h(std::move(row))).build();
+inline Element comp_legend(std::vector<LegendItem> items) {
+    using namespace maya;
+    auto cell_w = [](const LegendItem& it) {
+        return 2 + static_cast<int>(it.label.size()) + 1
+                 + static_cast<int>(it.value.size());
+    };
+    auto one_line_w = [cell_w](const std::vector<LegendItem>& v) {
+        int w = 0;
+        for (std::size_t i = 0; i < v.size(); ++i)
+            w += cell_w(v[i]) + (i + 1 < v.size() ? 3 : 0);
+        return w;
+    };
+    auto build_rows = [cell_w](const std::vector<LegendItem>& v, int w)
+        -> std::vector<std::vector<LegendItem>> {
+        std::vector<std::vector<LegendItem>> rows;
+        std::vector<LegendItem> cur;
+        int used = 0;
+        for (const auto& it : v) {
+            const int need = cell_w(it) + (cur.empty() ? 0 : 3);
+            if (!cur.empty() && used + need > w) {
+                rows.push_back(std::move(cur));
+                cur.clear(); used = 0;
+            }
+            used += cell_w(it) + (cur.empty() ? 0 : 3);
+            cur.push_back(it);
+        }
+        if (!cur.empty()) rows.push_back(std::move(cur));
+        return rows;
+    };
+    maya::ComponentElement ce{
+        .render = [items, build_rows](int w, int) -> Element {
+            using namespace maya::dsl;
+            std::vector<Element> out;
+            for (auto& line : build_rows(items, std::max(10, w))) {
+                std::vector<Element> row;
+                for (std::size_t i = 0; i < line.size(); ++i) {
+                    const auto& it = line[i];
+                    row.push_back((text("■") | nowrap | fgc(it.c)).build());
+                    row.push_back((text(" " + it.label + " ") | nowrap | fgc(pal::dim)).build());
+                    row.push_back((text(it.value) | nowrap | Bold | fgc(pal::label)).build());
+                    if (i + 1 < line.size())
+                        row.push_back((text("   ") | nowrap).build());
+                }
+                out.push_back((h(std::move(row))).build());
+            }
+            if (out.empty()) out.push_back(blank());
+            return (v(std::move(out))).build();
+        },
+        .measure = [items, one_line_w, build_rows](int max_width) -> maya::Size {
+            const int rows = max_width > 0
+                ? static_cast<int>(build_rows(items, std::max(10, max_width)).size())
+                : 1;
+            return {maya::Columns{std::min(max_width > 0 ? max_width : one_line_w(items),
+                                           one_line_w(items))},
+                    maya::Rows{std::max(1, rows)}};
+        },
+    };
+    return Element{std::move(ce)};
 }
 
 // Peak-normalize a raw-rate history (B/s floats) into 0..1 for Spark, which

@@ -123,8 +123,10 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
                                  load_color(std::clamp((g.temp_c - 40) / 50.0, 0.0, 1.0))});
             if (g.power_w > 0)
                 cells.push_back({"power",
-                                 fmt::fixed1(g.power_w) +
-                                     (g.power_limit_w > 0 ? " / " + fmt::fixed1(g.power_limit_w) + "W" : "W"),
+                                 std::to_string(static_cast<int>(g.power_w + 0.5)) + "W" +
+                                     (g.power_limit_w > 0
+                                          ? " / " + std::to_string(static_cast<int>(g.power_limit_w + 0.5)) + "W"
+                                          : ""),
                                  g.power_limit_w > 0 && g.power_w > g.power_limit_w * 0.9 ? pal::hot : pal::text});
             if (g.fan_pct >= 0)
                 cells.push_back({"fan", std::to_string(g.fan_pct) + "%",
