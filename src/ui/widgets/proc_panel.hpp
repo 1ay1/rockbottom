@@ -382,10 +382,15 @@ private:
     }
 
     // The NAME cell: tree furniture + name + collapse badge + a dim command
-    // trail. Built at FULL length — maya::Table truncates it to the solved
-    // column width with … and clips the spans to match, so the old
-    // byte-budget arithmetic is gone and fixed columns to the right can
-    // never shift.
+    // trail. Returned as a DYNAMIC cell so it can reason about the column's
+    // SOLVED width: the tree furniture and the process name are the payload
+    // and are placed first; the command trail is decoration that only appears
+    // when GENUINE slack remains after them. On a narrow terminal the old
+    // code appended the trail unconditionally and let the table's … truncation
+    // fall wherever it landed — which was mid-NAME, shearing "systemd" down to
+    // "syste…" and "fish" to "fis…". Now the name wins the budget: the trail
+    // is dropped the instant it would cost a single cell of the name, so even
+    // at 50 cols every process reads its full (or gracefully …-clipped) NAME.
     [[nodiscard]] maya::TableCell name_cell(const ProcInfo& p, bool selected,
                                             maya::Style name_st, int idx) const {
         using namespace maya;
@@ -394,82 +399,162 @@ private:
         // bright_black selection strip, so brighten() lifts it to white.
         auto lift = [&](Color c) { return selected ? brighten(c) : c; };
 
-        TableCell cell;
+        // ── assemble the FIXED furniture (gutter + chevron) and the ELASTIC
+        // rail prefix separately. The gutter and chevron are irreducible
+        // (1 + 2 cells); the rail prefix ("│  ├─ │  ") grows with tree depth
+        // and is the only part that can crowd the name off the row — so it's
+        // held apart and elided from the LEFT when the column is tight.
+        std::string furniture;              // gutter + trailing chevron
+        std::vector<StyledRun> fruns;
+        std::string prefix;                 // the elastic rail run
+        Color prefix_c = lift(pal::dim);
+        // The rail run is emitted between the gutter and the chevron, so we
+        // record where in `furniture` the chevron begins to stitch them back
+        // in order inside the builder.
+        std::size_t chevron_at = 0;
+        auto push = [&](const std::string& t, Style st) {
+            if (t.empty()) return;
+            fruns.push_back({furniture.size(), t.size(), st});
+            furniture += t;
+        };
 
         // ══ THE FLOW TREE ═══════════════════════════════════════════
-        // A radically different tree: instead of dead box-drawing guides,
-        // the hierarchy's connective tissue CARRIES DATA.
-        //  1. Weight gutter (1 cell): a block glyph sized by this node's
-        //     CPU share among its siblings and colored on the load ramp —
-        //     the busiest child at EVERY branch stands tall and bright, so
-        //     you see which sibling dominates without reading a number.
-        //  2. Heat-graded rails: the ├─ └─ │ guides are tinted by the
-        //     subtree CPU flowing through that branch — the rail glows
-        //     warm where load lives, so the eye follows the bright line
-        //     straight down to the hog. The tree becomes a live heatmap.
+        // The hierarchy's connective tissue CARRIES DATA: a weight gutter
+        // sized by sibling CPU share, heat-graded rails tinted by subtree
+        // CPU, and a fold chevron. (Full rationale unchanged from before.)
         const bool tree_row = view_.tree && idx >= 0 &&
                               idx < static_cast<int>(view_.tree_prefix.size());
+        bool folded = false;
         if (tree_row) {
             const std::size_t I = static_cast<std::size_t>(idx);
             const bool kids = idx < static_cast<int>(view_.has_kids.size())
                               && view_.has_kids[I];
-            const bool folded = idx < static_cast<int>(view_.collapsed_row.size())
-                                && view_.collapsed_row[I];
+            folded = idx < static_cast<int>(view_.collapsed_row.size())
+                     && view_.collapsed_row[I];
             const double share = idx < static_cast<int>(view_.sib_share.size())
                                  ? view_.sib_share[I] : 0.0;
             const double scpu = idx < static_cast<int>(view_.sub_cpu.size())
                                 ? view_.sub_cpu[I] : 0.0;
-
-            // Heat of this branch: subtree CPU on the per-process ramp, with
-            // a dim floor so idle branches recede to structure. On the cursor
-            // row every rail lifts — dim would melt into the strip.
             const bool warm = scpu >= 0.5;
-            Color heat = warm ? lift(cpu_color(scpu))
-                              : lift(pal::dim);
+            Color heat = warm ? lift(cpu_color(scpu)) : lift(pal::dim);
+            prefix_c = heat;
 
-            // (1) Weight gutter — always one cell, even at the root, so
-            // every row shares a left edge and the bars form a column.
             static const char* kW[] = {"▁","▂","▃","▄","▅","▆","▇","█"};
             int wl = std::clamp(static_cast<int>(share * 7.999), 0, 7);
             Color gut_c = warm ? heat : lift(pal::dim);
-            cell.span(kW[wl], warm && scpu > 40
-                                  ? Style{}.with_fg(gut_c).with_bold()
-                                  : Style{}.with_fg(gut_c));
-            cell.span(" ");
-
-            // (2) Heat-graded rails: the accumulated guide, tinted by this
-            // branch's heat rather than a dead gray.
-            if (!view_.tree_prefix[I].empty())
-                cell.span(view_.tree_prefix[I], Style{}.with_fg(heat));
-
-            // (3) Chevron for foldable nodes, in the branch heat; the
-            // collapsed marker doubles as "work is hiding here".
+            push(kW[wl], warm && scpu > 40 ? Style{}.with_fg(gut_c).with_bold()
+                                           : Style{}.with_fg(gut_c));
+            push(" ", Style{});
+            prefix = view_.tree_prefix[I];
+            chevron_at = furniture.size();       // chevron follows the prefix
             if (kids)
-                cell.span(folded ? "▸ " : "▾ ",
-                          warm ? Style{}.with_fg(heat).with_bold()
-                               : Style{}.with_fg(heat));
+                push(folded ? "▸ " : "▾ ",
+                     warm ? Style{}.with_fg(heat).with_bold()
+                          : Style{}.with_fg(heat));
         }
 
-        cell.span(fmt::clip(p.name, 64), name_st);
-
-        // Collapsed subtree count badge: " +N".
-        if (tree_row && idx < static_cast<int>(view_.collapsed_row.size())
-            && view_.collapsed_row[static_cast<std::size_t>(idx)]
+        // Collapsed-subtree count badge — part of the NAME payload ("what is
+        // this fold hiding"), placed right after the name, before any trail.
+        std::string badge;
+        if (tree_row && folded
             && idx < static_cast<int>(view_.hidden_count.size())) {
-            const int hc = view_.hidden_count[static_cast<std::size_t>(idx)];
-            cell.span("  +" + std::to_string(hc),
-                      Style{}.with_fg(lift(pal::dim)));
+            badge = "  +" + std::to_string(view_.hidden_count[
+                                static_cast<std::size_t>(idx)]);
         }
 
-        // The NAME column owns all the slack; instead of a void, trail the
-        // command line in barely-there ink — genuinely useful (which python?
-        // whose agentty?) and it fills the table's dead middle. On the cursor
-        // row it lifts to normal text ink: readable on the strip, still a
-        // tier below the bright-white name.
-        if (!p.cmd.empty() && p.cmd != p.name)
-            cell.span("  " + p.cmd,
-                      Style{}.with_fg(selected ? pal::text : pal::dim));
-        return cell;
+        const std::string name = std::string(fmt::clip(p.name, 64));
+        const std::string trail = (!p.cmd.empty() && p.cmd != p.name)
+            ? "  " + p.cmd : std::string{};
+        const Color badge_c = lift(pal::dim);
+        const Color trail_c = selected ? pal::text : pal::dim;
+
+        // Build AT the solved width. Priority order: the NAME must always be
+        // readable, so the elastic rail prefix yields to it. Steps:
+        //   1. gutter + chevron are fixed (≤3 cells) — always drawn.
+        //   2. the rail prefix gets whatever's left after reserving a minimum
+        //      name budget; if it doesn't fit, it's elided from the LEFT
+        //      (drop outermost ancestors, keep the levels nearest the name)
+        //      with a leading … so depth is still signalled.
+        //   3. name fills the remainder; badge then trail only on real slack.
+        return TableCell::dyn(
+            [furniture, fruns, chevron_at, prefix, prefix_c, name, name_st,
+             badge, badge_c, trail, trail_c](int w) -> TableCell {
+                TableCell c;
+                auto span = [&](const std::string& t, Style st) {
+                    if (!t.empty()) c.span(t, st);
+                };
+
+                // Split the fixed furniture around the chevron insertion
+                // point so the (possibly elided) prefix goes in between.
+                auto emit_furniture = [&](std::size_t lo, std::size_t hi) {
+                    for (const auto& r : fruns) {
+                        const std::size_t s = std::max(lo, r.byte_offset);
+                        const std::size_t e = std::min(hi, r.byte_offset + r.byte_length);
+                        if (s < e)
+                            c.span(furniture.substr(s, e - s), r.style);
+                    }
+                };
+
+                const int gut_w = static_cast<int>(string_width(
+                                      furniture.substr(0, chevron_at)));
+                const int chev_w = static_cast<int>(string_width(
+                                       furniture.substr(chevron_at)));
+                const int nw = static_cast<int>(string_width(name));
+                const int bw = static_cast<int>(string_width(badge));
+                const int pw = static_cast<int>(string_width(prefix));
+
+                // Name budget: reserve enough for a readable name (up to the
+                // name's own width, capped at ~12 so a very long name doesn't
+                // erase every rail). The prefix uses whatever survives after
+                // the fixed furniture + this reserved budget.
+                const int name_budget = std::min(nw, 12);
+                const int prefix_room =
+                    std::max(0, w - gut_w - chev_w - name_budget);
+
+                emit_furniture(0, chevron_at);
+                if (pw <= prefix_room) {
+                    span(prefix, Style{}.with_fg(prefix_c));
+                } else if (prefix_room >= 2) {
+                    // Elide from the LEFT: keep the (prefix_room-1) rightmost
+                    // cells (levels nearest the name) behind a leading ….
+                    const std::string kept = last_cells(prefix, prefix_room - 1);
+                    span("…", Style{}.with_fg(prefix_c));
+                    span(kept, Style{}.with_fg(prefix_c));
+                }
+                // else: no room for any rail — gutter + chevron alone signal it.
+                emit_furniture(chevron_at, furniture.size());
+
+                span(name, name_st);
+                span(badge, Style{}.with_fg(badge_c));
+
+                const int used = gut_w + chev_w
+                    + std::min(pw, prefix_room) + nw + bw;
+                if (!trail.empty() && w - used >= 6)
+                    span(trail, Style{}.with_fg(trail_c));
+                return c;
+            });
+    }
+
+    // Keep the last `cells` display-columns of a UTF-8 rail prefix (used to
+    // elide deep tree furniture from the left). Walks byte-wise from the end
+    // over the prefix's fixed-width glyphs (box-drawing + spaces are all
+    // single-width), so it's exact for the guide alphabet the tree emits.
+    [[nodiscard]] static std::string last_cells(const std::string& s, int cells) {
+        if (cells <= 0) return {};
+        const int total = static_cast<int>(maya::string_width(s));
+        if (cells >= total) return s;
+        // Drop leading display columns until `cells` remain. The prefix is
+        // built from single-width glyphs, so column count == codepoint count;
+        // skip whole UTF-8 codepoints from the front.
+        int to_drop = total - cells;
+        std::size_t i = 0;
+        while (i < s.size() && to_drop > 0) {
+            unsigned char ch = static_cast<unsigned char>(s[i]);
+            std::size_t adv = ch < 0x80 ? 1 : ch < 0xE0 ? 2 : ch < 0xF0 ? 3 : 4;
+            i += adv;
+            --to_drop;
+        }
+        return s.substr(i);
     }
 };
 
