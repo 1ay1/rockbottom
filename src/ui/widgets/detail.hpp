@@ -44,13 +44,15 @@ class DetailPane {
     const ProcInfo* proc_;   // for Detail::Proc
     int w_, h_, scroll_;
     const PendingKill* pending_ = nullptr;  // in-pane kill confirmation
+    int hover_x_ = -1, hover_y_ = -1;       // mouse cell (0-based) for row hover
 
 public:
     DetailPane(const Snapshot& s, Detail which, const ProcInfo* proc = nullptr,
                int w = 100, int h = 40, int scroll = 0,
-               const PendingKill* pending = nullptr)
+               const PendingKill* pending = nullptr,
+               int hover_x = -1, int hover_y = -1)
         : s_(s), which_(which), proc_(proc), w_(w), h_(h), scroll_(scroll),
-          pending_(pending) {}
+          pending_(pending), hover_x_(hover_x), hover_y_(hover_y) {}
 
     operator maya::Element() const { return build(); }
 
@@ -74,6 +76,37 @@ public:
 
         detail::Ctx cx = detail::Ctx::make(w_, h_, scroll_);
         std::vector<Element> rows = body();
+
+        // ── Hover highlight ──
+        // Resolve the mouse cell against LAST frame's hit registry: if it fell
+        // on a body row we tag this frame's rows with, tint that row. The
+        // 1-frame lag (registry is from the previous paint) is imperceptible
+        // and keeps this a pure function of the model. Every row is wrapped in
+        // a hit-tagged box either way so the registry is populated for next
+        // frame; only the matched one carries a background.
+        int hover_row = -1;
+        if (hover_x_ >= 0 && hover_y_ >= 0) {
+            if (auto id = maya::hit_test(hover_x_, hover_y_);
+                id && maya::hit_kind(*id) == HK_DetailRow)
+                hover_row = static_cast<int>(maya::hit_index(*id));
+        }
+        {
+            const maya::Color tint = mix(pal::bg, ac, 0.22);
+            for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+                Element row = std::move(rows[static_cast<std::size_t>(i)]);
+                if (i == hover_row) {
+                    // Fill the row to the full column width (an h-stack with a
+                    // trailing grow spacer) BEFORE tinting, so the highlight is
+                    // a clean full-width band — a bare box only stretches to the
+                    // row's ink, leaving a ragged tint. Tag the filled box.
+                    row = (h(Element{std::move(row)}, Element{blank()} | grow(1))
+                           | bgc(tint) | hit(hit_detail_row(i))).build();
+                } else {
+                    row = (Element{std::move(row)} | hit(hit_detail_row(i))).build();
+                }
+                rows[static_cast<std::size_t>(i)] = std::move(row);
+            }
+        }
 
         // Frame: system strip on top, scrollable body in the middle, hint at
         // the bottom. The scroller clips `rows` to the viewport and draws a

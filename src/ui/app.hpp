@@ -67,6 +67,8 @@ struct App {
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
         int      detail_scroll = 0;              // scroll offset within a pane
         int      detail_pid = 0;                 // PID the Proc pane is pinned to
+        int      hover_x = -1, hover_y = -1;     // last mouse cell (0-based); -1 = off-screen.
+                                                 // Detail rows highlight the row under this.
         int      width = 100, height = 40;
         int      ticks = 0;
         // Monotonic generation bumped every time a new Snapshot is folded in
@@ -312,7 +314,21 @@ struct App {
 
         // Only act on button presses for the rest (ignore Move/Release so we
         // don't double-fire; drags fall through harmlessly).
-        if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
+        if (me.kind != MouseEventKind::Press) {
+            // Hover tracking: in a scrollable detail pane, remember the cell
+            // under the cursor so the body row there can highlight. Only wake
+            // a re-render when the tracked cell actually MOVED to a new row and
+            // we're in a pane that shows the highlight — otherwise every pixel
+            // of mouse motion on the main dashboard would spin the event loop.
+            if (me.kind == MouseEventKind::Move && m.detail != ui::Detail::None) {
+                const int hx = me.x.value - 1, hy = me.y.value - 1;
+                if (hx != m.hover_x || hy != m.hover_y) {
+                    m.hover_x = hx; m.hover_y = hy;
+                    return {std::move(m), C{}};   // model changed → frame repaints
+                }
+            }
+            return {std::move(m), C{}};
+        }
 
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {std::move(m), C{}}; }
@@ -1135,6 +1151,13 @@ struct App {
         fold(static_cast<std::uint64_t>(m.detail));
         fold(static_cast<std::uint64_t>(m.detail_scroll));
         fold(static_cast<std::uint64_t>(m.detail_pid));
+        // Hover cell only matters when a detail pane is open (it drives the
+        // per-row highlight). Folding it unconditionally would repaint the
+        // main dashboard on every mouse twitch for no visible change.
+        if (m.detail != ui::Detail::None) {
+            fold(static_cast<std::uint64_t>(m.hover_x + 1));
+            fold(static_cast<std::uint64_t>(m.hover_y + 1));
+        }
         fold(m.show_help ? 1 : 0);
         fold(static_cast<std::uint64_t>(m.help_scroll));
         fold(static_cast<std::uint64_t>(m.verdict_pulse));
@@ -1206,7 +1229,7 @@ struct App {
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
             return DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
-                              m.pending ? &*m.pending : nullptr};
+                              m.pending ? &*m.pending : nullptr, m.hover_x, m.hover_y};
         }
 
         const Snapshot& s = m.snap;

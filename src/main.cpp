@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
                          // unchanged frames, so a static screen renders ~0 fps
                          // and idle CPU stays near zero.
         .mouse = true,
+        .hover_motion = true,   // report bare hover so detail rows highlight
         .mode  = maya::Mode::Fullscreen,
     });
     return 0;
