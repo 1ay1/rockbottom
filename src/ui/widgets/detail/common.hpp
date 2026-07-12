@@ -624,10 +624,26 @@ inline std::vector<Element> two_col(std::vector<Element> left,
             const int cw = std::min(half, kColDesign);
             std::vector<Element> lcol(sl->begin(), sl->end());
             std::vector<Element> rcol(sr->begin(), sr->end());
-            return (h(
+            Element cols = (h(
                 v(std::move(lcol)) | width(cw),
                 text("  ") | nowrap,
-                v(std::move(rcol)) | width(cw),
+                v(std::move(rcol)) | width(cw)
+            )).build();
+            // On a genuinely ULTRA-wide screen the two capped columns would
+            // otherwise sit pinned LEFT with the entire surplus dumped as a
+            // right-hand VOID (>110 empty cols at 300w). CENTER the block so
+            // the margin splits evenly and the content reads as a composed
+            // slab, not debris shoved against the left edge. A modest surplus
+            // still left-anchors (centering a near-full pair only jitters it).
+            const int used = cw * 2 + kGutter;
+            if (w - used >= 16)
+                return (h(
+                    Element{blank()} | grow(1),
+                    std::move(cols),
+                    Element{blank()} | grow(1)
+                )).build();
+            return (h(
+                std::move(cols),
                 Element{blank()} | grow(1)
             )).build();
         },
