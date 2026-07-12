@@ -105,14 +105,29 @@ inline Element kv3(std::string k1, std::string v1, maya::Color c1,
         for (const auto& c : cs) if (!c.k.empty()) ++n;
         return std::max(1, n);
     };
+    // A label:value pair reads at ~30 cells (14 rail + 2 gap + ~14 value).
+    // CAP the column at this — on a 200-col ultrawide, w/3 would stretch each
+    // pair across ~66 cells, floating the value ~50 cells from its label and
+    // opening yawning gulfs between the three pairs (they'd read as scattered
+    // debris, not one strip). Instead the pairs stay grouped tight and the
+    // surplus width becomes quiet trailing space — the eye tracks a compact
+    // block, not a sparse line. A trailing grow(1) spacer absorbs the slack.
+    constexpr int kColCap = 30;
     maya::ComponentElement ce{
-        .render = [cells, cols_for](int w, int) -> Element {
+        .render = [cells, cols_for, kColCap](int w, int) -> Element {
             using namespace maya::dsl;
             const int cols = cols_for(w);
-            const int cw = std::max(20, w / cols);
+            const int cw = std::clamp(w / cols, 20, kColCap);
             std::vector<Element> lines;
             std::vector<Element> row;
             int in_row = 0;
+            auto flush = [&] {
+                // Left-anchor the grouped pairs; slack goes to a trailing
+                // spacer so pairs never drift apart across a wide pane.
+                row.push_back((Element{blank()} | grow(1)).build());
+                lines.push_back((h(std::move(row))).build());
+                row.clear(); in_row = 0;
+            };
             for (std::size_t i = 0; i < cells.size(); ++i) {
                 const auto& cell = cells[i];
                 // Skip blank spacers when reflowed — they only exist to hold
@@ -126,12 +141,9 @@ inline Element kv3(std::string k1, std::string v1, maya::Color c1,
                     text(cell.k) | nowrap | fgc(pal::dim) | width(14),
                     text(cell.v) | clip | Bold | fgc(cell.c) | grow(1)
                 ) | gap(2) | width(cw)).build());
-                if (++in_row == cols) {
-                    lines.push_back((h(std::move(row))).build());
-                    row.clear(); in_row = 0;
-                }
+                if (++in_row == cols) flush();
             }
-            if (!row.empty()) lines.push_back((h(std::move(row))).build());
+            if (!row.empty()) flush();
             if (lines.empty()) lines.push_back(blank());
             if (lines.size() == 1) return std::move(lines.front());
             return (v(std::move(lines))).build();
