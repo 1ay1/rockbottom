@@ -212,7 +212,12 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             rpk = std::max(rpk, arx[static_cast<std::size_t>(i)]);
             tpk = std::max(tpk, atx[static_cast<std::size_t>(i)]);
         }
-        const float shared_pk = std::max(rpk, tpk);
+        // 25% headroom above the true peak: without it the busiest sample
+        // pins to the very top row and a sustained burst fills the whole
+        // graph as a solid wall with no shape. The padded ceiling leaves sky
+        // above the crest so the trace reads as a mountain. The y-axis is
+        // labelled with this SAME padded top so the scale stays honest.
+        const float shared_pk = std::max(rpk, tpk) * 1.25f;
         std::array<float, 48> rn{}, tn{};
         for (int i = 0; i < hlen && i < 48; ++i) {
             rn[static_cast<std::size_t>(i)] = arx[static_cast<std::size_t>(i)] / shared_pk;

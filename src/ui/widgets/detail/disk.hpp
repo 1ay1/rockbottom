@@ -82,7 +82,11 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     norm48(s.disk_io.write_history.data(), s.disk_io.hist_len, &wpk);
     // Re-normalize both to a SHARED peak so read fill and write overlay are
     // on the same scale (norm48 peaks each series independently otherwise).
-    const float shared_pk = std::max({rpk, wpk, 1.0f});
+    // 25% headroom above the true peak keeps the busiest sample off the top
+    // row — without it a single spike (or a sustained burst) pins the trace
+    // to the ceiling and the fill becomes a shapeless wall. The y-axis reads
+    // this SAME padded top so the labelled scale stays honest.
+    const float shared_pk = std::max({rpk, wpk, 1.0f}) * 1.25f;
     std::array<float, 48> rds{}, wrs{};
     for (int i = 0; i < s.disk_io.hist_len && i < 48; ++i) {
         rds[static_cast<std::size_t>(i)] = s.disk_io.read_history[static_cast<std::size_t>(i)] / shared_pk;
