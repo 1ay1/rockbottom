@@ -56,11 +56,20 @@ struct Ctx {
         c.tall = h >= 30;
         // Frame chrome: panel border(2) + panel padding(2) + hint(1) = 5 rows.
         c.body_h = std::max(3, h - 5);
-        // Hero graph height: keep it MODERATE so a low-load trace still reads.
-        // In two-column mode the columns share the height, so the graph can be
-        // a touch shorter; either way it never balloons to fill a tall screen.
-        c.graph_h = c.ultrawide ? std::clamp(h - 24, 5, 9)
-                                : std::clamp(h - 22, 5, 10);
+        // Hero graph height. On a SHORT pane keep it moderate so a low-load
+        // trace still reads and the sections below it stay above the fold.
+        // On a TALL pane, though, a fixed ~9-row graph strands 20+ empty rows
+        // beneath the content (content-light panes like DISK/GPU used barely
+        // a third of a 50-row screen). A full-width area graph reads BETTER
+        // with more vertical resolution, not worse — the "thin line in an
+        // empty sky" risk is about WIDTH, and these graphs span the pane. So
+        // let the graph claim a share of the surplus height above a ~30-row
+        // baseline, capped so it never eats the whole screen. In two-column
+        // mode the columns share height, so bias a touch shorter.
+        const int base = c.ultrawide ? std::clamp(h - 24, 5, 9)
+                                     : std::clamp(h - 22, 5, 10);
+        const int surplus = std::max(0, h - 30);
+        c.graph_h = std::min(22, base + surplus / 2);
         return c;
     }
 };
