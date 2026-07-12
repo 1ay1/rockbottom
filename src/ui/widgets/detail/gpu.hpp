@@ -174,7 +174,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
                 const double frac = g.mem_total.value ? Ratio::of(p.mem, g.mem_total).v : 0;
-                R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                R.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
                                      frac, pal::gpu_ac,
                                      humanize_bytes(p.mem), pal::gpu_ac, 10));
             }

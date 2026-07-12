@@ -46,7 +46,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         // Family strip: parent (with its name if it's in the table), owner, age.
         std::string parent = p.ppid > 0 ? std::to_string(p.ppid) : "?";
         for (const auto& q : s.procs)
-            if (q.pid == p.ppid) { parent += " " + std::string(fmt::clip(q.name, 18)); break; }
+            if (q.pid == p.ppid) { parent += " " + maya::truncate_end(q.name, 18); break; }
         std::uint64_t now = 0;
         std::string age_txt = "n/a";
         if (p.start_sec > 0) {
@@ -190,7 +190,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
             std::vector<std::string> chain;
             const ProcInfo* cur = &p;
             for (int hop = 0; hop < 5 && cur; ++hop) {
-                chain.push_back(std::string(fmt::clip(cur->name, 20)) +
+                chain.push_back(maya::truncate_end(cur->name, 20) +
                                 " (" + std::to_string(cur->pid) + ")");
                 auto it = by_pid.find(cur->ppid);
                 cur = (cur->ppid > 0 && it != by_pid.end() && it->second != cur)
@@ -225,7 +225,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
                 const ProcInfo* c = kids[static_cast<std::size_t>(i)];
                 const double f = std::clamp((c->cpu / 100.0) / kmax, 0.0, 1.0);
                 b.push_back(rank_row(
-                    i + 1, std::to_string(c->pid), std::string(fmt::clip(c->name, 22)),
+                    i + 1, std::to_string(c->pid), maya::truncate_end(c->name, 22),
                     f, load_color(std::clamp(c->cpu / 100.0, 0.0, 1.0)),
                     fmt::fixed1(c->cpu) + "%", c->cpu > 25 ? pal::hot : pal::label, 8,
                     humanize_bytes(c->rss), pal::mem_ac, 10));

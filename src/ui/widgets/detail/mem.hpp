@@ -95,7 +95,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
                           : avail_f > 0.1 ? pal::hot : pal::crit;
     L.push_back(kv3(
         "available", humanize_bytes(m.available), avc,
-        "of total", fmt::pct(avail_f), avc,
+        "free of ram", fmt::pct(avail_f), avc,
         "total ram", humanize_bytes(m.total), pal::text));
     L.push_back(verdict(av, avc));
     L.push_back(gap_row());
@@ -150,7 +150,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         }
         L.push_back(kv3(
             "reclaimable", humanize_bytes(Bytes{reclaimable}), pal::teal,
-            "of total", fmt::pct(Ratio::of(Bytes{reclaimable}, m.total).v), pal::dim,
+            "% of ram", fmt::pct(Ratio::of(Bytes{reclaimable}, m.total).v), pal::dim,
             "available", humanize_bytes(m.available), avc));
         L.push_back(gap_row());
     }
@@ -195,7 +195,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
                             "top " + std::to_string(show)));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
-            R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+            R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(maya::truncate_end(p.name, 22)),
                                  p.mem_share.v, pal::mem_ac,
                                  fmt::pct_pad(p.mem_share.v), pal::mem_ac, 6,
                                  humanize_bytes(p.rss), pal::label, 10));

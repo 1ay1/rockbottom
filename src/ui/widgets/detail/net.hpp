@@ -85,7 +85,7 @@ inline maya::TableRow conn_table_row(const Connection& c, bool with_proto) {
              pid = c.pid](int w) -> TableCell {
                 const std::string tail = " (" + std::to_string(pid) + ")";
                 const int room = std::max(2, w - static_cast<int>(tail.size()));
-                return {fmt::clip(name, static_cast<std::size_t>(room)) + tail};
+                return {maya::truncate_end(name, room) + tail};
             }));
     } else {
         row.cells.emplace_back("\xe2\x80\x94");   // —
@@ -220,7 +220,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         auto txn = norm48(ni.tx_history.data(), ni.hist_len);
         const double rxpk = hist_peak(ni.rx_history.data(), ni.hist_len);
         const double txpk = hist_peak(ni.tx_history.data(), ni.hist_len);
-        ifcol.push_back(section(std::string(fmt::clip(ni.name, 14)), pal::net_ac,
+        ifcol.push_back(section(maya::truncate_end(ni.name, 14), pal::net_ac,
                             ni.up ? "● up" : "○ down"));
         if (!ni.ip4.empty() || !ni.mac.empty()) {
             std::vector<Element> idr;

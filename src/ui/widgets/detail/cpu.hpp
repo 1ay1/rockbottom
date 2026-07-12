@@ -217,7 +217,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             const double f = std::clamp(p.cpu / 100.0, 0.0, 1.0);
             char pct[16]; std::snprintf(pct, sizeof pct, "%5.1f%%", p.cpu);
-            R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+            R.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
                                  f, pal::cpu_ac,
                                  pct, load_color(f), 7));
         }

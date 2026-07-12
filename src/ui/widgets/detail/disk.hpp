@@ -39,7 +39,7 @@ inline Element build_fs_line(std::string mount, maya::Color mount_c,
             std::vector<Element> row;
             Style mst = Style{}.with_fg(mount_c);
             if (!header) mst = mst.with_bold();
-            row.push_back((text(std::string(fmt::clip(mount, kMountW)), mst)
+            row.push_back((text(maya::truncate_end(mount, kMountW), mst)
                            | nowrap | width(kMountW + 1)).build());
             if (meter)
                 row.push_back(Element{Meter{*meter}.fill().color(pal::disk_ac)} | grow(1));
@@ -154,7 +154,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         }
         std::string fstag = d.fstype + (d.read_only ? " ro" : "");
         R.push_back(build_fs_line(
-            std::string(fmt::clip(d.mount, 15)), pal::text, f, fmt::pct_pad(f),
+            maya::truncate_end(d.mount, 15), pal::text, f, fmt::pct_pad(f),
             load_color(f),
             {{std::string(humanize_bytes(freeb)), f > 0.9 ? pal::crit : pal::good, 8},
              {std::string(humanize_bytes(d.used)) + " / " + std::string(humanize_bytes(d.total)), pal::label, 13},
@@ -210,7 +210,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             for (int i = 0; i < show; ++i) {
                 const ProcInfo& p = *top[static_cast<std::size_t>(i)];
                 const double rate = p.io_read.per_sec + p.io_write.per_sec;
-                R.push_back(rank_row(i + 1, std::to_string(p.pid), std::string(fmt::clip(p.name, 22)),
+                R.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
                                      top_rate > 0 ? rate / top_rate : 0, pal::disk_ac,
                                      "▼ " + std::string(humanize_rate(p.io_read)), pal::teal, 12,
                                      "▲ " + std::string(humanize_rate(p.io_write)), pal::hot, 12));
