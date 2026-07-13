@@ -65,6 +65,39 @@ public:
         return detail::Ctx::make(w_, h_, scroll_).body_h;
     }
 
+    // The largest scroll offset (in ROWS) that shows new content — computed
+    // exactly the way the scroller windows the body, so the app clamps in the
+    // SAME unit the scroller now scrolls in (ROWS). The scroller lays the whole
+    // body out as one tall column and clips it to the viewport height with a
+    // scroll_y row offset; the ceiling is total measured rows minus the
+    // viewport. (The OLD element-count ceiling was in the wrong unit and, once
+    // a tall hero graph became the top element, pinned it to 0 — the content
+    // below the graph was unreachable. Rows fix that.)
+    [[nodiscard]] int max_scroll() const {
+        using namespace maya;
+        detail::Ctx cx = detail::Ctx::make(w_, h_, scroll_);
+        std::vector<Element> rows = body();
+        if (rows.empty()) return 0;
+
+        // Mirror the scroller's width math: ultrawide non-proc panes reflow
+        // into two columns and get the full slot (cap_width=false); everything
+        // else caps at the reading design width. Slot inner width = pane width
+        // minus panel border(2) + padding(2) + scrollbar gutter(2).
+        const bool cap_width = !(cx.ultrawide && which_ != Detail::Proc);
+        const int gutter_w = std::max(1, w_ - 2 - 2 - 2);
+        constexpr int kDesign = 104;
+        const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
+
+        long long total_rows = 0;
+        for (const auto& e : rows)
+            total_rows += std::max(1, measure_element(e, inner_w).height.value);
+
+        return std::max(0, static_cast<int>(total_rows) - std::max(1, cx.body_h));
+    }
+
+    // Does the body overflow the viewport at all? (hint bar affordance.)
+    [[nodiscard]] bool scrollable() const { return max_scroll() > 0; }
+
     [[nodiscard]] maya::Element build() const {
         using namespace maya;
         using namespace maya::dsl;
@@ -218,7 +251,7 @@ private:
             {Detail::Disk, "5", "◇", "disk", pal::disk_ac},
             {Detail::Proc, "6", "≡", "proc", pal::proc_ac},
         };
-        const bool scrollable = content_rows() > viewport_rows();
+        const bool scrollable = this->scrollable();
 
         // density 2 = chips + labels · 1 = tighter, keys + labels · 0 = keys.
         auto bar = [&](int density) -> Element {

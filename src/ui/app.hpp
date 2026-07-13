@@ -461,6 +461,10 @@ struct App {
         m.sampling = true;
         auto sampler = m.sampler;   // shared_ptr copy: outlives this update()
         SortKey sort = m.sort;
+        // The process detail pane is the sole consumer of the expensive
+        // per-proc status/fd reads; tell the sampler which pid (if any) is
+        // open so it reads those files for that ONE process instead of all.
+        sampler->set_detail_pid(m.detail == ui::Detail::Proc ? m.detail_pid : 0);
         return maya::Cmd<Msg>::task_isolated(
             [sampler, sort](std::function<void(Msg)> dispatch) {
                 dispatch(Sampled{sampler->sample(sort, kTopN)});
@@ -1013,9 +1017,8 @@ struct App {
             if (cmax >= 0) { m.detail_scroll = std::clamp(m.detail_scroll, 0, cmax); return; }
         }
         const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
-        ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, 0};
-        int max_scroll = std::max(0, pane.content_rows() - pane.viewport_rows());
-        m.detail_scroll = std::clamp(m.detail_scroll, 0, max_scroll);
+        ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
+        m.detail_scroll = std::clamp(m.detail_scroll, 0, pane.max_scroll());
     }
 
     static void clamp_help_scroll(Model& m) {

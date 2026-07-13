@@ -722,12 +722,21 @@ inline std::vector<Element> hero_split(std::vector<Element> hero,
 
 // ── SCROLLER ──────────────────────────────────────────────────────────────────────────────
 // Take a full body (may be taller than the viewport) and window it to the
-// slot the layout actually hands us. `scroll` indexes ELEMENTS (the app's
-// scroll unit); the window packs elements until their MEASURED heights fill
-// the real slot — a 10-row hero graph counts as 10 rows, not 1, so nothing
-// is crushed by flex-shrink and nothing bleeds past the frame into the hint
-// bar. Heights come from measure_element over the real fragments at the
-// real width; the proportional scrollbar runs on rows, not element counts.
+// slot the layout hands us. `scroll` is a ROW offset (the app's scroll unit).
+//
+// ROW-GRANULAR: the whole body is laid out as one tall column, then a box
+// with overflow:Scroll + a fixed viewport height + scroll_y clips it to
+// [scroll, scroll+view_h) rows. This is the ONLY correct model here — the
+// old element-granular window packed whole elements, so a single tall hero
+// graph (16-28 rows on a big terminal) either lurched the view a whole graph
+// at a time OR, once it became the top element, pinned max_scroll so every
+// row of content beneath it was permanently UNREACHABLE. Clipping by row
+// scrolls smoothly one line at a time and always reaches the last row.
+//
+// scroll_y translates children UP inside the clip, so content above the fold
+// is hidden and the bottom becomes reachable. A row-basis scrollbar rides
+// the right gutter. Heights come from measure_element at the SAME width we
+// paint at, so window math and paint can never disagree.
 inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
                         maya::Color ac, bool cap_width = true, int design_w = 104) {
     using namespace maya; using namespace maya::dsl;
@@ -736,7 +745,6 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
     maya::ComponentElement ce{
         .render = [shared, scroll_in, ac, cap_width, design_w](int slot_w, int slot_h) -> Element {
             const auto& all = *shared;
-            const int total = static_cast<int>(all.size());
             const int view_h = std::max(1, slot_h);
             const int gutter_w = std::max(1, slot_w - 2);  // minus " "+bar gutter
 
@@ -754,93 +762,74 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             const int kDesign = design_w > 0 ? design_w : kDesignDefault;
             const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
 
-            // Measure every element at the SAME width we'll paint at — window
-            // and paint can never disagree.
-            std::vector<int> rows(static_cast<std::size_t>(total), 1);
+            // Total content height at the width we'll paint at.
             long long total_rows = 0;
-            for (int i = 0; i < total; ++i) {
-                rows[static_cast<std::size_t>(i)] = std::max(1,
-                    measure_element(all[static_cast<std::size_t>(i)], inner_w)
-                        .height.value);
-                total_rows += rows[static_cast<std::size_t>(i)];
-            }
+            for (const auto& e : all)
+                total_rows += std::max(1, measure_element(e, inner_w).height.value);
 
-            // Wrap the windowed column at the (possibly capped) width. When
-            // the slot is much WIDER than the reading cap (a single-column
-            // pane on a 130-150 col terminal that hasn't reached the two-col
-            // split), CENTER the block so the surplus reads as symmetric
-            // margin rather than a lopsided right-hand VOID beside the
-            // scrollbar. A small surplus still left-anchors (centering a
-            // near-full column just jitters it). The scrollbar always pins to
-            // the far right via the outer h-stack in the caller.
+            const int max_scroll = std::max(0, static_cast<int>(total_rows) - view_h);
+            const int start = std::clamp(scroll_in, 0, max_scroll);
+
+            // Center the (possibly capped) content block when the slot is much
+            // wider than the reading measure, else left-anchor. The scrollbar
+            // always pins far right via the outer h-stack below.
             const int pad_w = std::max(0, gutter_w - inner_w);
             const bool center = pad_w >= 12;
-            auto place = [&](std::vector<Element> col) -> Element {
-                Element body = (v(std::move(col)) | width(inner_w)).build();
-                if (pad_w <= 0) return (Element{std::move(body)} | grow(1)).build();
-                if (center)
-                    return (h(
-                        Element{blank()} | grow(1),
-                        Element{std::move(body)} | width(inner_w),
-                        Element{blank()} | grow(1)
-                    )).build();
-                return (h(
-                    Element{std::move(body)} | width(inner_w),
+
+            // The clipped viewport: a fixed-height box holding the full column,
+            // shifted up by `start` rows with overflow clipping. Built by hand
+            // (not the scroll() DSL pipe) so no ScrollState is needed — the
+            // box comment sanctions setting scroll_y/overflow directly for a
+            // custom scroll mechanism.
+            std::vector<Element> col(all.begin(), all.end());
+            Element column = (v(std::move(col)) | width(inner_w)).build();
+            BoxElement vp;
+            vp.overflow = Overflow::Scroll;
+            vp.layout.height = Dimension::fixed(view_h);
+            vp.layout.width  = Dimension::fixed(inner_w);
+            vp.layout.scroll_y = start;
+            vp.layout.align_self = Align::Start;  // don't let a Stretch parent
+                                                  // squeeze the column's height
+            vp.children.push_back(std::move(column));
+            Element viewport{std::move(vp)};
+
+            Element placed;
+            if (pad_w <= 0) {
+                placed = (Element{std::move(viewport)} | grow(1)).build();
+            } else if (center) {
+                placed = (h(
+                    Element{blank()} | grow(1),
+                    std::move(viewport),
                     Element{blank()} | grow(1)
                 )).build();
-            };
-
-            if (total_rows <= view_h) {
-                std::vector<Element> win(all.begin(), all.end());
-                return place(std::move(win));
+            } else {
+                placed = (h(
+                    std::move(viewport),
+                    Element{blank()} | grow(1)
+                )).build();
             }
 
-            // Last useful start element: the first index from which the tail
-            // still fills the viewport — scrolling past it just shows the
-            // same last page.
-            int max_start = total - 1;
-            {
-                long long tail = 0;
-                for (int i = total - 1; i >= 0; --i) {
-                    tail += rows[static_cast<std::size_t>(i)];
-                    if (tail >= view_h) { max_start = i; break; }
-                    max_start = i;
-                }
-            }
-            const int start = std::clamp(scroll_in, 0, max_start);
+            // No overflow: no scrollbar, hand back the placed viewport.
+            if (max_scroll <= 0)
+                return (Element{std::move(placed)} | grow(1)).build();
 
-            // Pack elements until the measured rows fill the slot.
-            std::vector<Element> win;
-            int used = 0;
-            for (int i = start; i < total && used < view_h; ++i) {
-                win.push_back(all[static_cast<std::size_t>(i)]);
-                used += rows[static_cast<std::size_t>(i)];
-            }
-
-            // Scrollbar on ROW basis.
-            long long rows_before = 0;
-            for (int i = 0; i < start; ++i)
-                rows_before += rows[static_cast<std::size_t>(i)];
-            const long long max_scroll_rows =
-                std::max<long long>(1, total_rows - view_h);
+            // Row-basis scrollbar.
             const int thumb = std::max(1,
                 static_cast<int>(static_cast<long long>(view_h) * view_h
                                  / std::max<long long>(1, total_rows)));
             const int track = std::max(0, view_h - thumb);
-            const int pos = static_cast<int>(
-                std::min<long long>(rows_before, max_scroll_rows)
-                * track / max_scroll_rows);
+            const int pos = max_scroll > 0 ? start * track / max_scroll : 0;
             std::vector<Element> barcol;
             for (int r = 0; r < view_h; ++r) {
                 const bool on = r >= pos && r < pos + thumb;
                 const char* g = r == 0 && start > 0 ? "\xe2\x96\xb2"
-                              : r == view_h - 1 && start < max_start ? "\xe2\x96\xbc"
+                              : r == view_h - 1 && start < max_scroll ? "\xe2\x96\xbc"
                               : on ? "\xe2\x96\x88" : "\xe2\x94\x82";
                 barcol.push_back((text(g) | nowrap | fgc(on ? ac : pal::faint)).build());
             }
 
             return (h(
-                place(std::move(win)) | grow(1),
+                std::move(placed) | grow(1),
                 text(" ") | nowrap,
                 v(std::move(barcol)) | width(1)
             )).build();
