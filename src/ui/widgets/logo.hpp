@@ -49,9 +49,8 @@ public:
             )).build();
         }
 
-        // Full block wordmark. A hand-set 5-row slab of the ten letters; the
-        // trailing mountain "falls" to a flat line — the rock hitting bottom.
-        static const std::array<const char*, 5> art = {
+        // Full block wordmark. A hand-set 3-row slab of the ten letters.
+        static const std::array<const char*, 3> art = {
             "█▀▄ █▀█ █▀▀ █ █ █▀▄ █▀█ ▀█▀ ▀█▀ █▀█ █▀▄▀█",
             "█▀▄ █ █ █   █▀▄ █▀▄ █ █  █   █   █ █ █ █ █",
             "▀ ▀ ▀▀▀ ▀▀▀ ▀ ▀ ▀▀▀ ▀▀▀  ▀   ▀   ▀▀▀ ▀   ▀",
