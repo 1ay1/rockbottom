@@ -17,11 +17,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace rockbottom {
@@ -116,31 +120,116 @@ void collect_nvidia(std::vector<GpuInfo>& out) {
     }
     if (out.empty()) return;
 
-    // Per-process VRAM (compute + graphics apps). Attribute to the first GPU
-    // since the free query doesn't tell us which card without more work.
-    std::string apps = run(
-        "nvidia-smi --query-compute-apps=pid,used_memory,name "
-        "--format=csv,noheader,nounits 2>/dev/null");
-    std::size_t ls = 0;
-    while (ls < apps.size()) {
-        std::size_t nl = apps.find('\n', ls);
-        if (nl == std::string::npos) nl = apps.size();
-        std::string line = apps.substr(ls, nl - ls);
-        ls = nl + 1;
-        if (trim(line).empty()) continue;
-        auto f = csv(line);
-        if (f.size() < 3) continue;
-        GpuProc gp;
-        gp.pid = static_cast<int>(num(f[0]));
-        gp.mem = Bytes{static_cast<std::uint64_t>(num(f[1])) * 1024 * 1024};
-        // The name field is a full path/cmdline — keep the basename word.
-        std::string n = f[2];
-        auto slash = n.find_last_of('/');
-        if (slash != std::string::npos) n = n.substr(slash + 1);
-        auto sp = n.find(' ');
-        if (sp != std::string::npos) n = n.substr(0, sp);
-        gp.name = n;
-        out.front().procs.push_back(std::move(gp));
+    // Per-process VRAM. Query BOTH compute apps (CUDA/OpenCL) and graphics apps
+    // (games, browsers, compositors, video players) — the compute-apps query
+    // alone misses every non-CUDA GPU user, which is most of them on a desktop.
+    // Attribute to the first GPU since these free queries don't name the card.
+    auto& procs = out.front().procs;
+    auto ingest_apps = [&](const char* query, char type) {
+        std::string apps = run(query);
+        std::size_t ls = 0;
+        while (ls < apps.size()) {
+            std::size_t nl = apps.find('\n', ls);
+            if (nl == std::string::npos) nl = apps.size();
+            std::string line = apps.substr(ls, nl - ls);
+            ls = nl + 1;
+            if (trim(line).empty()) continue;
+            auto f = csv(line);
+            if (f.size() < 3) continue;
+            const int pid = static_cast<int>(num(f[0]));
+            if (pid <= 0) continue;
+            const std::uint64_t mem =
+                static_cast<std::uint64_t>(num(f[1])) * 1024 * 1024;
+            // The name field is a full path/cmdline — keep the basename word.
+            std::string n = f[2];
+            auto slash = n.find_last_of('/');
+            if (slash != std::string::npos) n = n.substr(slash + 1);
+            auto sp = n.find(' ');
+            if (sp != std::string::npos) n = n.substr(0, sp);
+            // Merge: a pid can appear in BOTH lists (uses compute AND graphics)
+            // — keep one row, sum VRAM, mark type 'B'.
+            auto it = std::find_if(procs.begin(), procs.end(),
+                                   [&](const GpuProc& g) { return g.pid == pid; });
+            if (it != procs.end()) {
+                it->mem = Bytes{it->mem.value + mem};
+                if (it->type != type) it->type = 'B';
+                if (it->name.empty() && !n.empty()) it->name = n;
+            } else {
+                GpuProc gp;
+                gp.pid = pid;
+                gp.mem = Bytes{mem};
+                gp.name = n;
+                gp.type = type;
+                procs.push_back(std::move(gp));
+            }
+        }
+    };
+    ingest_apps("nvidia-smi --query-compute-apps=pid,used_memory,name "
+                "--format=csv,noheader,nounits 2>/dev/null", 'C');
+    ingest_apps("nvidia-smi --query-accounted-apps=pid,used_memory,name "
+                "--format=csv,noheader,nounits 2>/dev/null", 'C');
+    // Graphics apps aren't a --query-*; nvidia-smi lists them in the process
+    // table. pmon (below) is the reliable per-process source and also carries
+    // sm/enc/dec utilisation, so fold graphics + util in from a single pmon
+    // sample.
+
+    // ── nvidia-smi pmon: one sample, per-process sm%/mem/enc/dec ────────────
+    // Columns: gpu pid type sm mem enc dec [jpg ofa] command. Older drivers
+    // omit the trailing engines; parse defensively by header where possible.
+    {
+        std::string pm = run("nvidia-smi pmon -c 1 2>/dev/null");
+        std::size_t ls = 0;
+        while (ls < pm.size()) {
+            std::size_t nl = pm.find('\n', ls);
+            if (nl == std::string::npos) nl = pm.size();
+            std::string line = pm.substr(ls, nl - ls);
+            ls = nl + 1;
+            std::string t = trim(line);
+            if (t.empty() || t[0] == '#') continue;   // header/comment rows
+            // Whitespace-split.
+            std::vector<std::string> col;
+            std::size_t i = 0;
+            while (i < t.size()) {
+                while (i < t.size() && std::isspace((unsigned char)t[i])) ++i;
+                std::size_t j = i;
+                while (j < t.size() && !std::isspace((unsigned char)t[j])) ++j;
+                if (j > i) col.push_back(t.substr(i, j - i));
+                i = j;
+            }
+            if (col.size() < 4) continue;
+            const int pid = static_cast<int>(num(col[1]));
+            if (pid <= 0) continue;   // '-' pids (idle) parse to 0
+            const char ptype = col.size() > 2 && !col[2].empty() ? col[2][0] : '?';
+            // sm mem enc dec are cols 3..6 on the common layout; '-' -> 0.
+            auto pc = [&](std::size_t k) -> double {
+                return k < col.size() && col[k] != "-" ? num(col[k]) / 100.0 : 0;
+            };
+            const double sm = pc(3), enc = pc(5), dec = pc(6);
+            // pmon col 4 = fb (framebuffer) MB used by this pid — the only
+            // VRAM source for graphics apps that never hit a --query list.
+            const std::uint64_t fb_mb =
+                col.size() > 4 && col[4] != "-"
+                    ? static_cast<std::uint64_t>(num(col[4])) : 0;
+            std::string cmd = col.empty() ? "" : col.back();
+            auto it = std::find_if(procs.begin(), procs.end(),
+                                   [&](const GpuProc& g) { return g.pid == pid; });
+            if (it == procs.end()) {
+                GpuProc gp;
+                gp.pid = pid;
+                gp.name = cmd;
+                gp.type = ptype == 'C' || ptype == 'G' ? ptype : '?';
+                procs.push_back(std::move(gp));
+                it = std::prev(procs.end());
+            }
+            it->sm = Ratio{sm};
+            it->enc = Ratio{enc};
+            it->dec = Ratio{dec};
+            it->has_util = true;
+            if (it->mem.value == 0 && fb_mb)
+                it->mem = Bytes{fb_mb * 1024 * 1024};
+            if (it->name.empty()) it->name = cmd;
+            if (it->type == '?' && (ptype == 'C' || ptype == 'G')) it->type = ptype;
+        }
     }
 }
 
@@ -233,6 +322,74 @@ void collect_intel(std::vector<GpuInfo>& out) {
     }
 }
 
+// ── DRM fdinfo: per-process VRAM + engine time (AMD, Intel, any modern DRM) ──
+// The kernel exposes each process's GPU usage through /proc/<pid>/fdinfo/<fd>
+// on any open DRM device. Keys of interest (present since ~5.14, universal on
+// amdgpu/i915/xe):
+//   drm-driver: amdgpu | i915 | ...
+//   drm-memory-vram / drm-total-vram: bytes of VRAM this fd holds
+//   drm-engine-<class>: nanoseconds of engine time (cumulative)
+// One process opens the DRM node many times (many fds) — we take the MAX vram
+// across its fds (they alias the same allocation), not the sum. This is how
+// nvtop attributes AMD/Intel apps, and it needs no root.
+struct FdinfoProc {
+    std::uint64_t vram = 0;
+    std::uint64_t gfx_ns = 0;   // summed engine-time across classes
+    std::string   name;
+};
+
+void scan_drm_fdinfo(const std::string& driver_match,
+                     std::map<int, FdinfoProc>& acc) {
+    std::error_code ec;
+    for (const auto& pe : fs::directory_iterator("/proc", ec)) {
+        if (ec) break;
+        const std::string base = pe.path().filename().string();
+        if (base.empty() || !std::isdigit((unsigned char)base[0])) continue;
+        const int pid = std::atoi(base.c_str());
+        if (pid <= 0) continue;
+        const std::string fddir = pe.path().string() + "/fdinfo";
+        std::error_code ec2;
+        auto dir = fs::directory_iterator(fddir, fs::directory_options::skip_permission_denied, ec2);
+        if (ec2) continue;
+        FdinfoProc found;
+        bool matched = false;
+        for (const auto& fe : dir) {
+            std::string body = slurp(fe.path().string());
+            if (body.find("drm-driver") == std::string::npos) continue;
+            if (body.find(driver_match) == std::string::npos) continue;
+            matched = true;
+            // Parse the small key: value block line by line.
+            std::uint64_t vram = 0, eng = 0;
+            std::size_t p = 0;
+            while (p < body.size()) {
+                std::size_t nl = body.find('\n', p);
+                if (nl == std::string::npos) nl = body.size();
+                std::string_view ln(body.data() + p, nl - p);
+                p = nl + 1;
+                auto starts = [&](const char* k) {
+                    return ln.size() > std::strlen(k) &&
+                           ln.compare(0, std::strlen(k), k) == 0;
+                };
+                auto val_u64 = [&]() -> std::uint64_t {
+                    std::size_t c = ln.find(':');
+                    if (c == std::string::npos) return 0;
+                    return std::strtoull(std::string(ln.substr(c + 1)).c_str(), nullptr, 10);
+                };
+                if (starts("drm-memory-vram") || starts("drm-total-vram"))
+                    vram = std::max(vram, val_u64() * 1024);   // reported in KiB
+                else if (starts("drm-engine-"))
+                    eng += val_u64();
+            }
+            found.vram = std::max(found.vram, vram);
+            found.gfx_ns += eng;
+        }
+        if (!matched) continue;
+        if (found.name.empty())
+            found.name = trim(first_line(slurp(pe.path().string() + "/comm")));
+        acc[pid] = found;
+    }
+}
+
 }  // namespace
 
 void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
@@ -242,6 +399,27 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
         collect_nvidia(gpus);
     collect_amd(gpus);
     collect_intel(gpus);
+
+    // AMD / Intel per-process VRAM via DRM fdinfo (nvidia already has its own
+    // apps list from pmon/query). Attribute to the first matching-vendor GPU.
+    for (auto& g : gpus) {
+        if (g.vendor != "AMD" && g.vendor != "Intel") continue;
+        if (!g.procs.empty()) continue;
+        const char* drv = g.vendor == "AMD" ? "amdgpu" : "i915";
+        std::map<int, FdinfoProc> acc;
+        scan_drm_fdinfo(drv, acc);
+        if (acc.empty() && g.vendor == "Intel") { scan_drm_fdinfo("xe", acc); }
+        for (auto& [pid, fp] : acc) {
+            if (fp.vram == 0 && fp.gfx_ns == 0) continue;
+            GpuProc gp;
+            gp.pid = pid;
+            gp.name = fp.name;
+            gp.mem = Bytes{fp.vram};
+            gp.type = 'G';
+            g.procs.push_back(std::move(gp));
+        }
+        break;   // one integrated/discrete card owns the fdinfo attribution
+    }
 
     // Attach rolling history per GPU index (survives across ticks).
     for (std::size_t i = 0; i < gpus.size(); ++i) {
@@ -256,10 +434,17 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
         gpus[i].hist_len = len;
         gpus[i].mem_hist_len = len;
 
-        // Keep only the top VRAM consumers, biggest first.
+        // Keep the top GPU processes. Sort by live GPU-compute % first (the
+        // apps actually working the card), then by VRAM held — so a busy
+        // process outranks a big-but-idle one, and idle VRAM hogs still show.
         auto& ps = gpus[i].procs;
-        std::sort(ps.begin(), ps.end(),
-                  [](const GpuProc& a, const GpuProc& b) { return a.mem.value > b.mem.value; });
+        std::sort(ps.begin(), ps.end(), [](const GpuProc& a, const GpuProc& b) {
+            const double au = a.has_util ? a.sm.v : -1;
+            const double bu = b.has_util ? b.sm.v : -1;
+            if ((au > 0.005) != (bu > 0.005)) return au > bu;   // any-work first
+            if (std::abs(au - bu) > 0.01)     return au > bu;    // then by work
+            return a.mem.value > b.mem.value;                    // then by VRAM
+        });
         if (ps.size() > 16) ps.resize(16);
     }
 }

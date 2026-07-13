@@ -155,12 +155,19 @@ struct Battery {
     bool charging = false;
 };
 
-// A process holding GPU memory / doing GPU work (from nvidia-smi compute-apps
-// or the DRM fdinfo scan). `mem` is bytes of VRAM the process has mapped.
+// A process holding GPU memory / doing GPU work (from nvidia-smi compute- and
+// graphics-apps, nvidia-smi pmon, or the DRM fdinfo scan). `mem` is bytes of
+// VRAM the process has mapped; `sm` is its share of GPU compute (0..1) where
+// the backend can attribute it per-process.
 struct GpuProc {
     int         pid = 0;
     std::string name;
     Bytes       mem{};
+    Ratio       sm{};        // per-process GPU/compute busy 0..1, 0 if unknown
+    Ratio       enc{};       // per-process encoder busy 0..1, 0 if unknown
+    Ratio       dec{};       // per-process decoder busy 0..1, 0 if unknown
+    char        type = '?';  // 'C' compute · 'G' graphics · 'B' both · '?' unknown
+    bool        has_util = false;  // true when sm/enc/dec are real (pmon/fdinfo)
 };
 
 // One GPU. Fields that a given vendor can't report stay at their sentinel

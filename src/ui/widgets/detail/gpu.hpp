@@ -169,17 +169,41 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         L.push_back(gap_row());
 
-        // ── VRAM consumers ──────────────────────────────────────────
+        // ── GPU processes ───────────────────────────────────────────
+        // Not just "who holds VRAM" — who's actually WORKING the GPU. Each row
+        // gets a type badge (C compute · G graphics · B both), the VRAM it
+        // holds, and — where the backend attributes it per-process — its live
+        // GPU-compute %. Sorted so the busiest (or biggest) rise to the top.
         if (!g.procs.empty()) {
+            const bool any_util = std::any_of(g.procs.begin(), g.procs.end(),
+                [](const GpuProc& p) { return p.has_util; });
             const int show = std::min<int>(cx.tall ? 8 : 5, static_cast<int>(g.procs.size()));
             R.push_back(section("USING THIS GPU", pal::gpu_ac,
-                                "top " + std::to_string(show) + " · vram"));
+                                std::string("top ") + std::to_string(show) +
+                                (any_util ? " · gpu% · vram" : " · vram")));
             for (int i = 0; i < show; ++i) {
                 const GpuProc& p = g.procs[static_cast<std::size_t>(i)];
                 const double frac = g.mem_total.value ? Ratio::of(p.mem, g.mem_total).v : 0;
-                R.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
-                                     frac, pal::gpu_ac,
-                                     humanize_bytes(p.mem), pal::gpu_ac, 10));
+                const char badge = p.type == 'B' ? 'B' : p.type == 'G' ? 'G'
+                                 : p.type == 'C' ? 'C' : ' ';
+                std::string nm = maya::truncate_end(p.name, 20);
+                if (badge != ' ') nm = std::string(1, badge) + " " + nm;
+                // Primary value = VRAM. When utilisation is known, the meter
+                // tracks GPU-busy (what's *working* the card) and the util %
+                // rides the v2 column; otherwise the meter tracks VRAM share.
+                if (any_util) {
+                    const std::string util = p.has_util
+                        ? fmt::pct(p.sm.v) : "—";
+                    R.push_back(rank_row(i + 1, std::to_string(p.pid), nm,
+                                         p.has_util ? p.sm.v : frac,
+                                         p.sm.v > 0.5 ? pal::hot : pal::gpu_ac,
+                                         util, p.sm.v > 0.5 ? pal::hot : pal::label, 5,
+                                         std::string(humanize_bytes(p.mem)), pal::gpu_ac, 9));
+                } else {
+                    R.push_back(rank_row(i + 1, std::to_string(p.pid), nm,
+                                         frac, pal::gpu_ac,
+                                         std::string(humanize_bytes(p.mem)), pal::gpu_ac, 10));
+                }
             }
         }
 
