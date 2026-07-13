@@ -250,8 +250,54 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         "lifetime ↑", humanize_bytes(agg_txt), pal::label,
         "packets", fmt::count(agg_rpps + agg_tpps) + "/s", pal::label)));
     // NOTE: net_conn_scroll_max assumes a FIXED aggregate height, so the
-    // optional error line only shows in the STACKED (non-split) layout, where
-    // scroll math counts rows directly.
+    // always-on verdict + optional error line only render in the STACKED
+    // (non-split) layout, where scroll math counts rows directly. In split
+    // mode the compact aggregate band stays exactly agg_rows tall.
+    if (!split) {
+        // Read the traffic for you, like every other pane. There's no NIC
+        // link-speed to compute "% saturated" honestly, so speak in absolute
+        // rates + a burst signal: compare the newest sample to the recent
+        // baseline (median-ish of the summed history) so a sudden spike reads
+        // as a burst instead of hiding in a rising average.
+        const double busy = agg_rx + agg_tx;                 // B/s, both directions
+        double base = 0; int nb = 0;
+        {
+            // baseline = mean of the summed rx+tx history, excluding the last
+            // few (freshest) samples so "now" is compared against "before".
+            std::array<float, 48> tot{};
+            int hlen = 0;
+            for (const NetIface& ni : s.nets) {
+                hlen = std::max(hlen, ni.hist_len);
+                for (int i = 0; i < ni.hist_len && i < 48; ++i)
+                    tot[static_cast<std::size_t>(i)] +=
+                        ni.rx_history[static_cast<std::size_t>(i)] +
+                        ni.tx_history[static_cast<std::size_t>(i)];
+            }
+            for (int i = 0; i < hlen - 3 && i < 48; ++i) { base += tot[static_cast<std::size_t>(i)]; ++nb; }
+            if (nb) base /= nb;
+        }
+        const bool bursting = nb >= 8 && busy > 512.0 * 1024 && busy > base * 4;
+
+        std::string msg; maya::Color vc;
+        if (up == 0) {
+            msg = "○ every link is down \u2014 the machine is offline"; vc = pal::dim;
+        } else if (bursting) {
+            msg = "\u25b2 traffic just spiked \u2014 " + std::string(humanize_rate(ByteRate{busy})) +
+                  ", well above the recent baseline (a burst, a download, a backup kicking off)";
+            vc = pal::hot;
+        } else if (busy > 80.0 * 1024 * 1024) {
+            msg = "\u25b2 moving serious data \u2014 " + std::string(humanize_rate(ByteRate{busy})) +
+                  " across all links; if things feel slow, this is why";
+            vc = pal::hot;
+        } else if (busy > 1.0 * 1024 * 1024) {
+            msg = "\u25cf active \u2014 " + std::string(humanize_rate(ByteRate{busy})) +
+                  " flowing, nothing straining the network";
+            vc = pal::good;
+        } else {
+            msg = "\u25cf quiet \u2014 barely any traffic; the network is idle"; vc = pal::good;
+        }
+        b.push_back(verdict(msg, vc));
+    }
     if ((agg_errs || agg_drops) && !split) {
         b.push_back(kv3(
             "errors", fmt::count(static_cast<double>(agg_errs)), agg_errs ? pal::hot : pal::dim,
