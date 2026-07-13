@@ -67,12 +67,26 @@ struct Ctx {
         // with more vertical resolution, not worse — the "thin line in an
         // empty sky" risk is about WIDTH, and these graphs span the pane. So
         // let the graph claim a share of the surplus height above a ~30-row
-        // baseline, capped so it never eats the whole screen. In two-column
-        // mode the columns share height, so bias a touch shorter.
+        // baseline. In two-column mode the columns share height, so bias a
+        // touch shorter.
         const int base = c.ultrawide ? std::clamp(h - 24, 5, 9)
                                      : std::clamp(h - 22, 5, 10);
         const int surplus = std::max(0, h - 30);
-        c.graph_h = std::min(22, base + surplus / 2);
+        // Ceiling: on a genuinely TALL pane the old flat cap of 22 rows left a
+        // content-light pane (DISK/GPU with a few filesystems / engines)
+        // stranding 25-30 blank rows below the fold on a 74-row phone. The
+        // graph is the one element that reads BETTER filling that space, so
+        // let the ceiling track the body height: up to ~48% of the scrollable
+        // viewport, floored at the historic 22 so nothing REGRESSES on a
+        // shorter pane. The scroller still windows everything, so a content-
+        // heavy pane simply scrolls — the taller graph never hides sections.
+        const int cap = std::max(22, c.body_h * 48 / 100);
+        // Claim ~70% of the surplus above the baseline (was 50%): with the
+        // body-relative ceiling above, taking a bigger bite genuinely fills a
+        // tall phone instead of leaving the graph throttled mid-screen while
+        // rows below sit empty. On short/normal panes surplus is small, so
+        // this still resolves to the modest historic height.
+        c.graph_h = std::min(cap, base + surplus * 7 / 10);
         return c;
     }
 };

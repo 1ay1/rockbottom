@@ -701,7 +701,10 @@ struct App {
                 if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
                 if (key(ev, 'X')) return arm_kill_all(std::move(m), SIGTERM);
                 if (key(ev, 'T')) return arm_kill_subtree(std::move(m), SIGTERM);
-                if (key(ev, 'l')) return open_sigmenu(std::move(m));
+                // 'l' is the family-nav key in this pane (→ busiest child), so
+                // the signal picker moves to 's' here — 'l' could never reach
+                // open_sigmenu below it. 'r' opens the renice dial.
+                if (key(ev, 's')) return open_sigmenu(std::move(m));
                 if (key(ev, 'r')) return open_nicemenu(std::move(m));
                 if (key(ev, maya::SpecialKey::PageDown)) { m.detail_scroll += 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }

@@ -255,7 +255,11 @@ private:
             }
             if (scrollable && density == 2) {
                 row.push_back((Element{blank()} | grow(1)).build());
-                row.push_back((text("↑↓") | nowrap | Bold | fgc(pal::sky)).build());
+                // In the Proc pane ↑↓ navigate the process family; the body
+                // scrolls with the wheel or PgUp/PgDn. Every other pane
+                // scrolls with ↑↓ directly.
+                const bool proc = which_ == Detail::Proc;
+                row.push_back((text(proc ? "⇞⇟" : "↑↓") | nowrap | Bold | fgc(pal::sky)).build());
                 row.push_back((text("·scroll") | nowrap | fgc(pal::dim)).build());
             }
             return (h(std::move(row))).build();
