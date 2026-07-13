@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="300" viewBox="0 0 880 300" fill="none" role="img" aria-label="rockbottom">
+  <title>rockbottom</title>
+  <desc>The rockbottom wordmark: block-letter ROCKBOTTOM under a mauve-to-blue gradient, with a mountain crashing to a flat "rock bottom" line.</desc>
+
+  <defs>
+    <!-- Brand gradient: catppuccin mocha mauve -> blue (left to right). -->
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#cba6f7"/>
+      <stop offset="1"   stop-color="#89b4fa"/>
+    </linearGradient>
+    <linearGradient id="brand-soft" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#cba6f7" stop-opacity="0.85"/>
+      <stop offset="1"   stop-color="#89b4fa" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Backdrop: the terminal ink. -->
+  <rect width="880" height="300" rx="18" fill="#1e1e2e"/>
+
+  <!--
+    ROCKBOTTOM wordmark. Each glyph is drawn on a 3-row block grid (matching the
+    ASCII slab) with a shared unit. Letters are painted with the brand gradient
+    so the whole word reads as one mauve->blue block, like the header in-app.
+    Grid: cell = 18px, letters sit on the band y=40..148.
+  -->
+  <g fill="url(#brand)" transform="translate(40 44)">
+    <!-- R -->
+    <g transform="translate(0 0)">
+      <rect x="0"  y="0"  width="16" height="108"/>
+      <rect x="16" y="0"  width="40" height="16"/>
+      <rect x="40" y="0"  width="16" height="52"/>
+      <rect x="16" y="46" width="40" height="16"/>
+      <!-- diagonal leg -->
+      <polygon points="26,56 42,56 56,108 40,108"/>
+    </g>
+    <!-- O -->
+    <g transform="translate(76 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="40" y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="24" height="16"/>
+      <rect x="16" y="92"  width="24" height="16"/>
+    </g>
+    <!-- C -->
+    <g transform="translate(152 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="40" height="16"/>
+      <rect x="16" y="92"  width="40" height="16"/>
+    </g>
+    <!-- K -->
+    <g transform="translate(228 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <!-- upper arm -->
+      <polygon points="40,0 56,0 20,54 12,54"/>
+      <!-- lower arm -->
+      <polygon points="20,54 28,54 56,108 40,108"/>
+    </g>
+    <!-- B -->
+    <g transform="translate(304 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="40" height="16"/>
+      <rect x="40" y="0"   width="16" height="52"/>
+      <rect x="16" y="46"  width="40" height="16"/>
+      <rect x="40" y="56"  width="16" height="52"/>
+      <rect x="16" y="92"  width="40" height="16"/>
+    </g>
+    <!-- O -->
+    <g transform="translate(380 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="40" y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="24" height="16"/>
+      <rect x="16" y="92"  width="24" height="16"/>
+    </g>
+    <!-- T -->
+    <g transform="translate(456 0)">
+      <rect x="0"  y="0"   width="56" height="16"/>
+      <rect x="20" y="0"   width="16" height="108"/>
+    </g>
+    <!-- T -->
+    <g transform="translate(532 0)">
+      <rect x="0"  y="0"   width="56" height="16"/>
+      <rect x="20" y="0"   width="16" height="108"/>
+    </g>
+    <!-- O -->
+    <g transform="translate(608 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="40" y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="24" height="16"/>
+      <rect x="16" y="92"  width="24" height="16"/>
+    </g>
+    <!-- M -->
+    <g transform="translate(684 0)">
+      <rect x="0"  y="0"   width="16" height="108"/>
+      <rect x="60" y="0"   width="16" height="108"/>
+      <rect x="16" y="0"   width="16" height="16"/>
+      <rect x="44" y="0"   width="16" height="16"/>
+      <rect x="30" y="14"  width="16" height="40"/>
+    </g>
+  </g>
+
+  <!--
+    The mountain hitting rock bottom: a descending ridge of bars that flattens
+    into the baseline. Same idea as the in-app ▇▆▅▄▃▂▁ -> flat line.
+  -->
+  <g transform="translate(40 176)">
+    <rect x="0"   y="0"  width="14" height="48" fill="url(#brand-soft)"/>
+    <rect x="16"  y="8"  width="14" height="40" fill="url(#brand-soft)"/>
+    <rect x="32"  y="16" width="14" height="32" fill="url(#brand-soft)"/>
+    <rect x="48"  y="24" width="14" height="24" fill="url(#brand-soft)"/>
+    <rect x="64"  y="32" width="14" height="16" fill="url(#brand-soft)"/>
+    <rect x="80"  y="40" width="14" height="8"  fill="url(#brand-soft)"/>
+    <!-- flat line: rock bottom -->
+    <rect x="96"  y="44" width="716" height="4" fill="#585b70"/>
+  </g>
+
+  <!-- Taglines, in the quiet inks. -->
+  <text x="42" y="262" font-family="'JetBrains Mono','DejaVu Sans Mono',ui-monospace,monospace"
+        font-size="22" font-weight="700" fill="#cdd6f4">your computer is fine, buddy.</text>
+  <text x="42" y="290" font-family="'JetBrains Mono','DejaVu Sans Mono',ui-monospace,monospace"
+        font-size="15" fill="#6c7086">the one system monitor that <tspan fill="#cdd6f4">reads the scary numbers</tspan> <tspan fill="#89dceb" font-weight="700">for</tspan> you.</text>
+</svg>
