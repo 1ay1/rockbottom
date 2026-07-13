@@ -8,6 +8,7 @@
 
 #include "../theme.hpp"
 #include "detail/common.hpp"
+#include "logo.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
@@ -100,7 +101,10 @@ public:
             body = total;
         }
         (void)rows_each;
-        return 2 /*tagline+blank*/ + body + 1 /*blank*/ + 3 /*footnotes*/;
+        // Header = logo splash (~7 rows: 5-row slab + tagline + blank) + a blank.
+        // Compact mark is 3 rows; use the taller estimate so the clamp never
+        // strands the last footnote below a short terminal.
+        return 8 /*logo+blank*/ + body + 1 /*blank*/ + 3 /*footnotes*/;
     }
 
     // Viewport rows available for the body inside the full-frame card:
@@ -138,8 +142,9 @@ private:
         };
 
         std::vector<Element> header;
-        header.push_back((text("A calmer system monitor — it tells you what's happening.")
-                          | nowrap | fgc(pal::label)).build());
+        // The wordmark splash — full block slab on a wide card, compact mark
+        // when the terminal can't hold it without wrapping.
+        header.push_back(Element{Logo{width_ < Logo::kFullWidth + 8}});
         header.push_back(blank());
 
         Element groups_block;
