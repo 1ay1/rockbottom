@@ -14,6 +14,7 @@
 #include "metrics.hpp"
 
 #include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -38,6 +39,14 @@ public:
 
     // Collect one snapshot. `sort` and `top_n` shape the process table.
     Snapshot sample(SortKey sort, int top_n);
+
+    // The per-proc /proc/<pid>/status (ctxt switches) and /proc/<pid>/fd
+    // (open-fd count) reads are the two most expensive syscalls in the tick
+    // and feed ONLY the process detail pane. The UI sets the pid it's
+    // inspecting (0 = none) so the bulk scan reads those two files for that
+    // ONE process instead of all ~400 every tick. Atomic: set from the UI
+    // thread, read from the sampler thread.
+    void set_detail_pid(int pid) { detail_pid_.store(pid, std::memory_order_relaxed); }
 
     // Static machine facts, populated once in the constructor.
     int         ncpu() const { return ncpu_; }
@@ -88,11 +97,14 @@ private:
     int                                   mem_hist_len_ = 0;
     std::unordered_map<int, std::vector<std::uint16_t>> pid_ports_;  // per tick
     std::vector<Connection> connections_;   // active sockets (filled by sample_ports)
-    std::unordered_map<int, std::string> cmd_cache_;   // argv by pid (immutable after exec)
+    std::unordered_map<int, std::pair<std::uint64_t, std::string>> cmd_cache_;  // pid -> (starttime, argv); starttime guards pid reuse
+    std::unordered_map<int, std::pair<std::uint64_t, unsigned>> puid_cache_;  // pid -> (starttime, uid); skips per-tick stat()
+    std::unordered_map<unsigned, std::string> uid_cache_;  // uid -> user name (getpwuid is slow)
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;
     unsigned                              ports_tick_ = 0;   // gates the ports scan
+    std::atomic<int>                      detail_pid_{0};    // proc pane target (0 = none)
 
     // ── Static facts (once) ──
     std::string hostname_, kernel_, cpu_model_;

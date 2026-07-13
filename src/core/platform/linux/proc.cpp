@@ -4,14 +4,14 @@
 #include "procfs.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
 #include <ctime>
 #include <dirent.h>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace rockbottom {
 
@@ -23,8 +23,14 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
     std::vector<ProcInfo> out;
     std::unordered_map<int, ProcPrev> cur;
+    // pids seen this tick, used to prune the cmdline cache so it can't grow
+    // unbounded as processes come and go over a long session.
+    std::unordered_set<int> cmd_seen;
     int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
     double dt_ticks = dt * static_cast<double>(clk_tck_) * static_cast<double>(ncpu_);
+    // The pid whose expensive detail-only files (status, fd) we bother to read
+    // this tick — the process the UI has open, or 0 for none. Loaded once.
+    const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
 
     // Boot epoch (seconds) = now - uptime; a process's start_sec is then
     // boot_epoch + starttime_ticks/CLK_TCK. Computed once per sample.
@@ -34,7 +40,12 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     dirent* e;
     while ((e = ::readdir(proc)) != nullptr) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        int pid = std::atoi(e->d_name);
+        // Validated pid parse: reject overflow / trailing garbage (a malformed
+        // /proc entry must not masquerade as pid 0). strtol over atoi.
+        char* pend = nullptr;
+        long pidl = std::strtol(e->d_name, &pend, 10);
+        if (pend == e->d_name || *pend != '\0' || pidl <= 0 || pidl > INT_MAX) continue;
+        int pid = static_cast<int>(pidl);
         std::string base = "/proc/" + std::string(e->d_name);
 
         std::string stat = slurp(base + "/stat");
@@ -42,25 +53,55 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
         // comm sits in parens and may itself contain spaces/parens.
         auto lp = stat.find('('), rp = stat.rfind(')');
-        if (lp == std::string::npos || rp == std::string::npos) continue;
+        if (lp == std::string::npos || rp == std::string::npos || rp < lp) continue;
         std::string comm = stat.substr(lp + 1, rp - lp - 1);
-        std::istringstream ss(stat.substr(rp + 2));
+
+        // Pointer-walk the numeric tail (fields 3..22) instead of building an
+        // istringstream: allocation-free, no locale/sentry overhead. `cur`
+        // walks the space-separated tail after ")"; next_u64 skips leading
+        // spaces then reads one unsigned integer, next_i64 a signed one.
+        // `ok` trips false the moment a field is missing so a process that
+        // died mid-read (truncated stat) is skipped rather than parsed into
+        // garbage that would corrupt the CPU% delta.
+        const char* c = stat.c_str() + rp + 1;
+        bool ok = true;
+        auto skip_ws = [&] { while (*c == ' ' || *c == '\t') ++c; };
+        auto next_u64 = [&]() -> std::uint64_t {
+            skip_ws();
+            if (*c < '0' || *c > '9') { ok = false; return 0; }
+            char* end = nullptr;
+            std::uint64_t v = std::strtoull(c, &end, 10);
+            if (end == c) { ok = false; return 0; }
+            c = end; return v;
+        };
+        auto next_i64 = [&]() -> long long {
+            skip_ws();
+            if (*c != '-' && (*c < '0' || *c > '9')) { ok = false; return 0; }
+            char* end = nullptr;
+            long long v = std::strtoll(c, &end, 10);
+            if (end == c) { ok = false; return 0; }
+            c = end; return v;
+        };
+        auto skip_field = [&] { skip_ws(); while (*c && *c != ' ' && *c != '\t') ++c; };
+
         char state = '?';
-        ss >> state;                                // field 3
-        int ppid = 0; ss >> ppid;                   // field 4
-        std::string skip;
-        // fields 5..9: pgrp session tty_nr tpgid flags
-        for (int i = 0; i < 5; ++i) ss >> skip;
-        std::uint64_t minflt = 0, cminflt = 0, majflt = 0, cmajflt = 0;
-        ss >> minflt >> cminflt >> majflt >> cmajflt;   // 10 11 12 13
-        std::uint64_t utime = 0, stime = 0;
-        ss >> utime >> stime;                        // 14, 15
-        ss >> skip >> skip;                          // 16, 17 (cutime, cstime)
-        long prio = 0, nice = 0;
-        ss >> prio >> nice;                          // 18 priority, 19 nice
-        int threads = 0; ss >> threads;              // 20
-        ss >> skip;                                  // 21 itrealvalue
-        std::uint64_t starttime = 0; ss >> starttime;// 22 starttime (ticks since boot)
+        { skip_ws(); if (*c) state = *c++; else ok = false; }   // field 3
+        int ppid = static_cast<int>(next_i64());                // field 4
+        for (int i = 0; i < 5; ++i) skip_field();               // 5..9
+        std::uint64_t minflt = next_u64(); (void)next_u64();    // 10 minflt, 11 cminflt
+        std::uint64_t majflt = next_u64(); (void)next_u64();    // 12 majflt, 13 cmajflt
+        std::uint64_t utime  = next_u64();                      // 14
+        std::uint64_t stime  = next_u64();                      // 15
+        skip_field(); skip_field();                             // 16 cutime, 17 cstime
+        long prio = static_cast<long>(next_i64());              // 18 priority
+        long nice = static_cast<long>(next_i64());              // 19 nice
+        int threads = static_cast<int>(next_i64());             // 20
+        skip_field();                                           // 21 itrealvalue
+        std::uint64_t starttime = next_u64();                   // 22 starttime
+
+        // A truncated stat (process exited between readdir and read) fails the
+        // running parse — drop the row rather than emit a corrupt sample.
+        if (!ok) continue;
 
         ++total_procs;
         total_threads += std::max(1, threads);
@@ -69,16 +110,28 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         if (state == 'D') ++dstate;
 
         std::uint64_t cpu_ticks = utime + stime;
-        cur[pid] = {cpu_ticks};
+        // ONE lookup into last tick's state (was up to 5 hash probes/proc):
+        // reuse this iterator for cpu, io, faults, csw and the history ring.
+        auto prev_it = prev_proc_.find(pid);
+        const bool have_prev = !first_ && prev_it != prev_proc_.end();
+        ProcPrev& np = cur[pid];
+        np.cpu_ticks = cpu_ticks;
         double cpu_pct = 0;
-        if (!first_ && prev_proc_.count(pid) && dt_ticks > 0) {
-            std::uint64_t d = cpu_ticks > prev_proc_[pid].cpu_ticks
-                                  ? cpu_ticks - prev_proc_[pid].cpu_ticks : 0;
+        if (have_prev && dt_ticks > 0) {
+            std::uint64_t d = cpu_ticks > prev_it->second.cpu_ticks
+                                  ? cpu_ticks - prev_it->second.cpu_ticks : 0;
             cpu_pct = 100.0 * static_cast<double>(d) / dt_ticks * static_cast<double>(ncpu_);
         }
 
+        // statm: total + resident pages (first two whitespace-separated ints).
         std::uint64_t rss_pages = 0, total_pages = 0;
-        { std::ifstream sm(base + "/statm"); sm >> total_pages >> rss_pages; }
+        {
+            std::string sm = slurp(base + "/statm");
+            const char* p = sm.c_str();
+            char* end = nullptr;
+            total_pages = std::strtoull(p, &end, 10);
+            if (end != p) rss_pages = std::strtoull(end, nullptr, 10);
+        }
         Bytes rss{rss_pages * static_cast<std::uint64_t>(page_size_)};
 
         // Per-process block-device I/O from /proc/<pid>/io. read_bytes /
@@ -87,34 +140,39 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // processes unless privileged; unreadable rows just stay at 0.
         std::uint64_t io_r = 0, io_w = 0;
         {
-            std::ifstream iof(base + "/io");
-            std::string key;
-            std::uint64_t val;
-            while (iof >> key >> val) {
-                if (key == "read_bytes:")  io_r = val;
-                else if (key == "write_bytes:") io_w = val;
-            }
+            std::string io = slurp(base + "/io");
+            // Scan lines for "read_bytes:" / "write_bytes:" without allocating
+            // a stream: find the key, jump past the colon, parse the number.
+            if (auto pos = io.find("read_bytes:"); pos != std::string::npos)
+                io_r = std::strtoull(io.c_str() + pos + 11, nullptr, 10);
+            if (auto pos = io.find("write_bytes:"); pos != std::string::npos)
+                io_w = std::strtoull(io.c_str() + pos + 12, nullptr, 10);
         }
         ByteRate ior{}, iow{};
-        if (!first_ && prev_proc_.count(pid) && dt > 0) {
-            const auto& pp = prev_proc_[pid];
+        if (have_prev && dt > 0) {
+            const ProcPrev& pp = prev_it->second;
             if (io_r >= pp.io_read) ior.per_sec = static_cast<double>(io_r - pp.io_read) / dt;
             if (io_w >= pp.io_write) iow.per_sec = static_cast<double>(io_w - pp.io_write) / dt;
         }
-        cur[pid].io_read = io_r;
-        cur[pid].io_write = io_w;
+        np.io_read = io_r;
+        np.io_write = io_w;
 
         // Context switches from /proc/pid/status (voluntary + involuntary).
+        // This is a LARGE file and its only consumer is the process detail
+        // pane, so read it ONLY for the pid the UI is inspecting (see
+        // set_detail_pid). Every other row keeps csw at 0 — the pane is the
+        // sole reader and it's showing exactly this pid. Saves ~400 status
+        // reads per tick in the common case (no pane open).
         std::uint64_t csw_total = 0;
-        {
-            std::ifstream stf(base + "/status");
-            std::string line;
-            while (std::getline(stf, line)) {
-                if (line.rfind("voluntary_ctxt_switches:", 0) == 0 ||
-                    line.rfind("nonvoluntary_ctxt_switches:", 0) == 0) {
-                    csw_total += std::strtoull(line.c_str() + line.find(':') + 1, nullptr, 10);
-                }
-            }
+        const bool want_detail = (pid == want_detail_pid);
+        if (want_detail) {
+            std::string st = slurp(base + "/status");
+            if (auto pos = st.find("voluntary_ctxt_switches:"); pos != std::string::npos)
+                csw_total += std::strtoull(st.c_str() + pos + 24, nullptr, 10);
+            if (auto pos = st.find("nonvoluntary_ctxt_switches:"); pos != std::string::npos)
+                csw_total += std::strtoull(st.c_str() + pos + 27, nullptr, 10);
+        } else if (have_prev) {
+            csw_total = prev_it->second.csw;   // carry forward so the rate stays 0, not a spike
         }
 
         // Page-fault + context-switch RATES: cumulative counters (majflt is
@@ -122,26 +180,26 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // across the tick. Stashed into ProcPrev so next sample can diff again.
         const std::uint64_t faults_total = minflt + majflt;
         double faults_ps = 0, csw_ps = 0;
-        if (!first_ && prev_proc_.count(pid) && dt > 0) {
-            const auto& pp = prev_proc_[pid];
+        if (have_prev && dt > 0) {
+            const ProcPrev& pp = prev_it->second;
             if (faults_total >= pp.faults)
                 faults_ps = static_cast<double>(faults_total - pp.faults) / dt;
             if (csw_total >= pp.csw)
                 csw_ps = static_cast<double>(csw_total - pp.csw) / dt;
         }
-        cur[pid].faults = faults_total;
-        cur[pid].csw = csw_total;
+        np.faults = faults_total;
+        np.csw = csw_total;
 
         // Rolling per-process cpu% ring — carry the prior history forward
-        // (cur[pid] was aggregate-reset above), push this interval's clamped
+        // (np was aggregate-reset above), push this interval's clamped
         // sample, so the detail pane can graph the process like htop's meter.
-        if (auto pit = prev_proc_.find(pid); pit != prev_proc_.end()) {
-            cur[pid].cpu_hist = pit->second.cpu_hist;
-            cur[pid].cpu_hist_len = pit->second.cpu_hist_len;
+        if (have_prev) {
+            np.cpu_hist = prev_it->second.cpu_hist;
+            np.cpu_hist_len = prev_it->second.cpu_hist_len;
         }
         {
-            auto& ring = cur[pid].cpu_hist;
-            int& rl = cur[pid].cpu_hist_len;
+            auto& ring = np.cpu_hist;
+            int& rl = np.cpu_hist_len;
             const float sample = static_cast<float>(std::clamp(cpu_pct / 100.0, 0.0, 1.0));
             if (rl < static_cast<int>(ring.size())) {
                 ring[static_cast<std::size_t>(rl++)] = sample;
@@ -171,36 +229,67 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.faults_ps = faults_ps;
         p.csw_ps = csw_ps;
         p.pageins = majflt;   // lifetime major faults = blocking disk pageins
-        p.cpu_history = cur[pid].cpu_hist;
-        p.hist_len = cur[pid].cpu_hist_len;
+        p.cpu_history = np.cpu_hist;
+        p.hist_len = np.cpu_hist_len;
 
-        // Full command line from /proc/pid/cmdline: NUL-separated argv. We keep
-        // the whole thing (NULs → spaces) so the table can distinguish two
-        // `python` rows by their script, and the detail pane shows the invocation
-        // verbatim. Kernel threads have an empty cmdline → fall back to [comm].
+        // Full command line from /proc/pid/cmdline: NUL-separated argv. argv
+        // is IMMUTABLE after exec, so cache it and never re-read /proc for a
+        // pid we've already seen. The cache key guards against pid RECYCLING:
+        // a pid reused by a new process has a different starttime, so we mix
+        // starttime into the stored value and re-read when it changes. Kernel
+        // threads have an empty cmdline → fall back to [comm].
         {
-            std::string raw = slurp(base + "/cmdline");
-            if (!raw.empty()) {
-                for (char& c : raw) if (c == '\0') c = ' ';
-                while (!raw.empty() && raw.back() == ' ') raw.pop_back();
-                p.cmd = std::move(raw);
+            auto cit = cmd_cache_.find(pid);
+            if (cit != cmd_cache_.end() && cit->second.first == starttime) {
+                p.cmd = cit->second.second;
             } else {
-                p.cmd = "[" + comm + "]";   // kernel thread
+                std::string raw = slurp(base + "/cmdline");
+                if (!raw.empty()) {
+                    for (char& ch : raw) if (ch == '\0') ch = ' ';
+                    while (!raw.empty() && raw.back() == ' ') raw.pop_back();
+                    p.cmd = std::move(raw);
+                } else {
+                    p.cmd = "[" + comm + "]";   // kernel thread
+                }
+                cmd_cache_[pid] = {starttime, p.cmd};
+            }
+            cmd_seen.insert(pid);
+        }
+
+        // Open file descriptors: count entries in /proc/pid/fd. This opendir+
+        // readdir loop is expensive and, like status, feeds ONLY the detail
+        // pane, so run it just for the inspected pid; other rows keep fds=-1
+        // ("n/a"), which the pane already renders gracefully.
+        if (want_detail) {
+            if (DIR* fdd = ::opendir((base + "/fd").c_str())) {
+                int nfd = 0;
+                for (dirent* fe; (fe = ::readdir(fdd)) != nullptr; )
+                    if (fe->d_name[0] != '.') ++nfd;
+                ::closedir(fdd);
+                p.fds = nfd;
             }
         }
 
-        // Open file descriptors: count entries in /proc/pid/fd (readable for our
-        // own procs, or all when privileged; unreadable rows stay at -1).
-        if (DIR* fdd = ::opendir((base + "/fd").c_str())) {
-            int nfd = 0;
-            for (dirent* fe; (fe = ::readdir(fdd)) != nullptr; )
-                if (fe->d_name[0] != '.') ++nfd;
-            ::closedir(fdd);
-            p.fds = nfd;
+        // Owner: resolve the process's uid, then map uid→name. Both steps are
+        // cached. The uid is read via stat() on /proc/<pid>, but that syscall
+        // is skipped entirely for a pid we've already seen (uid is fixed for
+        // the life of a process) — guarded by starttime against pid reuse.
+        {
+            auto pit = puid_cache_.find(pid);
+            unsigned uid;
+            if (pit != puid_cache_.end() && pit->second.first == starttime) {
+                uid = pit->second.second;
+            } else {
+                struct ::stat stbuf{};
+                uid = (::stat(base.c_str(), &stbuf) == 0)
+                          ? static_cast<unsigned>(stbuf.st_uid) : 0;
+                puid_cache_[pid] = {starttime, uid};
+            }
+            auto uit = uid_cache_.find(uid);
+            if (uit == uid_cache_.end())
+                uit = uid_cache_.emplace(uid, user_of(static_cast<uid_t>(uid))).first;
+            p.user = uit->second;
         }
-
-        struct ::stat stbuf{};
-        if (::stat(base.c_str(), &stbuf) == 0) p.user = user_of(stbuf.st_uid);
 
         if (auto it = pid_ports_.find(pid); it != pid_ports_.end())
             p.ports = it->second;
@@ -210,6 +299,14 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     ::closedir(proc);
 
     prev_proc_ = std::move(cur);
+    // Prune the per-pid caches to pids still alive this tick (bounded memory
+    // over a long-running session where pids churn).
+    if (cmd_cache_.size() > cmd_seen.size() * 2 + 64) {
+        for (auto it = cmd_cache_.begin(); it != cmd_cache_.end(); )
+            it = cmd_seen.count(it->first) ? std::next(it) : cmd_cache_.erase(it);
+        for (auto it = puid_cache_.begin(); it != puid_cache_.end(); )
+            it = cmd_seen.count(it->first) ? std::next(it) : puid_cache_.erase(it);
+    }
     snap.proc_count = total_procs;
     snap.thread_count = total_threads;
     snap.running = running;
