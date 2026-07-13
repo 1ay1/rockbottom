@@ -1,8 +1,21 @@
-<h1 align="center">rockbottom</h1>
+<div align="center">
+
+```
+█▀▄ █▀█ █▀▀ █ █ █▀▄ █▀█ ▀█▀ ▀█▀ █▀█ █▀▄▀█
+█▀▄ █ █ █   █▀▄ █▀▄ █ █  █   █   █ █ █ █ █
+▀ ▀ ▀▀▀ ▀▀▀ ▀ ▀ ▀▀▀ ▀▀▀  ▀   ▀   ▀▀▀ ▀ ▀ ▀
+▇▆▅▄▃▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+```
+
+</div>
 
 <p align="center">
   <b>rb</b> — a system monitor for people who open <code>htop</code>, whisper <b>"what in god's name,"</b> and close it forever.<br>
   Your computer hit rock bottom. So did we. Now we watch it hit rock bottom <i>together</i>, and rockbottom reads the scary numbers <i>for</i> you and says, slowly and kindly: <b>"your computer is fine, buddy."</b>
+</p>
+
+<p align="center">
+  <img src="assets/rockbottom.gif" alt="rockbottom in action" width="800">
 </p>
 
 <p align="center">
