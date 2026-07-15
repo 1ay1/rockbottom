@@ -150,9 +150,10 @@ struct DiskIO {
 };
 
 struct Battery {
-    bool present = false;
-    int  percent = 0;
-    bool charging = false;
+    bool  present = false;
+    int   percent = 0;
+    bool  charging = false;
+    float temp_c = 0.0f;   // battery temperature in Celsius; 0 if unknown
 };
 
 // A process holding GPU memory / doing GPU work (from nvidia-smi compute- and

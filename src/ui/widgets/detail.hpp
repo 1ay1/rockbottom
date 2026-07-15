@@ -12,6 +12,8 @@
 
 #pragma once
 
+#include <cstdio>
+
 #include <maya/maya.hpp>
 
 #include "../../core/metrics.hpp"
@@ -188,8 +190,14 @@ private:
         if (s_.dstate)
             census.push_back({cluster(std::to_string(s_.dstate), " blocked", pal::crit, true), 5});
         std::string batt;
-        if (s_.battery.present)
+        if (s_.battery.present) {
             batt = "  \xf0\x9f\x94\x8b " + std::to_string(s_.battery.percent) + "%" + (s_.battery.charging ? " \xe2\x86\x91" : "");
+            if (s_.battery.temp_c > 0.0f) {
+                char tb[16];
+                std::snprintf(tb, sizeof tb, " %.0f\xc2\xb0", s_.battery.temp_c);
+                batt += tb;
+            }
+        }
         // The top identity row is width-aware: hostname + kernel on the left,
         // uptime + battery on the right, a flex spacer between. At narrow
         // widths a plain h-stack of nowrap cells has no slack in the spacer,

@@ -103,8 +103,24 @@ private:
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;
-    unsigned                              ports_tick_ = 0;   // gates the ports scan
     std::atomic<int>                      detail_pid_{0};    // proc pane target (0 = none)
+
+    // ── Wall-clock throttles for SLOW-CHANGING collectors ──
+    // These metrics (disk capacity, hardware temps, battery, PSI) move on the
+    // order of seconds, not milliseconds. Re-running their syscalls/subprocess
+    // every tick is pure waste — worst of all at fast refresh rates. Instead we
+    // refresh each on its own wall-clock cadence and hand back a CACHED copy in
+    // between, so CPU per tick stays low and, crucially, INDEPENDENT of the
+    // refresh interval. Timestamps are steady_clock; a zero/`first_` forces the
+    // first run.
+    std::chrono::steady_clock::time_point disks_at_{}, sensors_at_{},
+                                          battery_at_{}, psi_at_{}, ports_at_{};
+    std::vector<DiskInfo>                 disks_cache_;
+    std::vector<Sensor>                   sensors_cache_;
+    Battery                               battery_cache_{};
+    Psi                                   psi_cache_{};
+    // termux-battery-status spawns a process; refresh it rarely.
+    std::string                           battery_raw_cache_;
 
     // ── Static facts (once) ──
     std::string hostname_, kernel_, cpu_model_;

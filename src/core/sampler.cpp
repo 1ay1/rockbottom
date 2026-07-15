@@ -58,23 +58,48 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     if (dt <= 0 && !first_) dt = 0.001;
     last_time_ = now;
 
+    // Is a throttled collector due? True on first sample, or once `period` has
+    // elapsed since it last ran. Updates the stamp in place when it fires, so
+    // the cadence is wall-clock and INDEPENDENT of the refresh interval: at
+    // 250ms refresh a 3s collector still runs once per 3s, not 12× more often.
+    auto due = [&](std::chrono::steady_clock::time_point& at,
+                   std::chrono::milliseconds period) -> bool {
+        if (first_ || at.time_since_epoch().count() == 0 || now - at >= period) {
+            at = now;
+            return true;
+        }
+        return false;
+    };
+    using ms = std::chrono::milliseconds;
+
     Snapshot s;
     s.hostname = hostname_;
     s.kernel = kernel_;
     s.uptime_sec = uptime_sec();
 
+    // Fast, genuinely per-tick metrics: CPU, memory, network, disk I/O rates,
+    // GPU. These change every frame and must run every tick.
     sample_cpu(s.cpu);
     sample_mem(s.mem);
     sample_mem_rates(s.mem, dt);
-    sample_disks(s.disks);
     sample_disk_io(s.disk_io, dt);
     sample_net(s.nets, dt);
     sample_gpu(s.gpus);
-    sample_sensors(s.sensors);
+
+    // Disk CAPACITY (statvfs per mount) barely moves — refresh ~every 5s.
+    if (due(disks_at_, ms(5000))) { disks_cache_.clear(); sample_disks(disks_cache_); }
+    s.disks = disks_cache_;
+
+    // Hardware temperatures drift slowly — refresh ~every 2s.
+    if (due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
+    s.sensors = sensors_cache_;
+
     // SNAPPY: the per-fd socket scan is the single most expensive collector and
-    // listening ports change slowly, so we refresh it only every 4th sample and
-    // reuse the cached pid_ports_ map in between. First sample always runs it.
-    if (first_ || (ports_tick_++ % 4) == 0) sample_ports();
+    // listening ports change slowly, so refresh it on a wall-clock cadence
+    // (~1.5s) and reuse the cached pid_ports_ map in between. First sample
+    // always runs it. Wall-clock (not every-Nth-tick) keeps the scan rate flat
+    // regardless of refresh interval.
+    if (due(ports_at_, ms(1500))) sample_ports();
     sample_procs(s, sort, top_n, dt);
     // Attach the connection table (collected during the throttled ports scan)
     // and stamp each row with its owning process's name for the UI.
@@ -85,8 +110,17 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
         for (auto& c : s.connections)
             if (auto it = name_of.find(c.pid); it != name_of.end()) c.pname = *it->second;
     }
-    sample_psi(s.psi);
-    sample_battery(s.battery);
+
+    // PSI pressure (/proc/pressure/*) is a moving average already; ~1s is ample.
+    if (due(psi_at_, ms(1000))) { psi_cache_ = Psi{}; sample_psi(psi_cache_); }
+    s.psi = psi_cache_;
+
+    // Battery: percent/temp crawl, and on Termux the collector forks a whole
+    // process (termux-battery-status). Refresh ~every 15s — plenty for a
+    // battery gauge, and it keeps process spawns near zero.
+    if (due(battery_at_, ms(15000))) { battery_cache_ = Battery{}; sample_battery(battery_cache_); }
+    s.battery = battery_cache_;
+
     s.verdict = judge(s);
 
     first_ = false;

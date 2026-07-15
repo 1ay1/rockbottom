@@ -7,8 +7,8 @@
 #include "procfs.hpp"
 
 #include <cctype>
-#include <fstream>
-#include <sstream>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace rockbottom {
@@ -16,35 +16,59 @@ namespace rockbottom {
 using namespace procfs;
 
 void Sampler::sample_disk_io(DiskIO& io, double dt) {
-    std::ifstream ds("/proc/diskstats");
-    std::string line;
+    // Whole-file slurp + pointer-walk. The old path built a std::istringstream
+    // PER LINE every tick (locale sentry + heap buffer each time) — pure waste
+    // that scaled with the refresh rate. This parses in place, zero allocation.
+    std::string ds = slurp("/proc/diskstats");
     std::uint64_t rd_sectors = 0, wr_sectors = 0, rd_ops = 0, wr_ops = 0;
 
-    while (std::getline(ds, line)) {
-        std::istringstream ss(line);
-        int major = 0, minor = 0;
-        std::string name;
+    const char* p = ds.c_str();
+    const char* end = p + ds.size();
+    while (p < end) {
+        const char* nl = static_cast<const char*>(std::memchr(p, '\n', static_cast<std::size_t>(end - p)));
+        const char* le = nl ? nl : end;
+
+        auto skip_ws = [&] { while (p < le && (*p == ' ' || *p == '\t')) ++p; };
+        auto next_u64 = [&]() -> std::uint64_t {
+            skip_ws();
+            char* e = nullptr;
+            std::uint64_t v = std::strtoull(p, &e, 10);
+            p = (e > p) ? e : le;
+            return v;
+        };
+
+        (void)next_u64();  // major
+        (void)next_u64();  // minor
+        skip_ws();
+        const char* ns = p;
+        while (p < le && *p != ' ' && *p != '\t') ++p;
+        std::size_t nlen = static_cast<std::size_t>(p - ns);
         std::uint64_t f[11] = {};
-        ss >> major >> minor >> name;
-        for (auto& v : f) ss >> v;
+        for (auto& v : f) v = next_u64();
         // f[0] = reads completed, f[2] = sectors read, f[4] = writes completed,
         // f[6] = sectors written (Documentation/iostats).
 
+        auto starts = [&](const char* pre) {
+            std::size_t l = std::strlen(pre);
+            return nlen >= l && std::memcmp(ns, pre, l) == 0;
+        };
         // Whole devices only: skip partitions (name ends in a digit for
         // sdaN/vdaN; nvme partitions are nvmeXnYpZ), loop/ram/zram/dm.
-        if (name.rfind("loop", 0) == 0 || name.rfind("ram", 0) == 0 ||
-            name.rfind("zram", 0) == 0 || name.rfind("dm-", 0) == 0 ||
-            name.rfind("sr", 0) == 0)
-            continue;
+        if (starts("loop") || starts("ram") || starts("zram") ||
+            starts("dm-") || starts("sr")) { p = le < end ? le + 1 : end; continue; }
         bool partition = false;
-        if (name.rfind("nvme", 0) == 0) partition = name.find('p') != std::string::npos;
-        else if (!name.empty())         partition = std::isdigit(static_cast<unsigned char>(name.back())) != 0;
-        if (partition) continue;
+        if (starts("nvme"))
+            partition = std::memchr(ns, 'p', nlen) != nullptr;
+        else if (nlen)
+            partition = std::isdigit(static_cast<unsigned char>(ns[nlen - 1])) != 0;
+        if (!partition) {
+            rd_sectors += f[2];
+            wr_sectors += f[6];
+            rd_ops += f[0];
+            wr_ops += f[4];
+        }
 
-        rd_sectors += f[2];
-        wr_sectors += f[6];
-        rd_ops += f[0];
-        wr_ops += f[4];
+        p = le < end ? le + 1 : end;
     }
 
     constexpr std::uint64_t kSector = 512;

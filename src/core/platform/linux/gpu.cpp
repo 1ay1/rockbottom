@@ -395,6 +395,24 @@ void scan_drm_fdinfo(const std::string& driver_match,
 void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
     gpus.clear();
 
+    // FAST PATH: probe for any supported GPU (NVIDIA smi, or an AMD/Intel DRM
+    // card) exactly ONCE and cache the verdict. On machines with none — phones
+    // (Mali/Adreno), headless boxes, VMs — the AMD+Intel DRM directory walks
+    // would otherwise run every single tick and find nothing, burning CPU that
+    // scales up as the refresh rate rises. Static init is thread-safe (this
+    // collector only runs on the sampler thread anyway).
+    static const bool have_gpu = [] {
+        if (nvidia_smi_exists() && has_nvidia_card()) return true;
+        std::error_code ec;
+        for (int i = 0; i < 8; ++i) {
+            std::string dev = "/sys/class/drm/card" + std::to_string(i) + "/device";
+            if (fs::exists(dev + "/gpu_busy_percent", ec)) return true;  // amdgpu
+            if (fs::exists(dev + "/gt_act_freq_mhz", ec)) return true;   // i915/xe
+        }
+        return false;
+    }();
+    if (!have_gpu) return;
+
     if (nvidia_smi_exists() && has_nvidia_card())
         collect_nvidia(gpus);
     collect_amd(gpus);
