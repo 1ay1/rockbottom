@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <sys/utsname.h>
+#include <sys/sysinfo.h>
 #include <unistd.h>
 
 namespace rockbottom {
@@ -50,10 +51,19 @@ void Sampler::read_static() {
     }
 }
 
-// Seconds since boot, from the first field of /proc/uptime.
+// Seconds since boot, from the first field of /proc/uptime. On Android the
+// SELinux sandbox blocks /proc/uptime, so fall back to sysinfo(2), which the
+// kernel answers directly without a procfs node (uptime field is in seconds).
 std::uint64_t Sampler::uptime_sec() const {
-    return static_cast<std::uint64_t>(
-        std::strtod(first_line(slurp("/proc/uptime")).c_str(), nullptr));
+    std::string up = first_line(slurp("/proc/uptime"));
+    if (!up.empty()) {
+        double v = std::strtod(up.c_str(), nullptr);
+        if (v > 0) return static_cast<std::uint64_t>(v);
+    }
+    struct ::sysinfo si{};
+    if (::sysinfo(&si) == 0 && si.uptime > 0)
+        return static_cast<std::uint64_t>(si.uptime);
+    return 0;
 }
 
 void Sampler::sample_cpu(CpuInfo& cpu) {
@@ -61,6 +71,9 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     cpu.logical = ncpu_;
 
     std::ifstream st("/proc/stat");
+    // Android/Termux: /proc/stat is hidden by the SELinux sandbox. Flag it so
+    // sample_procs can synthesize aggregate CPU from per-process deltas.
+    cpu_stat_ok_ = st.good();
     std::string line;
     std::vector<CpuTimes> cores;
     CpuTimes agg{};
@@ -117,12 +130,19 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         cpu.cores[i] = c;
     }
 
-    push_hist(total_hist_, total_hist_len_, static_cast<float>(cpu.total.v));
+    // When /proc/stat is readable, push the real aggregate here. On Android
+    // (blocked) sample_procs computes cpu.total from per-process deltas and
+    // pushes the ring itself, so we skip it to avoid seeding the graph with 0.
+    if (cpu_stat_ok_) {
+        push_hist(total_hist_, total_hist_len_, static_cast<float>(cpu.total.v));
+    }
     cpu.total_history = total_hist_;
     cpu.total_hist_len = total_hist_len_;
 
     std::ifstream la("/proc/loadavg");
-    la >> cpu.loadavg[0] >> cpu.loadavg[1] >> cpu.loadavg[2];
+    loadavg_ok_ = static_cast<bool>(la >> cpu.loadavg[0] >> cpu.loadavg[1] >> cpu.loadavg[2]);
+    // /proc/loadavg is blocked on Android; sample_procs backfills a synthetic
+    // load from the running-process count + total CPU once it has walked /proc.
 
     // Temperature — first CPU/package-ish thermal zone that answers.
     for (int z = 0; z < 16; ++z) {

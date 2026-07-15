@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <string>
 #include <sys/stat.h>
+#include <sys/sysinfo.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,6 +24,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
     std::vector<ProcInfo> out;
     std::unordered_map<int, ProcPrev> cur;
+    // Sum of every visible process's CPU% this tick. On Android/Termux, where
+    // /proc/stat is sandbox-blocked, this is the ONLY way to know aggregate
+    // load — we can still read our own uid's /proc/<pid>/stat.
+    double proc_cpu_sum = 0;
     // pids seen this tick, used to prune the cmdline cache so it can't grow
     // unbounded as processes come and go over a long session.
     std::unordered_set<int> cmd_seen;
@@ -122,6 +127,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
                                   ? cpu_ticks - prev_it->second.cpu_ticks : 0;
             cpu_pct = 100.0 * static_cast<double>(d) / dt_ticks * static_cast<double>(ncpu_);
         }
+        proc_cpu_sum += cpu_pct;
 
         // statm: total + resident pages (first two whitespace-separated ints).
         std::uint64_t rss_pages = 0, total_pages = 0;
@@ -312,6 +318,34 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     snap.running = running;
     snap.zombies = zombies;
     snap.dstate = dstate;
+
+    // ── Android/Termux degraded-CPU fallback ──
+    // /proc/stat is sandbox-blocked, so sample_cpu left cpu.total at 0 and
+    // didn't advance the history ring. Reconstruct aggregate utilisation from
+    // the summed per-process CPU% (proc_cpu_sum is in "% of one core" units;
+    // divide by core count for a 0..1 machine-wide fraction). We only see our
+    // own uid's processes, so this is a floor, not the whole machine — but it
+    // tracks *our* load faithfully, which is what a Termux user actually cares
+    // about, and it makes the flagship graph live instead of a dead flat line.
+    if (!cpu_stat_ok_) {
+        double frac = ncpu_ > 0 ? (proc_cpu_sum / 100.0) / static_cast<double>(ncpu_) : 0.0;
+        snap.cpu.total = Ratio{frac};
+        push_hist(total_hist_, total_hist_len_, static_cast<float>(frac));
+        snap.cpu.total_history = total_hist_;
+        snap.cpu.total_hist_len = total_hist_len_;
+    }
+    // /proc/loadavg is likewise blocked; sysinfo(2) exposes the kernel's real
+    // 1/5/15 load averages without a procfs node, so use that. (It's the same
+    // three numbers /proc/loadavg formats, scaled by 1<<SI_LOAD_SHIFT.)
+    if (!loadavg_ok_) {
+        struct ::sysinfo si{};
+        if (::sysinfo(&si) == 0) {
+            constexpr double kScale = 1.0 / static_cast<double>(1 << SI_LOAD_SHIFT);
+            snap.cpu.loadavg = {static_cast<double>(si.loads[0]) * kScale,
+                                static_cast<double>(si.loads[1]) * kScale,
+                                static_cast<double>(si.loads[2]) * kScale};
+        }
+    }
 
     using Cmp = bool (*)(const ProcInfo&, const ProcInfo&);
     auto by = [](SortKey k) -> Cmp {

@@ -84,6 +84,14 @@ private:
     CpuTimes                              prev_total_{};
     std::uint64_t                         prev_iowait_ = 0;
     std::vector<CpuTimes>                 prev_cores_;
+    // Android/Termux degraded mode: under the SELinux untrusted_app sandbox
+    // the GLOBAL /proc nodes (/proc/stat, /proc/loadavg, /proc/uptime) are
+    // unreadable, but per-process /proc/<pid>/stat for our own uid is not.
+    // When sample_cpu can't read /proc/stat it sets cpu_stat_ok_=false and
+    // sample_procs then synthesizes aggregate CPU + load from the sum of the
+    // visible processes' CPU deltas, so the flagship pane isn't stuck at 0%.
+    bool                                  cpu_stat_ok_ = true;   // /proc/stat readable this tick
+    bool                                  loadavg_ok_ = true;    // /proc/loadavg readable
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_;  // rx,tx
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_pkts_;  // rx,tx packets
     std::unordered_map<int, ProcPrev>     prev_proc_;
