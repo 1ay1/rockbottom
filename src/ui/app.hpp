@@ -428,15 +428,29 @@ struct App {
         //
         // SNAPPY: CPU% and per-process CPU% are DELTAS across two readings, so a
         // single first sample would paint a full second of zeros. We prime the
-        // deltas with a throwaway read + a short (~90ms) settle + the real read,
-        // so the very first painted frame already shows true CPU load. ~90ms is
-        // imperceptible at launch but turns "1s of zeros" into "instant data".
-        m.sampler->sample(m.sort, kTopN);                 // prime delta baselines
-        std::this_thread::sleep_for(std::chrono::milliseconds(90));
-        m.snap = m.sampler->sample(m.sort, kTopN);        // real, populated frame
+        // deltas with a throwaway read + a short (~80ms) settle + the real read,
+        // so the very first painted frame already shows true CPU load.
+        //
+        // Both priming reads use FAST mode: they skip the collectors that fork a
+        // subprocess (battery/wireless via Termux:API, GPU via nvidia-smi) and
+        // the expensive per-fd port scan. On Termux those forks cold-start the
+        // Termux:API app and cost 1-2s — catastrophic at launch. They fill in
+        // automatically on the first background tick, a heartbeat later, so the
+        // window appears INSTANTLY with live CPU/mem/proc data and the battery /
+        // wifi / ports chips arrive a moment after.
+        m.sampler->sample(m.sort, kTopN, /*fast=*/true);   // prime delta baselines
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        m.snap = m.sampler->sample(m.sort, kTopN, /*fast=*/true);  // real, populated frame
         // rockbottom opens on the flat sorted list — the fastest thing to read
         // at a glance; press t for the tree (which opens fully expanded).
-        return {std::move(m), maya::Cmd<Msg>{}};
+        //
+        // Kick a FULL (non-fast) sample in the background immediately, so the
+        // collectors we skipped for a snappy first paint — battery, wifi, GPU,
+        // ports — land a heartbeat later instead of waiting a whole refresh
+        // interval for the first Tick. sample_cmd runs it off-thread and folds
+        // the result in via Sampled, exactly like a normal tick.
+        maya::Cmd<Msg> prime = sample_cmd(m);
+        return {std::move(m), std::move(prime)};
     }
 
     // Write the current view state back to the config file on a clean exit, so

@@ -37,8 +37,15 @@ class Sampler {
 public:
     Sampler();
 
-    // Collect one snapshot. `sort` and `top_n` shape the process table.
-    Snapshot sample(SortKey sort, int top_n);
+    // Collect one snapshot. `sort` and `top_n` shape the process table. When
+    // `fast` is true (used for the synchronous startup priming reads) the
+    // collectors that fork a subprocess — battery + wireless via Termux:API,
+    // GPU via nvidia-smi — and the expensive per-fd port scan are SKIPPED, so
+    // the first frame paints from cheap /proc reads alone instead of blocking
+    // on cold-starting the Termux:API app (~1-2s). They fill in on the first
+    // background tick a moment later. Their throttle stamps are left untouched
+    // so they run promptly then, not on their slow cadence.
+    Snapshot sample(SortKey sort, int top_n, bool fast = false);
 
     // The per-proc /proc/<pid>/status (ctxt switches) and /proc/<pid>/fd
     // (open-fd count) reads are the two most expensive syscalls in the tick

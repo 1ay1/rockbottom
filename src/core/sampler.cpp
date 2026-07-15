@@ -52,7 +52,7 @@ Sampler::Sampler() {
     read_static();
 }
 
-Snapshot Sampler::sample(SortKey sort, int top_n) {
+Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     auto now = std::chrono::steady_clock::now();
     double dt = first_ ? 0.0 : std::chrono::duration<double>(now - last_time_).count();
     if (dt <= 0 && !first_) dt = 0.001;
@@ -84,7 +84,10 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     sample_mem_rates(s.mem, dt);
     sample_disk_io(s.disk_io, dt);
     sample_net(s.nets, dt);
-    sample_gpu(s.gpus);
+    // GPU can fork nvidia-smi on desktop NVIDIA boxes; skip it on the fast
+    // startup prime so the first paint never blocks on a subprocess. It runs
+    // on the first background tick.
+    if (!fast) sample_gpu(s.gpus);
 
     // Disk CAPACITY (statvfs per mount) barely moves — refresh ~every 5s.
     if (due(disks_at_, ms(5000))) { disks_cache_.clear(); sample_disks(disks_cache_); }
@@ -97,9 +100,9 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     // SNAPPY: the per-fd socket scan is the single most expensive collector and
     // listening ports change slowly, so refresh it on a wall-clock cadence
     // (~1.5s) and reuse the cached pid_ports_ map in between. First sample
-    // always runs it. Wall-clock (not every-Nth-tick) keeps the scan rate flat
-    // regardless of refresh interval.
-    if (due(ports_at_, ms(1500))) sample_ports();
+    // always runs it — UNLESS this is a fast startup prime, where we skip it so
+    // the first paint doesn't wait on walking every process's fd table.
+    if (!fast && due(ports_at_, ms(1500))) sample_ports();
     sample_procs(s, sort, top_n, dt);
     // Attach the connection table (collected during the throttled ports scan)
     // and stamp each row with its owning process's name for the UI.
@@ -117,14 +120,15 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
 
     // Battery: percent/temp crawl, and on Termux the collector forks a whole
     // process (termux-battery-status). Refresh ~every 15s — plenty for a
-    // battery gauge, and it keeps process spawns near zero.
-    if (due(battery_at_, ms(15000))) { battery_cache_ = Battery{}; sample_battery(battery_cache_); }
+    // battery gauge, and it keeps process spawns near zero. Skipped on a fast
+    // startup prime (leave the stamp at zero so it runs on the first real tick).
+    if (!fast && due(battery_at_, ms(15000))) { battery_cache_ = Battery{}; sample_battery(battery_cache_); }
     s.battery = battery_cache_;
 
     // Wireless (WiFi + cellular) is Termux-only and each helper forks a
     // process; refresh ~every 10s. On desktop Linux sample_wireless is a
-    // no-op, so this costs nothing there.
-    if (due(wireless_at_, ms(10000))) { wireless_cache_ = Wireless{}; sample_wireless(wireless_cache_); }
+    // no-op, so this costs nothing there. Also skipped on a fast prime.
+    if (!fast && due(wireless_at_, ms(10000))) { wireless_cache_ = Wireless{}; sample_wireless(wireless_cache_); }
     s.wireless = wireless_cache_;
 
     s.verdict = judge(s);
