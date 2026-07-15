@@ -386,6 +386,14 @@ struct App {
                         m.sel = idx;
                         if (me.button == MouseButton::Right)
                             return arm_kill(std::move(m), SIGTERM);
+                        // Left-click drills straight into the process's detail
+                        // pane, pinned to the row you clicked — the same view
+                        // Enter / 6 open, but reachable with the mouse.
+                        if (me.button == MouseButton::Left) {
+                            m.detail = ui::Detail::Proc;
+                            m.detail_scroll = 0;
+                            pin_detail_pid(m);
+                        }
                     }
                     return {std::move(m), C{}};
                 }

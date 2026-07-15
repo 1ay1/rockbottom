@@ -99,10 +99,11 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
     // ── identity ─────────────────────────────────────────────────────────────
     // Name + pid headline; underneath, the full command line and the family
     // line (parent, owner, age) — who spawned it, who owns it, how long it
-    // has lived.
+    // has lived. The NAME is the loud element: a filled accent chip so it's
+    // unmistakable which process this whole pane is about.
     b.push_back((h(
-        text("PID " + std::to_string(p.pid)) | nowrap | Bold | fgc(pal::proc_ac) | width(14),
-        text(p.name) | nowrap | Bold | fgc(pal::white),
+        text(" " + p.name + " ") | nowrap | Bold | fgc(pal::bg) | bgc(pal::proc_ac),
+        text("  PID " + std::to_string(p.pid)) | nowrap | Bold | fgc(pal::proc_ac),
         Element{blank()} | grow(1),
         text(p.state == 'R' ? "● running" : p.state == 'D' ? "◆ blocked"
              : p.state == 'Z' ? "✝ zombie" : p.state == 'T' ? "⏸ stopped" : "○ sleeping")

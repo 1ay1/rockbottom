@@ -143,7 +143,16 @@ private:
             case Detail::Net:  glyph = "⇅"; title = "NETWORK"; ac = pal::net_ac;  break;
             case Detail::Gpu:  glyph = "◆"; title = "GPU";     ac = pal::gpu_ac;  break;
             case Detail::Disk: glyph = "◇"; title = "DISK";    ac = pal::disk_ac; break;
-            case Detail::Proc: glyph = "≡"; title = "PROCESS"; ac = pal::proc_ac; break;
+            case Detail::Proc:
+                glyph = "≡";
+                // Name the actual process in the pane title so it's instantly
+                // clear WHOSE detail you're looking at — e.g. "PROCESS · fish
+                // (31034)" — instead of a bare "PROCESS".
+                title = proc_
+                    ? "PROCESS · " + proc_->name + " (" + std::to_string(proc_->pid) + ")"
+                    : "PROCESS";
+                ac = pal::proc_ac;
+                break;
             default:           glyph = " "; title = "";        ac = pal::text;    break;
         }
     }
