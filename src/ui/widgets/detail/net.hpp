@@ -308,6 +308,44 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     }
     b.push_back(gap_row());
 
+    // ── WIRELESS (Termux/Android): WiFi link + cellular ──
+    // Populated only where the platform reports it (empty on desktop, so the
+    // whole block is skipped). Not shown in the split layout, whose height is
+    // fixed by scroll math.
+    {
+        const auto& w = s.wireless;
+        if (!split && (w.wifi_present || w.cell_present)) {
+            b.push_back(center(section("WIRELESS", pal::net_ac)));
+            if (w.wifi_present) {
+                // RSSI → human quality; band from frequency.
+                const char* qual = w.wifi_rssi == 0 ? ""
+                                 : w.wifi_rssi >= -60 ? "strong"
+                                 : w.wifi_rssi >= -75 ? "ok" : "weak";
+                maya::Color qc = w.wifi_rssi >= -60 ? pal::good
+                               : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
+                const char* band = w.wifi_freq >= 5000 ? "5 GHz"
+                                 : w.wifi_freq >= 2400 ? "2.4 GHz" : "";
+                b.push_back(center(kv3(
+                    "wifi", w.ssid.empty() ? "—" : w.ssid, pal::sky,
+                    "signal", w.wifi_rssi ? std::to_string(w.wifi_rssi) + " dBm " + qual : "—", qc,
+                    "link", w.link_mbps ? std::to_string(w.link_mbps) + " Mbps" : "—", pal::good)));
+                if (!w.ip.empty() || band[0])
+                    b.push_back(center(kv3(
+                        "band", band[0] ? band : "—", pal::label,
+                        "ip", w.ip.empty() ? "—" : w.ip, pal::sky,
+                        "", "", pal::dim)));
+            }
+            if (w.cell_present) {
+                b.push_back(center(kv3(
+                    "cellular", w.operator_name.empty() ? "—" : w.operator_name, pal::mauve,
+                    "network", w.net_type.empty() ? "—" : w.net_type, pal::label,
+                    "data", w.data_state.empty() ? "—" : w.data_state,
+                    w.data_state == "connected" ? pal::good : pal::dim)));
+            }
+            b.push_back(gap_row());
+        }
+    }
+
     // ── per-interface roster (left column when split) ──
     std::vector<Element> ifcol;
     for (const NetIface& ni : s.nets) {

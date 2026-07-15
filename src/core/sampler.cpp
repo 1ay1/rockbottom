@@ -121,6 +121,12 @@ Snapshot Sampler::sample(SortKey sort, int top_n) {
     if (due(battery_at_, ms(15000))) { battery_cache_ = Battery{}; sample_battery(battery_cache_); }
     s.battery = battery_cache_;
 
+    // Wireless (WiFi + cellular) is Termux-only and each helper forks a
+    // process; refresh ~every 10s. On desktop Linux sample_wireless is a
+    // no-op, so this costs nothing there.
+    if (due(wireless_at_, ms(10000))) { wireless_cache_ = Wireless{}; sample_wireless(wireless_cache_); }
+    s.wireless = wireless_cache_;
+
     s.verdict = judge(s);
 
     first_ = false;

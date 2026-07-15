@@ -77,6 +77,7 @@ private:
     void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
+    void    sample_wireless(Wireless&);
     Verdict judge(const Snapshot&) const;
 
     // ── Cross-tick delta state ──
@@ -114,13 +115,13 @@ private:
     // refresh interval. Timestamps are steady_clock; a zero/`first_` forces the
     // first run.
     std::chrono::steady_clock::time_point disks_at_{}, sensors_at_{},
-                                          battery_at_{}, psi_at_{}, ports_at_{};
+                                          battery_at_{}, psi_at_{}, ports_at_{},
+                                          wireless_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
     Battery                               battery_cache_{};
     Psi                                   psi_cache_{};
-    // termux-battery-status spawns a process; refresh it rarely.
-    std::string                           battery_raw_cache_;
+    Wireless                              wireless_cache_{};
 
     // ── Static facts (once) ──
     std::string hostname_, kernel_, cpu_model_;

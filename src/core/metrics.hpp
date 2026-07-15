@@ -153,7 +153,34 @@ struct Battery {
     bool  present = false;
     int   percent = 0;
     bool  charging = false;
-    float temp_c = 0.0f;   // battery temperature in Celsius; 0 if unknown
+    float temp_c = 0.0f;    // battery temperature in Celsius; 0 if unknown
+    // Rich fields — populated where the source exposes them (Termux:API does;
+    // most Linux sysfs does too). Sentinels mean "unknown", panes omit them.
+    double current_ma = 0.0;    // instantaneous current; <0 discharging, >0 charging
+    int    cycles = -1;         // charge cycle count, -1 if unknown
+    std::string health;         // "GOOD" / "OVERHEAT" / "DEAD" / …, empty if unknown
+    std::string plug;           // "AC" / "USB" / "WIRELESS" / "" (unplugged)
+    std::string tech;           // "Li-ion", …
+};
+
+// Wireless connectivity (WiFi + cellular), sourced on Android/Termux from the
+// Termux:API wifi/telephony helpers. On desktop Linux these stay empty (the
+// net pane already shows interface rates); the fields exist so the UI can
+// surface signal strength / link speed / operator when a phone reports them.
+// Any helper that a given Termux build doesn't implement just leaves its slice
+// blank — `wifi_present` / `cell_present` gate the display.
+struct Wireless {
+    bool        wifi_present = false;
+    std::string ssid;           // connected network name
+    int         wifi_rssi = 0;  // dBm, 0 if unknown (closer to 0 = stronger)
+    int         link_mbps = 0;  // negotiated link speed, Mbps
+    int         wifi_freq = 0;  // MHz (2400/5000 band hint)
+    std::string ip;             // IPv4 on the wifi link
+
+    bool        cell_present = false;
+    std::string operator_name; // carrier
+    std::string net_type;      // "LTE" / "NR" / "HSPA" / …
+    std::string data_state;    // "connected" / "disconnected"
 };
 
 // A process holding GPU memory / doing GPU work (from nvidia-smi compute- and
@@ -228,6 +255,7 @@ struct Snapshot {
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
     Psi                   psi;
     Battery               battery;
+    Wireless              wireless;   // WiFi + cellular (Termux/Android); empty on desktop
     Verdict               verdict;
 };
 

@@ -4,12 +4,10 @@
 
 #include "../../sampler.hpp"
 #include "procfs.hpp"
+#include "termux.hpp"
 
-#include <array>
-#include <cstdio>
 #include <cstdlib>
 #include <string>
-#include <unistd.h>
 
 namespace rockbottom {
 
@@ -17,72 +15,38 @@ using namespace procfs;
 
 namespace {
 
-// Run a command and slurp its stdout. Empty string on any failure (missing
-// binary, non-zero exit, etc.). Used for the termux-* CLI helpers.
-std::string run_capture(const char* cmd) {
-    std::string out;
-    FILE* p = ::popen(cmd, "r");
-    if (!p) return out;
-    std::array<char, 512> buf{};
-    size_t n;
-    while ((n = std::fread(buf.data(), 1, buf.size(), p)) > 0)
-        out.append(buf.data(), n);
-    ::pclose(p);
-    return out;
-}
-
-// Extract the value that follows "key" in a flat JSON object. Returns the raw
-// token (number, or unquoted contents of a string) or "" if not found. Good
-// enough for termux-battery-status's flat, well-formed output — no nested
-// objects to worry about.
-std::string json_value(const std::string& j, const char* key) {
-    std::string needle = std::string("\"") + key + "\"";
-    auto k = j.find(needle);
-    if (k == std::string::npos) return {};
-    auto colon = j.find(':', k + needle.size());
-    if (colon == std::string::npos) return {};
-    size_t i = colon + 1;
-    while (i < j.size() && (j[i] == ' ' || j[i] == '\t')) ++i;
-    if (i >= j.size()) return {};
-    if (j[i] == '"') {  // string value
-        auto end = j.find('"', ++i);
-        if (end == std::string::npos) return {};
-        return j.substr(i, end - i);
-    }
-    // bare number / literal — read up to comma, brace, or newline
-    size_t end = i;
-    while (end < j.size() && j[end] != ',' && j[end] != '}' && j[end] != '\n')
-        ++end;
-    return trim(j.substr(i, end - i));
-}
-
-// Termux-API path: `termux-battery-status` emits JSON with percentage,
-// status, temperature. Returns true if it produced a usable reading.
+// Termux-API path: `termux-battery-status` emits a flat JSON object with
+// percentage, status, health, plugged, technology, temperature, current, and
+// cycle. Returns true if it produced a usable reading. See termux.hpp for the
+// shared availability check + JSON scraper (never forks when the CLI is gone).
 bool sample_battery_termux(Battery& b) {
-    // popen() itself forks a shell, so first confirm the helper exists at all
-    // (a cheap access() vs a fork+exec of /bin/sh that would fail anyway).
-    // Cached across calls: the CLI doesn't appear/vanish at runtime.
-    static const int have_cli = [] {
-        const char* p = "/data/data/com.termux/files/usr/bin/termux-battery-status";
-        return ::access(p, X_OK) == 0 ? 1 : 0;
-    }();
-    if (!have_cli) return false;
-
-    std::string j = run_capture("termux-battery-status 2>/dev/null");
+    std::string j = termux::run("termux-battery-status");
     if (j.empty()) return false;
 
-    std::string pct = json_value(j, "percentage");
-    if (pct.empty()) pct = json_value(j, "level");
+    std::string pct = termux::json_value(j, "percentage");
+    if (pct.empty()) pct = termux::json_value(j, "level");
     if (pct.empty()) return false;
 
     b.present = true;
     b.percent = std::atoi(pct.c_str());
 
-    std::string status = json_value(j, "status");  // CHARGING/DISCHARGING/FULL/...
+    std::string status = termux::json_value(j, "status");  // CHARGING/DISCHARGING/FULL/…
     b.charging = (status == "CHARGING" || status == "FULL");
 
-    std::string temp = json_value(j, "temperature");  // e.g. "27.8"
+    std::string temp = termux::json_value(j, "temperature");
     if (!temp.empty()) b.temp_c = static_cast<float>(std::atof(temp.c_str()));
+
+    // Rich extras (all optional — absent keys just stay at their sentinel).
+    b.health = termux::json_value(j, "health");
+    b.tech   = termux::json_value(j, "technology");
+    std::string plugged = termux::json_value(j, "plugged");  // "PLUGGED_AC" / "UNPLUGGED" / …
+    if (plugged.rfind("PLUGGED_", 0) == 0) b.plug = plugged.substr(8);
+    else                                    b.plug.clear();
+    // Termux reports current in microamps; normalise to milliamps.
+    std::string cur = termux::json_value(j, "current");
+    if (!cur.empty()) b.current_ma = std::strtod(cur.c_str(), nullptr) / 1000.0;
+    std::string cyc = termux::json_value(j, "cycle");
+    if (!cyc.empty()) b.cycles = std::atoi(cyc.c_str());
 
     return true;
 }
@@ -102,6 +66,14 @@ void Sampler::sample_battery(Battery& b) {
         // Battery temp is exposed in deci-Celsius on many Linux platforms.
         std::string t = first_line(slurp(base + "/temp"));
         if (!t.empty()) b.temp_c = std::atoi(t.c_str()) / 10.0f;
+        // Rich sysfs extras where present.
+        std::string cyc = first_line(slurp(base + "/cycle_count"));
+        if (!cyc.empty()) b.cycles = std::atoi(cyc.c_str());
+        b.health = trim(first_line(slurp(base + "/health")));
+        b.tech   = trim(first_line(slurp(base + "/technology")));
+        // current_now is microamps (sign varies by platform); to milliamps.
+        std::string cur = first_line(slurp(base + "/current_now"));
+        if (!cur.empty()) b.current_ma = std::atof(cur.c_str()) / 1000.0;
         return;
     }
 

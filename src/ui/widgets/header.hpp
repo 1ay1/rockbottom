@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <string>
 
 namespace rockbottom::ui {
@@ -71,9 +72,33 @@ public:
             const auto& b = snap_.battery;
             Color bc = b.charging ? pal::good : b.percent < 20 ? pal::crit
                      : b.percent < 40 ? pal::warn : pal::label;
-            std::string icon = b.charging ? "⚡" : "■";
-            bat = (text("  " + icon + " " + std::to_string(b.percent) + "%")
-                   | nowrap | fgc(bc)).build();
+            std::string icon = b.charging ? "\u26a1" : "\u25a0";
+            std::string s = "  " + icon + " " + std::to_string(b.percent) + "%";
+            if (b.temp_c > 0.0f) {
+                char t[16]; std::snprintf(t, sizeof t, " %.0f\xc2\xb0", b.temp_c);
+                s += t;
+            }
+            bat = (text(s) | nowrap | fgc(bc)).build();
+        }
+
+        // Wireless chip: WiFi SSID + signal, else cellular type. Only present
+        // on Android/Termux where the platform reports it; empty otherwise.
+        Element wifi = blank();
+        {
+            const auto& w = snap_.wireless;
+            if (w.wifi_present) {
+                // RSSI (dBm) → coarse bars. -50 great, -80 poor.
+                Color wc = w.wifi_rssi >= -60 ? pal::good
+                         : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
+                std::string s = "  \xf0\x9f\x93\xb6 " + w.ssid;
+                if (w.wifi_rssi != 0) s += " " + std::to_string(w.wifi_rssi) + "dBm";
+                if (w.link_mbps > 0)  s += " " + std::to_string(w.link_mbps) + "M";
+                wifi = (text(s) | nowrap | fgc(wc)).build();
+            } else if (w.cell_present && !w.net_type.empty()) {
+                std::string s = "  \xf0\x9f\x93\xb6 " + w.net_type;
+                if (!w.operator_name.empty()) s += " " + w.operator_name;
+                wifi = (text(s) | nowrap | fgc(pal::label)).build();
+            }
         }
 
         // Responsive: the header packs left-to-right and DROPS the optional
@@ -100,6 +125,11 @@ public:
         if (paused_)
             items.push_back({(h(text("  "), std::move(pause_chip))).build()});
         items.push_back({Element{space}});                      // grow spacer
+        {
+            const auto& w = snap_.wireless;
+            if (w.wifi_present || (w.cell_present && !w.net_type.empty()))
+                items.push_back({std::move(wifi), 3});
+        }
         if (snap_.battery.present) items.push_back({std::move(bat), 3});
         items.push_back({(text("  up " + std::string(humanize_duration(snap_.uptime_sec)))
                           | nowrap | fgc(pal::label)).build(), 2});
