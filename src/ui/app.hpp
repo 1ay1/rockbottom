@@ -382,8 +382,16 @@ struct App {
 
                 case ui::HK_SortCol:
                     if (me.button == MouseButton::Left && !m.filtering) {
-                        m.sort = static_cast<SortKey>(maya::hit_index(*hit));
-                        return resample(std::move(m));
+                        // Same semantics as clicking a column header in any
+                        // table: pick that column (default ▼ high-to-low), and
+                        // clicking the ALREADY-active column flips direction.
+                        // Routing through set_sort keeps mouse + keyboard in
+                        // lockstep — a stale sort_desc can't leave headers
+                        // stuck ascending forever. Sorting is a pure reorder of
+                        // the current snapshot (the ordered view recomputes),
+                        // so no re-sample is needed — matching the c/m/n keys.
+                        return set_sort(std::move(m),
+                                        static_cast<SortKey>(maya::hit_index(*hit)));
                     }
                     return {std::move(m), C{}};
 
