@@ -21,9 +21,10 @@ int main(int argc, char** argv) {
     // Precedence: defaults < config file < CLI flags.
     Config cfg = no_config ? Config{} : Config::load();
     std::string exit_msg;
-    if (!Config::parse_args(argc, argv, cfg, exit_msg)) {
-        std::fputs(exit_msg.c_str(), stdout);
-        return exit_msg.rfind("unknown", 0) == 0 ? 2 : 0;
+    bool exit_ok = false;   // true only for --help / --version
+    if (!Config::parse_args(argc, argv, cfg, exit_msg, exit_ok)) {
+        std::fputs(exit_msg.c_str(), exit_ok ? stdout : stderr);
+        return exit_ok ? 0 : 2;
     }
     App::boot_config() = cfg;
 

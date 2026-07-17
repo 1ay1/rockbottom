@@ -7,6 +7,7 @@
 #include "termux.hpp"
 
 #include <cstdlib>
+#include <dirent.h>
 #include <string>
 
 namespace rockbottom {
@@ -54,27 +55,38 @@ bool sample_battery_termux(Battery& b) {
 }  // namespace
 
 void Sampler::sample_battery(Battery& b) {
-    // Preferred: standard Linux sysfs power-supply nodes.
-    for (int i = 0; i < 4; ++i) {
-        std::string base = "/sys/class/power_supply/BAT" + std::to_string(i);
-        std::string cap = first_line(slurp(base + "/capacity"));
-        if (cap.empty()) continue;
-        b.present = true;
-        b.percent = std::atoi(cap.c_str());
-        std::string status = trim(first_line(slurp(base + "/status")));
-        b.charging = (status == "Charging" || status == "Full");
-        // Battery temp is exposed in deci-Celsius on many Linux platforms.
-        std::string t = first_line(slurp(base + "/temp"));
-        if (!t.empty()) b.temp_c = std::atoi(t.c_str()) / 10.0f;
-        // Rich sysfs extras where present.
-        std::string cyc = first_line(slurp(base + "/cycle_count"));
-        if (!cyc.empty()) b.cycles = std::atoi(cyc.c_str());
-        b.health = trim(first_line(slurp(base + "/health")));
-        b.tech   = trim(first_line(slurp(base + "/technology")));
-        // current_now is microamps (sign varies by platform); to milliamps.
-        std::string cur = first_line(slurp(base + "/current_now"));
-        if (!cur.empty()) b.current_ma = std::atof(cur.c_str()) / 1000.0;
-        return;
+    // Preferred: standard Linux sysfs power-supply nodes. Enumerate the class
+    // dir rather than guessing "BAT0..3": real device names include CMBn
+    // (Thinkpads via cros_ec), qcom-battery, macsmc-battery, axp20x-battery —
+    // any node whose type is "Battery" and that reports a capacity counts.
+    if (DIR* d = ::opendir("/sys/class/power_supply")) {
+        dirent* e;
+        while ((e = ::readdir(d)) != nullptr) {
+            if (e->d_name[0] == '.') continue;
+            std::string base = std::string("/sys/class/power_supply/") + e->d_name;
+            std::string type = trim(first_line(slurp(base + "/type")));
+            if (type != "Battery") continue;
+            std::string cap = first_line(slurp(base + "/capacity"));
+            if (cap.empty()) continue;   // e.g. a wireless mouse cell without %
+            b.present = true;
+            b.percent = std::atoi(cap.c_str());
+            std::string status = trim(first_line(slurp(base + "/status")));
+            b.charging = (status == "Charging" || status == "Full");
+            // Battery temp is exposed in deci-Celsius on many Linux platforms.
+            std::string t = first_line(slurp(base + "/temp"));
+            if (!t.empty()) b.temp_c = std::atoi(t.c_str()) / 10.0f;
+            // Rich sysfs extras where present.
+            std::string cyc = first_line(slurp(base + "/cycle_count"));
+            if (!cyc.empty()) b.cycles = std::atoi(cyc.c_str());
+            b.health = trim(first_line(slurp(base + "/health")));
+            b.tech   = trim(first_line(slurp(base + "/technology")));
+            // current_now is microamps (sign varies by platform); to milliamps.
+            std::string cur = first_line(slurp(base + "/current_now"));
+            if (!cur.empty()) b.current_ma = std::atof(cur.c_str()) / 1000.0;
+            ::closedir(d);
+            return;
+        }
+        ::closedir(d);
     }
 
     // Fallback: Termux on Android — no readable sysfs battery, ask the

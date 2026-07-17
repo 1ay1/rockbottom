@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 
 namespace rockbottom {
 
@@ -17,10 +18,12 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
     std::ifstream nd("/proc/net/dev");
     std::string line;
     std::getline(nd, line); std::getline(nd, line);  // two header lines
+    std::unordered_set<std::string> seen;   // ifaces present THIS tick
     while (std::getline(nd, line)) {
         auto colon = line.find(':');
         if (colon == std::string::npos) continue;
         std::string name = trim(line.substr(0, colon));
+        seen.insert(name);
         std::istringstream ss(line.substr(colon + 1));
         std::array<std::uint64_t, 16> f{};
         int n = 0;
@@ -29,7 +32,16 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
 
         NetIface& iface = net_hist_[name];
         iface.name = name;
-        iface.up = (rx || tx || name == "lo");
+        // Real link state from sysfs operstate ("up"/"unknown" = carrier),
+        // not "ever moved a byte": a downed-but-once-used iface must read as
+        // down. "unknown" counts as up — loopback and many virtual ifaces
+        // report it while fully functional.
+        {
+            std::string op = trim(first_line(slurp(
+                ("/sys/class/net/" + name + "/operstate").c_str())));
+            iface.up = op.empty() ? (rx || tx || name == "lo")   // sysfs blocked (Termux)
+                                  : (op == "up" || op == "unknown");
+        }
         auto [prx, ptx] = prev_net_.count(name) ? prev_net_[name] : std::pair{rx, tx};
         Bytes drx{rx > prx ? rx - prx : 0}, dtx{tx > ptx ? tx - ptx : 0};
         iface.rx = first_ ? ByteRate{0} : rate(drx, dt);
@@ -43,6 +55,18 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
 
         prev_net_[name] = {rx, tx};
     }
+
+    // Prune interfaces that VANISHED (USB tether unplugged, VPN tun torn
+    // down, container veth churn). Without this their history entry kept the
+    // last computed rate forever — a dead iface "moving" bytes at its final
+    // speed, sorted to the top on that ghost rate — and on veth-churny hosts
+    // both maps grew without bound over a long session.
+    for (auto it = net_hist_.begin(); it != net_hist_.end(); )
+        it = seen.count(it->first) ? std::next(it) : net_hist_.erase(it);
+    for (auto it = prev_net_.begin(); it != prev_net_.end(); )
+        it = seen.count(it->first) ? std::next(it) : prev_net_.erase(it);
+    for (auto it = prev_net_pkts_.begin(); it != prev_net_pkts_.end(); )
+        it = seen.count(it->first) ? std::next(it) : prev_net_pkts_.erase(it);
 
     // Surface only interfaces that have ever moved bytes, busiest first.
     // Loopback earns a row only while it's actually carrying traffic — a

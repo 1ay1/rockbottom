@@ -7,6 +7,7 @@
 #include "../core/sampler.hpp"   // SortKey
 
 #include <csignal>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -14,11 +15,17 @@ namespace rockbottom {
 
 // A kill awaiting confirmation. `pids` may carry a whole GROUP (kill-all-
 // by-name); `pid` stays the anchor process for messaging either way.
+// `starts` is index-aligned with `pids`: each target's start_sec captured at
+// ARM time. The confirm can come arbitrarily later, and a pid recycled in
+// between must not be signaled — the confirm path revalidates each target's
+// start time against the freshest snapshot and skips mismatches. 0 = unknown
+// (start unavailable), which skips the check for that pid only.
 struct PendingKill {
     int pid = 0;
     std::string name;
     int sig = SIGTERM;
     std::vector<int> pids;   // every target; size()>1 = group kill
+    std::vector<std::uint64_t> starts;   // start_sec per target (pid-reuse guard)
 };
 
 // One entry in the signal picker: the number, its POSIX name, and a one-word

@@ -18,7 +18,10 @@ void Sampler::sample_mem(MemInfo& m) {
     std::uint64_t val;
     while (std::getline(mi, line)) {
         std::istringstream ss(line);
-        ss >> key >> val >> unit;
+        // A line that fails to parse must not recycle the PREVIOUS line's
+        // val into this key — only ingest rows whose number actually read.
+        if (!(ss >> key >> val)) continue;
+        ss >> unit;
         if (!key.empty() && key.back() == ':') key.pop_back();
         kv[key] = val * 1024;  // kB → bytes
     }
@@ -49,7 +52,11 @@ void Sampler::sample_mem_rates(MemInfo& m, double dt) {
         else if (key == "pgpgout") pgout = val;
         else if (key == "pgfault") faults = val;   // all minor+major faults
     }
-    const std::uint64_t page = 4096;   // vmstat counts are in pages
+    // vmstat counts pswpin/pswpout in PAGES — use the real kernel page size
+    // (16K on new Android, 64K on some ARM64 server kernels), not a hardcoded
+    // 4096: the swap-traffic rate feeds the verdict's thrashing thresholds in
+    // absolute bytes/sec, so a 16K kernel would under-report paging 4x.
+    const std::uint64_t page = static_cast<std::uint64_t>(page_size_);
     std::uint64_t di = in > prev_pswpin_ ? in - prev_pswpin_ : 0;
     std::uint64_t dout = out > prev_pswpout_ ? out - prev_pswpout_ : 0;
     m.swap_in  = first_ ? ByteRate{0} : rate(Bytes{di * page}, dt);

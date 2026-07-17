@@ -52,15 +52,25 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
             std::size_t l = std::strlen(pre);
             return nlen >= l && std::memcmp(ns, pre, l) == 0;
         };
-        // Whole devices only: skip partitions (name ends in a digit for
-        // sdaN/vdaN; nvme partitions are nvmeXnYpZ), loop/ram/zram/dm.
+        // Whole devices only: skip partitions and virtual devices. The naive
+        // "name ends in a digit" test wrongly classifies whole devices whose
+        // names are inherently numbered — mmcblk0 (every phone/SBC/Chromebook),
+        // md0, mtdblock0, nbd0 — which zeroed DISK I/O on those machines.
+        // Digit-suffixed device families mark partitions with a 'p' separator
+        // (mmcblk0p1, nvme0n1p2, md0p1); plain sd/vd/hd partitions are sdaN.
         if (starts("loop") || starts("ram") || starts("zram") ||
             starts("dm-") || starts("sr")) { p = le < end ? le + 1 : end; continue; }
         bool partition = false;
-        if (starts("nvme"))
-            partition = std::memchr(ns, 'p', nlen) != nullptr;
-        else if (nlen)
+        if (starts("nvme") || starts("mmcblk") || starts("md") ||
+            starts("mtdblock") || starts("nbd")) {
+            // Partition iff a 'p' appears AFTER the leading letters (device
+            // stems like nvme0n1 / mmcblk0 contain no 'p' past the prefix).
+            std::size_t i0 = 0;
+            while (i0 < nlen && !std::isdigit(static_cast<unsigned char>(ns[i0]))) ++i0;
+            partition = std::memchr(ns + i0, 'p', nlen - i0) != nullptr;
+        } else if (nlen) {
             partition = std::isdigit(static_cast<unsigned char>(ns[nlen - 1])) != 0;
+        }
         if (!partition) {
             rd_sectors += f[2];
             wr_sectors += f[6];

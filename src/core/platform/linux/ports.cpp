@@ -16,6 +16,7 @@
 #include "procfs.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -127,12 +128,20 @@ void Sampler::sample_ports() {
     char buf[64];
     while ((e = ::readdir(proc)) != nullptr) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-        int pid = std::atoi(e->d_name);
+        // Validated pid parse (same rule as proc.cpp): reject trailing garbage
+        // rather than letting atoi turn a malformed entry into a bogus pid.
+        char* pend = nullptr;
+        long pidl = std::strtol(e->d_name, &pend, 10);
+        if (pend == e->d_name || *pend != '\0' || pidl <= 0 || pidl > INT_MAX) continue;
+        int pid = static_cast<int>(pidl);
         std::string fd_dir = "/proc/" + std::string(e->d_name) + "/fd";
         DIR* fds = ::opendir(fd_dir.c_str());
         if (!fds) continue;   // not ours — same visibility rule as ss/lsof
 
         std::unordered_set<std::uint16_t> ports;
+        // A process can hold the SAME socket through several fds (dup, fork
+        // inheritance); emit one connection row per (pid, inode), not per fd.
+        std::unordered_set<std::uint64_t> conn_seen;
         dirent* fe;
         while ((fe = ::readdir(fds)) != nullptr) {
             if (fe->d_name[0] == '.') continue;
@@ -144,7 +153,7 @@ void Sampler::sample_ports() {
             auto it = inode_row.find(inode);
             if (it == inode_row.end()) continue;
             const SockRow& r = it->second;
-            if (r.listener || !r.proto.empty()) {
+            if (conn_seen.insert(inode).second) {
                 Connection c;
                 c.proto = r.proto; c.laddr = r.laddr; c.raddr = r.raddr;
                 c.state = r.state; c.pid = pid;

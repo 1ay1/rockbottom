@@ -166,8 +166,10 @@ void collect_nvidia(std::vector<GpuInfo>& out) {
     };
     ingest_apps("nvidia-smi --query-compute-apps=pid,used_memory,name "
                 "--format=csv,noheader,nounits 2>/dev/null", 'C');
-    ingest_apps("nvidia-smi --query-accounted-apps=pid,used_memory,name "
-                "--format=csv,noheader,nounits 2>/dev/null", 'C');
+    // NOTE: --query-accounted-apps is deliberately NOT ingested. It lists
+    // accounting records — including apps that ALREADY EXITED — and every
+    // currently-running compute app appears in BOTH lists, so summing the two
+    // double-counted live VRAM and resurrected dead pids in the table.
     // Graphics apps aren't a --query-*; nvidia-smi lists them in the process
     // table. pmon (below) is the reliable per-process source and also carries
     // sm/enc/dec utilisation, so fold graphics + util in from a single pmon
@@ -275,8 +277,12 @@ void collect_amd(std::vector<GpuInfo>& out) {
         g.mem_clock = Hertz{active_clock_mhz(dev + "/pp_dpm_mclk") * 1000000ull};
 
         // hwmon: temp1_input (millideg), power1_average (microwatt), fan.
+        // error_code iterator: hwmon/ may not exist at all (VMs, containers,
+        // render-node passthrough) and the throwing overload would escape the
+        // sampler thread as filesystem_error → std::terminate.
+        std::error_code hec;
         for (const auto& e : fs::directory_iterator(dev + "/hwmon",
-                                                    fs::directory_options::skip_permission_denied)) {
+                                                    fs::directory_options::skip_permission_denied, hec)) {
             std::string h = e.path().string();
             std::uint64_t t = read_u64(h + "/temp1_input");
             if (t) g.temp_c = static_cast<float>(t) / 1000.0f;
@@ -309,13 +315,13 @@ void collect_intel(std::vector<GpuInfo>& out) {
         g.core_clock = Hertz{read_u64(card + "/gt_act_freq_mhz") * 1000000ull};
         // i915 doesn't export a simple busy% in sysfs; leave usage at 0 so the
         // pane shows clocks + whatever hwmon gives us rather than a fake load.
+        // error_code iterator: hwmon/ may be absent entirely (see AMD note).
+        std::error_code hec;
         for (const auto& e : fs::directory_iterator(dev + "/hwmon",
-                                                    fs::directory_options::skip_permission_denied)) {
+                                                    fs::directory_options::skip_permission_denied, hec)) {
             std::string h = e.path().string();
             std::uint64_t t = read_u64(h + "/temp1_input");
             if (t) g.temp_c = static_cast<float>(t) / 1000.0f;
-            std::uint64_t p = read_u64(h + "/energy1_input");   // some report energy only
-            (void)p;
             break;
         }
         out.push_back(std::move(g));

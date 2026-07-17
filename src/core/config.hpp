@@ -74,8 +74,15 @@ struct Config {
         if (!f) return c;
         std::string line;
         while (std::getline(f, line)) {
-            auto hash = line.find('#');
-            if (hash != std::string::npos) line.resize(hash);
+            // Strip comments — but only a # that starts the line or follows
+            // whitespace, so a # INSIDE a value (filter queries can carry one)
+            // survives the round-trip with save() below.
+            for (std::size_t i = 0; i < line.size(); ++i) {
+                if (line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t')) {
+                    line.resize(i);
+                    break;
+                }
+            }
             auto eq = line.find('=');
             if (eq == std::string::npos) continue;
             std::string key = trim(line.substr(0, eq));
@@ -91,9 +98,16 @@ struct Config {
         return c;
     }
 
-    // ── save: best-effort, never throws; creates the dir ──
+    // ── save: best-effort, never throws; creates the dir (recursively — on a
+    //    fresh account even ~/.config may not exist yet) ──
     void save() const {
-        ::mkdir(dir_path().c_str(), 0755);   // ok if it already exists
+        const std::string dir = dir_path();
+        // mkdir -p: create each path component. Errors are ignored (EEXIST is
+        // the common case); the ofstream open below is the real success test.
+        for (std::size_t i = 1; i <= dir.size(); ++i) {
+            if (i == dir.size() || dir[i] == '/')
+                ::mkdir(dir.substr(0, i).c_str(), 0755);
+        }
         std::ofstream f(file_path(), std::ios::trunc);
         if (!f) return;
         f << "# rockbottom preferences — edit freely; overwritten on clean exit\n";
@@ -106,8 +120,12 @@ struct Config {
     }
 
     // ── CLI parsing: returns false + fills `exit_msg` for --help/--version or
-    //    a bad flag, so main() can print and exit. Flags override the file. ──
-    static bool parse_args(int argc, char** argv, Config& c, std::string& exit_msg) {
+    //    a bad flag, so main() can print and exit. `exit_ok` distinguishes the
+    //    benign exits (--help/--version → status 0, stdout) from parse errors
+    //    (→ nonzero status, stderr) — scripts rely on the status code, so a
+    //    rejected flag value must never exit 0. Flags override the file. ──
+    static bool parse_args(int argc, char** argv, Config& c, std::string& exit_msg,
+                           bool& exit_ok) {
         auto usage = [] {
             return std::string(
                 "rockbottom — a calmer system monitor\n\n"
@@ -130,8 +148,8 @@ struct Config {
                 if (a.rfind(pfx, 0) == 0) return a.substr(pfx.size());
                 return std::nullopt;
             };
-            if (a == "-h" || a == "--help")    { exit_msg = usage(); return false; }
-            if (a == "-v" || a == "--version") { exit_msg = "rockbottom 1.0\n"; return false; }
+            if (a == "-h" || a == "--help")    { exit_msg = usage(); exit_ok = true; return false; }
+            if (a == "-v" || a == "--version") { exit_msg = "rockbottom 1.0\n"; exit_ok = true; return false; }
             if (a == "--tree") { c.tree = true; continue; }
             if (a == "--flat") { c.tree = false; continue; }
             if (a == "--no-config") { continue; }   // handled before load in main

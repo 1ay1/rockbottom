@@ -43,8 +43,9 @@ void Sampler::read_static() {
     std::ifstream mi("/proc/meminfo");
     while (std::getline(mi, line)) {
         if (line.rfind("MemTotal:", 0) == 0) {
-            std::uint64_t kb = 0;
-            std::sscanf(line.c_str(), "MemTotal: %lu kB", &kb);
+            // strtoull, not sscanf("%lu"): unsigned long is 32-bit on ILP32
+            // targets (armv7 Termux), where %lu into a uint64_t is UB.
+            std::uint64_t kb = std::strtoull(line.c_str() + 9, nullptr, 10);
             ram_total_ = Bytes{kb * 1024};
             break;
         }
@@ -94,10 +95,13 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         else cores.push_back(t);
     }
 
-    // Busy fraction = 1 - Δidle/Δtotal across the interval.
+    // Busy fraction = 1 - Δidle/Δtotal across the interval. Both deltas are
+    // clamped at zero: the kernel documents that per-cpu iowait (folded into
+    // our idle) can DECREASE, and an unguarded u64 subtraction would wrap to
+    // ~2^64 and paint a bogus 0%/100% frame.
     auto busy = [](CpuTimes now, CpuTimes prev) -> Ratio {
-        std::uint64_t dt = now.total - prev.total;
-        std::uint64_t di = now.idle - prev.idle;
+        std::uint64_t dt = now.total > prev.total ? now.total - prev.total : 0;
+        std::uint64_t di = now.idle  > prev.idle  ? now.idle  - prev.idle  : 0;
         if (dt == 0) return Ratio{0};
         return Ratio{1.0 - static_cast<double>(di) / static_cast<double>(dt)};
     };
@@ -106,7 +110,7 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         cpu.total = busy(agg, prev_total_);
         // iowait fraction of the interval — how long cores twiddled thumbs
         // waiting for block devices while runnable work existed.
-        std::uint64_t dt = agg.total - prev_total_.total;
+        std::uint64_t dt = agg.total > prev_total_.total ? agg.total - prev_total_.total : 0;
         std::uint64_t dw = agg_iowait > prev_iowait_ ? agg_iowait - prev_iowait_ : 0;
         if (dt > 0) cpu.iowait = Ratio{static_cast<double>(dw) / static_cast<double>(dt)};
     }
@@ -144,11 +148,13 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     // /proc/loadavg is blocked on Android; sample_procs backfills a synthetic
     // load from the running-process count + total CPU once it has walked /proc.
 
-    // Temperature — first CPU/package-ish thermal zone that answers.
+    // Temperature — first CPU/package-ish thermal zone that answers. A gap in
+    // the zone numbering (an unreadable or hot-unplugged zoneN) must not hide
+    // the zones after it, so skip gaps instead of stopping at the first one.
     for (int z = 0; z < 16; ++z) {
         std::string base = "/sys/class/thermal/thermal_zone" + std::to_string(z);
         std::string type = trim(first_line(slurp((base + "/type").c_str())));
-        if (type.empty()) break;
+        if (type.empty()) continue;
         if (type.find("pkg") != std::string::npos || type.find("cpu") != std::string::npos ||
             type == "acpitz" || type.find("coretemp") != std::string::npos) {
             std::string t = first_line(slurp((base + "/temp").c_str()));

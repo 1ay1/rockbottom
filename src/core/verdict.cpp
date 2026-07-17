@@ -50,7 +50,7 @@ double slope(const float* d, int n) {
 
 }  // namespace
 
-Verdict Sampler::judge(const Snapshot& s) const {
+Verdict Sampler::judge(const Snapshot& s, double dt) const {
     const double cpu       = s.cpu.total.percent();
     const double iowait    = s.cpu.iowait.percent();
     const double mem       = s.mem.usage().percent();
@@ -93,11 +93,17 @@ Verdict Sampler::judge(const Snapshot& s) const {
     const double avg_core = cpu;
     const bool one_core_pinned = max_core > 92 && avg_core < 55 && ncpu_ > 2;
 
-    // Trends over ~2 minutes of samples.
-    const double cpu_slope = slope(s.cpu.total_history.data(), s.cpu.total_hist_len) * 100;
-    const double mem_slope = slope(s.mem.usage_history.data(), s.mem.hist_len) * 100;
-    const bool mem_leaking = mem_slope > 0.08 && s.mem.hist_len > 60 && mem > 50;
-    const bool cpu_rising  = cpu_slope > 0.25 && s.cpu.total_hist_len > 30;
+    // Trends. slope() is units-per-SAMPLE; the refresh cadence is user-tunable
+    // (250ms..5s), so convert to per-second before thresholding — otherwise a
+    // 250ms refresh reports a leak 4x too fast and a 5s refresh hides one 5x.
+    // The history windows likewise cover dt*len seconds, not len seconds.
+    const double per_sec   = dt > 0 ? 1.0 / dt : 1.0;   // samples per second
+    const double cpu_slope = slope(s.cpu.total_history.data(), s.cpu.total_hist_len) * 100 * per_sec;
+    const double mem_slope = slope(s.mem.usage_history.data(), s.mem.hist_len) * 100 * per_sec;
+    const double mem_window_sec = dt > 0 ? dt * s.mem.hist_len : s.mem.hist_len;
+    const double cpu_window_sec = dt > 0 ? dt * s.cpu.total_hist_len : s.cpu.total_hist_len;
+    const bool mem_leaking = mem_slope > 0.08 && mem_window_sec > 60 && mem > 50;
+    const bool cpu_rising  = cpu_slope > 0.25 && cpu_window_sec > 30;
 
     std::vector<Finding> findings;
 

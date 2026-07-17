@@ -38,9 +38,12 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
 
     // Boot epoch (seconds) = now - uptime; a process's start_sec is then
-    // boot_epoch + starttime_ticks/CLK_TCK. Computed once per sample.
-    const std::uint64_t boot_epoch =
-        static_cast<std::uint64_t>(std::time(nullptr)) - uptime_sec();
+    // boot_epoch + starttime_ticks/CLK_TCK. Computed ONCE and cached: both
+    // time() and uptime quantize to seconds, so recomputing per tick made the
+    // result jitter ±1s and every process age wobble frame to frame.
+    if (boot_epoch_ == 0)
+        boot_epoch_ = static_cast<std::uint64_t>(std::time(nullptr)) - uptime_sec();
+    const std::uint64_t boot_epoch = boot_epoch_;
 
     dirent* e;
     while ((e = ::readdir(proc)) != nullptr) {

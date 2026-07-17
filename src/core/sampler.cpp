@@ -131,7 +131,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     if (!fast && due(wireless_at_, ms(10000))) { wireless_cache_ = Wireless{}; sample_wireless(wireless_cache_); }
     s.wireless = wireless_cache_;
 
-    s.verdict = judge(s);
+    s.verdict = judge(s, dt);
 
     first_ = false;
     return s;

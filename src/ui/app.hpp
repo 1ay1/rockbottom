@@ -133,7 +133,20 @@ struct App {
         // ONE sample may run at a time — this guard drops Ticks that arrive
         // while a slow sample (e.g. a wedged nvidia-smi) is still running,
         // instead of queuing a backlog on the worker thread.
+        //
+        // WATCHDOG: if the in-flight sample never returns (a collector stuck
+        // in an uninterruptible syscall — statvfs on a dead NFS/FUSE mount, a
+        // hung nvidia-smi/Termux:API fork), `sampling` would stay true forever
+        // and the monitor would silently freeze on stale data. The Tick
+        // handler detects a sample older than the watchdog limit, abandons the
+        // wedged thread (task_isolated already permits leaking it), REPLACES
+        // the sampler (the old object may still be mutated by the wedged
+        // thread — it must never be reused), bumps `sampler_epoch`, and
+        // re-kicks. A late Sampled from the abandoned run carries the old
+        // epoch and is dropped on arrival.
         bool        sampling = false;
+        std::chrono::steady_clock::time_point sample_started{};
+        std::uint64_t sampler_epoch = 0;
 
         std::shared_ptr<Sampler> sampler = std::make_shared<Sampler>();
 
@@ -155,7 +168,10 @@ struct App {
     struct Resize { int w, h; };
     struct Key { maya::KeyEvent ev; };
     struct Mouse { maya::MouseEvent ev; };
-    struct Sampled { Snapshot snap; };   // a background sample finished
+    struct Sampled {                     // a background sample finished
+        Snapshot snap;
+        std::uint64_t epoch = 0;         // sampler_epoch it came from; stale = dropped
+    };
     struct Quit {};
 
     using Msg = std::variant<Tick, Resize, Key, Mouse, Sampled, Quit>;
@@ -462,7 +478,12 @@ struct App {
         c.tree       = m.tree;
         c.refresh_ms = m.refresh_ms;
         c.filter     = m.filter;
-        c.theme      = ui::active_theme_name();
+        // If the theme picker is open, the ACTIVE theme is a live preview the
+        // user never committed — persist the one that was active when the
+        // picker opened, matching what Esc would restore.
+        c.theme      = m.thememenu
+            ? ui::theme_name(static_cast<std::size_t>(m.thememenu->restore))
+            : ui::active_theme_name();
         c.save();
     }
 
@@ -481,15 +502,17 @@ struct App {
     // overlapping Ticks are dropped until the result lands.
     static maya::Cmd<Msg> sample_cmd(Model& m) {
         m.sampling = true;
+        m.sample_started = std::chrono::steady_clock::now();
         auto sampler = m.sampler;   // shared_ptr copy: outlives this update()
+        const std::uint64_t epoch = m.sampler_epoch;
         SortKey sort = m.sort;
         // The process detail pane is the sole consumer of the expensive
         // per-proc status/fd reads; tell the sampler which pid (if any) is
         // open so it reads those files for that ONE process instead of all.
         sampler->set_detail_pid(m.detail == ui::Detail::Proc ? m.detail_pid : 0);
         return maya::Cmd<Msg>::task_isolated(
-            [sampler, sort](std::function<void(Msg)> dispatch) {
-                dispatch(Sampled{sampler->sample(sort, kTopN)});
+            [sampler, sort, epoch](std::function<void(Msg)> dispatch) {
+                dispatch(Sampled{sampler->sample(sort, kTopN), epoch});
             });
     }
 
@@ -499,6 +522,19 @@ struct App {
             [&](Tick) -> std::pair<Model, C> {
                 if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
                 if (m.verdict_pulse > 0) --m.verdict_pulse;
+                // Watchdog: an in-flight sample that outlived its limit is
+                // wedged (see Model::sampling). Abandon it — fresh Sampler,
+                // new epoch so the stale result is ignored — and re-kick.
+                if (!m.paused && m.sampling) {
+                    const auto limit = std::chrono::milliseconds(
+                        std::max(3 * m.refresh_ms, 10000));
+                    if (std::chrono::steady_clock::now() - m.sample_started > limit) {
+                        m.sampler = std::make_shared<Sampler>();
+                        ++m.sampler_epoch;
+                        m.sampling = false;
+                        m.toast = Toast{"sampler stalled — collector restarted", true};
+                    }
+                }
                 // Kick a background sample unless paused or one's already running.
                 if (!m.paused && !m.sampling) {
                     ++m.ticks;
@@ -508,6 +544,10 @@ struct App {
                 return {std::move(m), C{}};
             },
             [&](Sampled sm) -> std::pair<Model, C> {
+                // A result from an ABANDONED sampler (watchdog fired while it
+                // was wedged): its delta state is from a dead world — drop it,
+                // and don't touch `sampling` (a new run may be in flight).
+                if (sm.epoch != m.sampler_epoch) return {std::move(m), C{}};
                 // Pure fold: the effect already did the I/O off-thread.
                 const Health prev = m.last_health;
                 m.snap = std::move(sm.snap);
@@ -589,8 +629,9 @@ struct App {
             if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
                 const int sig = cat[static_cast<std::size_t>(
                     std::clamp(m.sigmenu->sel, 0, n - 1))].num;
+                auto starts = starts_of(m, m.sigmenu->pids);
                 m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
-                                        sig, m.sigmenu->pids};
+                                        sig, m.sigmenu->pids, std::move(starts)};
                 m.sigmenu.reset();
                 return {std::move(m), C{}};
             }
@@ -631,9 +672,25 @@ struct App {
         if (m.pending) {
             if (key(ev, 'y') || key(ev, maya::SpecialKey::Enter)) {
                 const auto& targets = m.pending->pids;
-                int ok = 0, failed = 0;
+                const auto& starts  = m.pending->starts;
+                // Freshest per-pid start times: a pid recycled between ARM and
+                // CONFIRM must not receive the signal (the classic race — the
+                // user sits on y/n while the target exits and the kernel hands
+                // its pid to an unrelated process).
+                std::unordered_map<int, std::uint64_t> now_start;
+                for (const auto& q : m.snap.procs) now_start[q.pid] = q.start_sec;
+                int ok = 0, failed = 0, recycled = 0;
                 std::string first_err;
-                for (int pid : targets) {
+                for (std::size_t ti = 0; ti < targets.size(); ++ti) {
+                    const int pid = targets[ti];
+                    const std::uint64_t armed = ti < starts.size() ? starts[ti] : 0;
+                    auto ns = now_start.find(pid);
+                    // Vanished from the snapshot, or reborn with a different
+                    // start time → the process we armed against is gone.
+                    if (ns == now_start.end() || !start_matches(armed, ns->second)) {
+                        ++recycled;
+                        continue;
+                    }
                     std::string err = signal_process(pid, m.pending->sig);
                     if (err.empty()) ++ok;
                     else { ++failed; if (first_err.empty()) first_err = err; }
@@ -654,8 +711,12 @@ struct App {
                 if (failed)
                     m.toast = Toast{first_err + (group ? " (+" + std::to_string(failed - 1) + " more failed)"
                                                         : ""), true};
+                else if (ok == 0 && recycled)
+                    m.toast = Toast{"target already exited — nothing signaled", true};
                 else
-                    m.toast = Toast{verb + what + tail, false};
+                    m.toast = Toast{verb + what + tail +
+                                    (recycled ? " (" + std::to_string(recycled) + " already gone)" : ""),
+                                    false};
                 m.pending.reset();
                 // Refresh the list off-thread so killed processes drop out
                 // promptly without blocking on a full re-sample here.
@@ -769,7 +830,7 @@ struct App {
             m.toast = Toast{"refresh " + refresh_label(m.refresh_ms), false};
             return {std::move(m), C{}};
         }
-        if (key(ev, '?') || key(ev, 'h'))  { m.show_help = true; return {std::move(m), C{}}; }
+        if (key(ev, '?') || (key(ev, 'h') && !m.tree)) { m.show_help = true; return {std::move(m), C{}}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
         // Theme deck: T opens the picker overlay — a scrolling list of every
         // theme with a live preview as you move the cursor. Enter keeps the
@@ -836,6 +897,13 @@ struct App {
         std::uint64_t h = 1469598103934665603ULL;
         auto fold = [&](std::uint64_t v) { h ^= v; h *= 1099511628211ULL; };
         fold(m.snap_gen);
+        // Belt-and-braces: the cache lives in a SHARED ptr while the snapshot
+        // is deep-copied with the Model. If the runtime ever copies the model,
+        // two snapshots share one cache under the same snap_gen — folding the
+        // procs buffer identity forces a recompute instead of handing copy B
+        // pointers into copy A's (possibly destroyed) vector.
+        fold(static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(m.snap.procs.data())));
         fold(static_cast<std::uint64_t>(m.sort));
         fold(m.sort_desc ? 1 : 0);
         fold(m.tree ? 3 : 2);
@@ -1071,11 +1139,34 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
+    // Map each target pid to its start_sec in the CURRENT snapshot (0 when
+    // unknown). Captured when a kill is ARMED; the confirm path compares
+    // against the then-freshest snapshot so a pid recycled while the user sat
+    // on the y/n prompt is never signaled. ±2s tolerance: start_sec derives
+    // from boot_epoch, which can differ by a second across sampler restarts.
+    static std::vector<std::uint64_t> starts_of(const Model& m,
+                                                const std::vector<int>& pids) {
+        std::unordered_map<int, std::uint64_t> by_pid;
+        for (const auto& q : m.snap.procs) by_pid[q.pid] = q.start_sec;
+        std::vector<std::uint64_t> out;
+        out.reserve(pids.size());
+        for (int pid : pids) {
+            auto it = by_pid.find(pid);
+            out.push_back(it != by_pid.end() ? it->second : 0);
+        }
+        return out;
+    }
+
+    static bool start_matches(std::uint64_t armed, std::uint64_t now) {
+        if (armed == 0 || now == 0) return true;   // unknown → can't check
+        return armed > now ? armed - now <= 2 : now - armed <= 2;
+    }
+
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
-            m.pending = PendingKill{p->pid, p->name, sig, {p->pid}};
+            m.pending = PendingKill{p->pid, p->name, sig, {p->pid}, {p->start_sec}};
         }
         return {std::move(m), maya::Cmd<Msg>{}};
     }
@@ -1091,7 +1182,8 @@ struct App {
             for (const auto& q : m.snap.procs)
                 if (q.name == p->name) pids.push_back(q.pid);
             if (pids.empty()) pids.push_back(p->pid);
-            m.pending = PendingKill{p->pid, p->name, sig, std::move(pids)};
+            auto starts = starts_of(m, pids);
+            m.pending = PendingKill{p->pid, p->name, sig, std::move(pids), std::move(starts)};
         }
         return {std::move(m), maya::Cmd<Msg>{}};
     }
@@ -1121,7 +1213,8 @@ struct App {
         std::string name = rp ? rp->name : ("pid " + std::to_string(root));
         // The confirm strip's group-wording keys off pids.size()>1, so a
         // subtree of one (a leaf) still reads as a single-target kill.
-        m.pending = PendingKill{root, name + " +subtree", sig, std::move(pids)};
+        auto starts = starts_of(m, pids);
+        m.pending = PendingKill{root, name + " +subtree", sig, std::move(pids), std::move(starts)};
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 

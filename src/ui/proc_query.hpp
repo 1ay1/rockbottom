@@ -48,6 +48,7 @@ inline std::uint64_t parse_bytes(const std::string& s) {
     char* end = nullptr;
     double v = std::strtod(s.c_str(), &end);
     if (end == s.c_str()) return 0;
+    if (v < 0) return 0;   // negative → u64 cast is UB; treat as garbage
     double mult = 1;
     if (*end) {
         switch (std::tolower(static_cast<unsigned char>(*end))) {

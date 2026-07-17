@@ -68,7 +68,7 @@ public:
                 {"p / Space", "pause / resume"},
                 {"< / >", "slower / faster refresh (250ms–5s)"},
                 {"T", "theme picker — live-preview 35 themes, Enter keeps"},
-                {"? / h", "toggle this help"},
+                {"? / h", "toggle this help (h = collapse in flow tree)"},
                 {"q / Esc", "quit"},
             }},
             {"MOUSE", {

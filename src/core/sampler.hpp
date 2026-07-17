@@ -85,7 +85,10 @@ private:
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
     void    sample_wireless(Wireless&);
-    Verdict judge(const Snapshot&) const;
+    // `dt` = seconds since the previous sample, so trend findings (slope-based
+    // leak/rise detection) can report true per-minute rates at ANY refresh
+    // cadence instead of assuming one sample per second.
+    Verdict judge(const Snapshot&, double dt) const;
 
     // ── Cross-tick delta state ──
     CpuTimes                              prev_total_{};
@@ -119,6 +122,11 @@ private:
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;
+    // Boot epoch (seconds), computed ONCE. time(nullptr) - uptime jitters by
+    // up to a second between ticks; recomputing it per sample made every
+    // process's start_sec wobble frame to frame (visible in age columns, and
+    // it would break exact start-time comparison for pid-reuse guards).
+    mutable std::uint64_t                 boot_epoch_ = 0;
     std::atomic<int>                      detail_pid_{0};    // proc pane target (0 = none)
 
     // ── Wall-clock throttles for SLOW-CHANGING collectors ──

@@ -103,7 +103,7 @@ constexpr ByteRate rate(Bytes delta, double dt_sec) noexcept {
 
 // ── Human formatting (correct by construction) ──────────────────────────────
 
-inline std::string humanize_bytes(std::uint64_t n, bool bits = false) {
+inline std::string humanize_bytes(std::uint64_t n) {
     // Binary units for storage/memory; label reflects it.
     static constexpr std::array<const char*, 7> u{"B", "K", "M", "G", "T", "P", "E"};
     double d = static_cast<double>(n);
@@ -112,7 +112,6 @@ inline std::string humanize_bytes(std::uint64_t n, bool bits = false) {
     char buf[32];
     if (d < 10 && i > 0) std::snprintf(buf, sizeof buf, "%.1f%s", d, u[i]);
     else                 std::snprintf(buf, sizeof buf, "%.0f%s", d, u[i]);
-    (void)bits;
     return buf;
 }
 
