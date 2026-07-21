@@ -217,15 +217,18 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // the single most expensive per-pid syscall here, so we cache it by pid
         // and only pay it the first time we see a process. The cache is pruned
         // to the live pid set below.
-        if (auto it = cmd_cache_.find(pid); it != cmd_cache_.end()) {
-            p.cmd = it->second;
+        const std::uint64_t starttime =
+            static_cast<std::uint64_t>(tai.pbsd.pbi_start_tvsec);
+        if (auto it = cmd_cache_.find(pid);
+            it != cmd_cache_.end() && it->second.first == starttime) {
+            p.cmd = it->second.second;
         } else {
             std::string argv = proc_argv(pid);
             if (argv.empty()) {
                 char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
                 if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) argv = pathbuf;
             }
-            cmd_cache_[pid] = argv;
+            cmd_cache_[pid] = {starttime, argv};
             p.cmd = std::move(argv);
         }
 
