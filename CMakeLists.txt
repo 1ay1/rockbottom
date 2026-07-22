@@ -22,6 +22,21 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# CMake < 3.30 mishandles the cxx_std_26 compile-feature (Ubuntu 24 LTS ships
+# CMake 3.28 — see issue #1 / CMake 3.30 release notes). On such a CMake the
+# feature isn't advertised in CMAKE_CXX_COMPILE_FEATURES even when the compiler
+# supports C++26, so requesting it below aborts configuration. Mirror maya's
+# guard: if cxx_std_26 isn't advertised, fall back to C++23 (which every
+# supported compiler + CMake here handles), keeping `cmake -B build` working
+# out of the box on stock distro CMake.
+if(NOT MSVC AND NOT "cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES
+            AND "cxx_std_23" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    set(CMAKE_CXX_STANDARD 23)
+    message(STATUS "rockbottom: C++26 not advertised by "
+                   "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+                   "(CMake ${CMAKE_VERSION}) — building at C++23.")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
@@ -72,7 +87,15 @@ add_executable(rockbottom
     ${RB_PLATFORM_SRC}
 )
 target_link_libraries(rockbottom PRIVATE maya)
-target_compile_features(rockbottom PRIVATE cxx_std_26)
+# Request cxx_std_26 only when CMake actually advertises it (CMake >= 3.30 with a
+# C++26-capable compiler). On older CMake the CMAKE_CXX_STANDARD set above still
+# applies the right -std flag; asking for the unknown feature here is what broke
+# the Ubuntu-24 / CMake-3.28 build (issue #1). Same guard maya uses internally.
+if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    target_compile_features(rockbottom PRIVATE cxx_std_26)
+else()
+    target_compile_features(rockbottom PRIVATE cxx_std_23)
+endif()
 
 # macOS backend needs the system frameworks that expose host/vm statistics,
 # battery state (IOKit power sources), and GPU telemetry (IOAccelerator).
