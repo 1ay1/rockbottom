@@ -1,0 +1,75 @@
+name: ci
+
+# Build rockbottom and smoke-run the `rb` binary on every push / PR across all
+# supported platforms. rockbottom targets Linux + macOS only (there is no
+# Windows backend — see README "Platform"); the matrix covers both CPU arches
+# of each so the per-platform backend (procfs/sysfs on Linux, mach/IOKit on
+# macOS) is exercised where it actually runs.
+#
+# maya is a git submodule, so every checkout is recursive. macOS builds with
+# Homebrew GCC (Apple Clang's libc++ lacks std::move_only_function, which maya
+# requires) — the same toolchain maya's own CI uses.
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build+smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            cc: gcc-14
+            cxx: g++-14
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            cc: gcc-14
+            cxx: g++-14
+          - name: macos-arm64
+            os: macos-14        # Apple Silicon runner
+            cc: gcc-14
+            cxx: g++-14
+          - name: macos-x86_64
+            os: macos-13        # Intel runner
+            cc: gcc-14
+            cxx: g++-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build
+
+      - name: Install toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gcc@14 cmake ninja || true
+
+      - name: Configure
+        shell: bash
+        run: |
+          export CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Smoke-run the binary
+        shell: bash
+        run: |
+          ./build/rb --version
+          ./build/rb --help

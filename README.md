@@ -25,6 +25,20 @@
   <i>Built in type-theoretic C++26 on the <a href="https://github.com/1ay1/maya">maya</a> TUI framework — the code got a PhD so you could keep eating crayons in peace.</i>
 </p>
 
+<p align="center">
+  <a href="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml"><img src="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  &nbsp;
+  <a href="https://github.com/1ay1/rockbottom/releases/latest"><img src="https://img.shields.io/github/v/release/1ay1/rockbottom?label=download" alt="latest release"></a>
+</p>
+
+<p align="center">
+  <b>Grab a standalone binary</b> — no build, no deps — from the
+  <a href="https://github.com/1ay1/rockbottom/releases/latest">latest release</a> or
+  <a href="assets/bin"><code>assets/bin/</code></a>:
+  <code>rb-linux-x86_64</code>, <code>rb-linux-arm64</code>,
+  <code>rb-macos-arm64</code>, <code>rb-macos-x86_64</code>.
+</p>
+
 ---
 
 ## The competition (a eulogy, delivered lovingly, at their funerals)

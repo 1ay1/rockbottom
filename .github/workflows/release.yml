@@ -1,0 +1,120 @@
+name: release
+
+# On a `v*` tag (or manual dispatch), build a stripped standalone `rb` binary
+# for every supported platform/arch, publish them as GitHub Release assets, AND
+# commit the four binaries into the repo's assets/ directory so they're directly
+# downloadable from the tree.
+#
+# Supported platforms (README "Platform"): Linux + macOS, both CPU arches. There
+# is deliberately no Windows build. maya is a submodule → recursive checkout;
+# macOS builds with Homebrew GCC.
+#
+# Asset names embed platform + arch so all four coexist:
+#   rb-linux-x86_64  rb-linux-arm64  rb-macos-arm64  rb-macos-x86_64
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create releases + push the committed binaries
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset: rb-linux-x86_64
+            os: ubuntu-latest
+          - asset: rb-linux-arm64
+            os: ubuntu-24.04-arm
+          - asset: rb-macos-arm64
+            os: macos-14
+          - asset: rb-macos-x86_64
+            os: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build
+
+      - name: Install toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gcc@14 cmake ninja || true
+
+      - name: Build (Release, stripped)
+        shell: bash
+        run: |
+          export CC=gcc-14 CXX=g++-14
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          # CMake already strips the Release binary; verify + rename to the
+          # platform-tagged asset name.
+          ./build/rb --version
+          cp build/rb "${{ matrix.asset }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: publish release + commit assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: staged
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd staged
+          chmod +x rb-* || true
+          sha256sum rb-* | tee SHA256SUMS
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            staged/rb-*
+            staged/SHA256SUMS
+          generate_release_notes: true
+
+      - name: Commit binaries into assets/
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p assets/bin
+          cp staged/rb-* staged/SHA256SUMS assets/bin/
+          chmod +x assets/bin/rb-*
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f assets/bin
+          if git diff --cached --quiet; then
+            echo "no binary changes to commit"
+          else
+            git commit -m "assets: standalone rb binaries for ${GITHUB_REF_NAME}"
+            # Land the commit on the default branch, not the detached tag.
+            DEFAULT_BRANCH="$(git remote show origin | sed -n 's/.*HEAD branch: //p')"
+            git push origin "HEAD:${DEFAULT_BRANCH}"
+          fi
