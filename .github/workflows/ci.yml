@@ -24,6 +24,11 @@ jobs:
   build:
     name: build+smoke (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # Intel macOS runners (macos-13) are being retired and are frequently
+    # capacity-starved; let that lane fail/queue without failing the overall
+    # run. Every other target is a hard gate.
+    continue-on-error: ${{ matrix.soft || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,9 +46,10 @@ jobs:
             cc: gcc-14
             cxx: g++-14
           - name: macos-x86_64
-            os: macos-13        # Intel runner
+            os: macos-13        # Intel runner (scarce → soft)
             cc: gcc-14
             cxx: g++-14
+            soft: true
     steps:
       - uses: actions/checkout@v4
         with:
