@@ -2,15 +2,16 @@ name: release
 
 # On a `v*` tag (or manual dispatch), build a stripped standalone `rb` binary
 # for every supported platform/arch, publish them as GitHub Release assets, AND
-# commit the four binaries into the repo's assets/ directory so they're directly
+# commit the binaries into the repo's assets/ directory so they're directly
 # downloadable from the tree.
 #
-# Supported platforms (README "Platform"): Linux + macOS, both CPU arches. There
-# is deliberately no Windows build. maya is a submodule → recursive checkout;
-# macOS builds with Homebrew GCC.
+# Supported platforms: Linux (x86_64 + arm64) and Apple Silicon macOS. There is
+# deliberately no Windows build, and no Intel macOS build (the macos-13 runner
+# image is retired). maya is a submodule → recursive checkout; macOS builds with
+# Homebrew GCC.
 #
-# Asset names embed platform + arch so all four coexist:
-#   rb-linux-x86_64  rb-linux-arm64  rb-macos-arm64  rb-macos-x86_64
+# Asset names embed platform + arch so all three coexist:
+#   rb-linux-x86_64  rb-linux-arm64  rb-macos-arm64
 
 on:
   push:
@@ -39,8 +40,6 @@ jobs:
             os: ubuntu-24.04-arm
           - asset: rb-macos-arm64
             os: macos-14
-          - asset: rb-macos-x86_64
-            os: macos-13
     steps:
       - uses: actions/checkout@v4
         with:

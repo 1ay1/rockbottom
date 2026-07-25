@@ -36,7 +36,7 @@
   <a href="https://github.com/1ay1/rockbottom/releases/latest">latest release</a> or
   <a href="assets/bin"><code>assets/bin/</code></a>:
   <code>rb-linux-x86_64</code>, <code>rb-linux-arm64</code>,
-  <code>rb-macos-arm64</code>, <code>rb-macos-x86_64</code>.
+  <code>rb-macos-arm64</code>.
 </p>
 
 ---
