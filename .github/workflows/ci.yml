@@ -80,3 +80,20 @@ jobs:
         run: |
           ./build/rb --version
           ./build/rb --help
+
+      # Exercise the topology probe against the runner's REAL hardware — the
+      # only place the Linux sysfs classifier runs on Linux, since the unit
+      # tests drive it over in-memory fixtures. CI runners are ordinary
+      # homogeneous VMs, so the meaningful assertion is the NEGATIVE one: the
+      # probe must not invent a P/E split out of frequency scatter or
+      # favoured-core boost. That false positive is exactly what the ~15%
+      # spread threshold exists to prevent, and it would put a bogus cluster
+      # column on every ordinary server.
+      - name: Topology probe
+        shell: bash
+        run: |
+          ./build/rb --topology | tee /tmp/topo.txt
+          if [ "${{ runner.os }}" = "Linux" ] && grep -q heterogeneous /tmp/topo.txt; then
+            echo "::error::classifier reported a P/E split on a homogeneous CI runner"
+            exit 1
+          fi

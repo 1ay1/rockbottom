@@ -404,6 +404,39 @@ No ncurses, no runtime dependencies, no phoning home to sell your fan speeds to
 advertisers. On Windows? Still not for you — but sincerely, genuinely, from the
 bottom of our hearts: props for reading this entire thing.
 
+### Per-core, per-cluster
+
+On heterogeneous silicon — Apple P/E, Intel hybrid Core/Atom, ARM big.LITTLE —
+every logical CPU is labelled with the cluster it actually belongs to, and the
+grid groups and averages by cluster. This is probed **once at startup**, not per
+tick, and never by forking a subprocess: sysfs `cpu_core`/`cpu_atom` cpulists and
+`cpu_capacity` on Linux, `hw.perflevel*` on macOS. A machine that is genuinely
+homogeneous is left alone — a ~15% capability spread is required before anything
+is called a cluster, so ordinary frequency scatter and favoured-core boost don't
+conjure a phantom P/E column on your server.
+
+To see exactly what was detected on your machine — useful in a bug report, and
+the fastest way to tell "the kernel exposed nothing" from "we misread it":
+
+```sh
+rb --topology
+```
+
+```
+model      Apple M1
+logical    8
+clusters   heterogeneous — 4 Performance + 4 Efficiency
+
+ cpu  class   phys       freq     temp  load
+   0  E          -          -        -   12%
+   ...
+   4  P          -          -        -   63%
+```
+
+(`RB_SYSFS_ROOT=/path/to/a/captured/sys` replays another machine's `/sys` tree
+through the same classifier, which is how the Linux path gets tested without
+owning every CPU ever made.)
+
 ## License
 
 MIT. Do whatever you want; we are not your dad, and we would not presume. Vendored
