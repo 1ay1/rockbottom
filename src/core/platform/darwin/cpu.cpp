@@ -43,6 +43,51 @@ void Sampler::read_static() {
     if (ncpu_ < 1) ncpu_ = 1;
 
     ram_total_ = Bytes{sysctl_num<std::uint64_t>("hw.memsize").value_or(0)};
+
+    probe_topology();
+}
+
+// Apple Silicon splits its cores into performance / efficiency clusters, which
+// the kernel describes via the hw.perflevelN.* sysctl family: perflevel0 is
+// always the FASTEST tier and each level reports its logical-cpu count plus a
+// human name ("Performance" / "Efficiency").
+//
+// The mapping from perf level to mach cpu INDEX is the subtle part. XNU
+// enumerates host_processor_info() with the efficiency cluster FIRST — on an
+// M1, cpu0-3 are the E cores and cpu4-7 the P cores. That is the reverse of
+// the sysctl order, and getting it backwards mislabels every core on the
+// machine. Verified empirically: a single spinning thread (which the scheduler
+// places on a P core) lights up cpu4-7, never cpu0-3.
+//
+// Intel Macs have no perflevel sysctls at all — nperflevels is absent or 1,
+// the vectors stay Unknown, and the UI shows the flat homogeneous view.
+void Sampler::probe_topology() {
+    const std::size_t n = static_cast<std::size_t>(std::max(1, ncpu_));
+    core_kind_.assign(n, CoreKind::Unknown);
+    // macOS exposes no logical->physical core map (and Apple Silicon has no
+    // SMT, so there are no siblings to resolve); leave both empty.
+    core_phys_.clear();
+    phys_siblings_.clear();
+
+    const int levels = static_cast<int>(sysctl_num<std::int32_t>("hw.nperflevels").value_or(0));
+    if (levels < 2) { core_kind_.clear(); return; }
+
+    const int nperf = static_cast<int>(sysctl_num<std::int32_t>("hw.perflevel0.logicalcpu").value_or(0));
+    const int neff  = static_cast<int>(sysctl_num<std::int32_t>("hw.perflevel1.logicalcpu").value_or(0));
+    if (nperf <= 0 || neff <= 0) { core_kind_.clear(); return; }
+
+    // Efficiency cluster occupies the LOW mach indices; performance the high.
+    // Clamp rather than assume the two counts sum to ncpu_ (a 3-tier part
+    // would report more levels than we model — the remainder stays Unknown).
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i < static_cast<std::size_t>(neff))            core_kind_[i] = CoreKind::Eff;
+        else if (i < static_cast<std::size_t>(neff + nperf)) core_kind_[i] = CoreKind::Perf;
+    }
+
+    perf_label_ = sys::trim(sysctl_str("hw.perflevel0.name"));
+    eff_label_  = sys::trim(sysctl_str("hw.perflevel1.name"));
+    if (perf_label_.empty()) perf_label_ = "Performance";
+    if (eff_label_.empty())  eff_label_  = "Efficiency";
 }
 
 // Seconds since boot: now - kern.boottime (a struct timeval set at boot).
@@ -58,12 +103,6 @@ std::uint64_t Sampler::uptime_sec() const {
 void Sampler::sample_cpu(CpuInfo& cpu) {
     cpu.model = cpu_model_;
     cpu.logical = ncpu_;
-    // Apple Silicon splits cores into performance / efficiency clusters;
-    // perflevel0 = P cores, perflevel1 = E cores. Absent on Intel — stays 0.
-    cpu.perf_cores = static_cast<int>(
-        sysctl_num<std::int32_t>("hw.perflevel0.logicalcpu").value_or(0));
-    cpu.eff_cores = static_cast<int>(
-        sysctl_num<std::int32_t>("hw.perflevel1.logicalcpu").value_or(0));
 
     natural_t                ncpus = 0;
     processor_info_array_t   info = nullptr;
@@ -119,6 +158,9 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         sys::push_hist(c.history, c.hist_len, static_cast<float>(c.usage.v));
         cpu.cores[i] = c;
     }
+
+    // Label each core with its cluster from the topology probed at startup.
+    apply_topology(cpu);
 
     sys::push_hist(total_hist_, total_hist_len_, static_cast<float>(cpu.total.v));
     cpu.total_history = total_hist_;

@@ -178,6 +178,32 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
                 ") while the machine averages " + fmt_pct(avg_core)});
     }
 
+    // ── 5b. Wrong cluster: work parked on the efficiency cores ────────────
+    // On heterogeneous silicon (Apple P/E, Intel hybrid, ARM big.LITTLE) a job
+    // scheduled onto the efficiency cluster runs at a fraction of the speed it
+    // would on a performance core — and the AVERAGE hides it completely: the
+    // machine reads as half idle, because half of it is. This is an advisory,
+    // not distress, so it scores in the "busy" band and only speaks up when
+    // there is genuinely idle performance capacity to move the work to.
+    if (s.cpu.hetero()) {
+        double psum = 0, esum = 0;
+        int pn = 0, en = 0;
+        for (const auto& c : s.cpu.cores) {
+            if (c.kind == CoreKind::Eff)       { esum += c.usage.percent(); ++en; }
+            else if (c.kind == CoreKind::Perf) { psum += c.usage.percent(); ++pn; }
+        }
+        const double pavg = pn ? psum / pn : 0;
+        const double eavg = en ? esum / en : 0;
+        if (en > 0 && pn > 0 && eavg > 70 && pavg < 30) {
+            std::string ev = "efficiency cores at " + fmt_pct(eavg) + " while the " +
+                             std::to_string(pn) + " performance cores sit at " + fmt_pct(pavg);
+            if (top_cpu && top_cpu->cpu > 20)
+                ev += "; " + name_pid(top_cpu) + " would run faster pinned to a P core";
+            findings.push_back({32,
+                "Work is running on the slow cores", std::move(ev)});
+        }
+    }
+
     // ── 6. Run-queue backlog: work queued beyond capacity ───────────────────
     if (la_ratio > 2.0 && cpu < 80) {
         // High load + moderate CPU = queue is full of something not running

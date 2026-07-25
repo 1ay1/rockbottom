@@ -14,6 +14,7 @@
 #include "panel.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -121,20 +122,46 @@ public:
             // Narrow mode: one heat-strip row (maya Heatmap idiom) — each core
             // is a 2-cell block colored by its load. Denser than meters and
             // reads as a single glance-able texture.
+            //
+            // On heterogeneous silicon the two clusters are separated by a
+            // divider and the label names the split, so even the narrowest
+            // layout still answers "is my work on the fast cores?".
+            const bool hetero = cpu_.hetero();
             std::string content;
             std::vector<StyledRun> runs;
-            for (int i = 0; i < n; ++i) {
-                const double f = cpu_.cores[static_cast<std::size_t>(i)].usage.v;
+            auto emit = [&](int i, bool last) {
+                const CpuCore& core = cpu_.cores[static_cast<std::size_t>(i)];
+                const double f = core.usage.v;
                 // Idle cores show a dim groove block so the strip stays a
                 // continuous rail; active ones glow through the gradient.
                 Color cc = f < 0.03 ? pal::track : load_color(f);
+                // E-core blocks sit one notch back so the cluster reads as
+                // texture, without hiding a genuinely hot E core.
+                if (hetero && core.kind == CoreKind::Eff)
+                    cc = mix(cc, pal::bg_panel, 0.3);
                 std::size_t off = content.size();
                 content += "██";
                 runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
-                if (i + 1 < n) content += ' ';
+                if (!last) content += ' ';
+            };
+            if (hetero) {
+                std::vector<int> perf, eff;
+                for (int i = 0; i < n; ++i) {
+                    if (cpu_.cores[static_cast<std::size_t>(i)].kind == CoreKind::Eff) eff.push_back(i);
+                    else perf.push_back(i);
+                }
+                for (std::size_t k = 0; k < perf.size(); ++k) emit(perf[k], k + 1 == perf.size());
+                if (!perf.empty() && !eff.empty()) {
+                    std::size_t off = content.size();
+                    content += " │ ";
+                    runs.push_back({off, content.size() - off, Style{}.with_fg(pal::faint)});
+                }
+                for (std::size_t k = 0; k < eff.size(); ++k) emit(eff[k], k + 1 == eff.size());
+            } else {
+                for (int i = 0; i < n; ++i) emit(i, i + 1 == n);
             }
             rows.push_back((h(
-                text("cores") | nowrap | fgc(pal::cpu_ac) | w_<6>,
+                text(hetero ? " P·E " : "cores") | nowrap | fgc(pal::cpu_ac) | w_<6>,
                 Element{TextElement{.content = std::move(content), .style = {},
                                     .wrap = TextWrap::NoWrap, .runs = std::move(runs)}}
             ) | gap(1)).build());
@@ -143,46 +170,84 @@ public:
         // right-aligned % + a meter that fills the column, and — like the
         // MEM/NET/DISK panels — a load-graded history SPARKLINE trailing the
         // meter so every core shows its recent trend, not just a static bar.
+        //
+        // On heterogeneous silicon each id carries its cluster letter (P/E)
+        // and E-core ids are dimmed, so "my build is on the slow cores" is
+        // visible from the dashboard without opening the drill-down.
+        const bool hetero = cpu_.hetero();
         const int per_col = (n + cols_ - 1) / cols_;
-        auto cell = [&](int i) -> Element {
+        // Spark width is solved ONCE for the whole grid, not per column: the
+        // columns can differ by a cell of layout residue, and a per-column
+        // slack/3 turns that into a whole cell of spark drift, which drags
+        // every figure right of it out of line (issue #2).
+        const int id_w = hetero ? 5 : 3;
+        // Snapshot exactly what a cell needs. The grid renders LATER (maya
+        // solves the component when it has a width, and may re-render it from
+        // its cross-frame cache), by which time `this` and cpu_ may be gone —
+        // so the closure must own its data outright, never reference it.
+        struct CoreCell {
+            std::string id;
+            double f = 0;
+            Color id_c{}, spark_c{};
+            std::array<float, 48> hist{};
+            int hl = 0;
+        };
+        auto cells = std::make_shared<std::vector<CoreCell>>();
+        cells->reserve(static_cast<std::size_t>(std::max(0, n)));
+        for (int i = 0; i < n; ++i) {
             const CpuCore& c = cpu_.cores[static_cast<std::size_t>(i)];
             const double f = c.usage.v;
-            char id[8];
-            std::snprintf(id, sizeof id, "%2d", i);
-            std::string id_s = id;
-            // Copy the ring so the spark owns its data for the frame.
-            std::array<float, 48> hist = c.history;
-            const int hl = c.hist_len;
-            const Color spark_c = f < 0.03 ? mix(load_color(f), pal::bg_panel, 0.45)
-                                           : load_color(f);
-            return Element{ComponentElement{
-                .render = [=](int w, int) -> Element {
-                    // id(3) + % (4) + gaps; split the rest between meter and
-                    // spark. Only draw the spark when the column is wide
-                    // enough that both stay legible.
-                    const int fixed = 3 + 4 + 2;      // labels + gaps
-                    const int slack = std::max(0, w - fixed);
-                    const bool show_spark = slack >= 14;
-                    const int spark_w = show_spark ? slack / 3 : 0;
-                    std::vector<Element> cc;
-                    cc.push_back((text(id_s) | nowrap | fgc(pal::cpu_ac) | w_<3>).build());
-                    cc.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | w_<4>).build());
-                    cc.push_back(Element{Meter{f}.fill()} | grow(1));
-                    if (show_spark)
-                        cc.push_back(Spark{hist.data(), hl}.cells(spark_w)
-                                         .color(spark_c).baseline(true).build_fixed());
-                    return (h(std::move(cc)) | gap(1)).build();
-                }}};
-        };
-        for (int r = 0; r < per_col; ++r) {
-            std::vector<Element> line;
-            for (int col = 0; col < cols_; ++col) {
-                int i = col * per_col + r;
-                if (i < n) line.push_back(Element{cell(i)} | grow(1));
-                else       line.push_back(Element{blank()} | grow(1));
-            }
-            rows.push_back((h(line) | gap(3)).build());
+            char id[12];
+            if (hetero) std::snprintf(id, sizeof id, "%2d·%c", i, c.kind == CoreKind::Eff ? 'E' : 'P');
+            else        std::snprintf(id, sizeof id, "%2d", i);
+            cells->push_back(CoreCell{
+                id, f,
+                !hetero || c.kind == CoreKind::Perf ? pal::cpu_ac
+                                                    : mix(pal::cpu_ac, pal::dim, 0.55),
+                f < 0.03 ? mix(load_color(f), pal::bg_panel, 0.45) : load_color(f),
+                c.history, c.hist_len});
         }
+        // The whole grid is ONE component so every row is solved against the
+        // same column width and the same spark width — the numbers form a
+        // straight column down the panel instead of ragging per row.
+        const int ncols = cols_;
+        rows.push_back(Element{ComponentElement{
+            .render = [cells, per_col, ncols, id_w](int w, int) -> Element {
+                const int gutter = 3;
+                const int col_w = std::max(1, (w - gutter * (ncols - 1)) / ncols);
+                // id + % + two gaps are fixed; the rest splits between the
+                // elastic meter and the spark.
+                const int slack = std::max(0, col_w - (id_w + 4 + 2));
+                const int spark_w = slack >= 14 ? slack / 3 : 0;
+                const int total = static_cast<int>(cells->size());
+                std::vector<Element> grid;
+                for (int r = 0; r < per_col; ++r) {
+                    std::vector<Element> line;
+                    for (int col = 0; col < ncols; ++col) {
+                        const int i = col * per_col + r;
+                        Element e = Element{blank()};
+                        if (i < total) {
+                            const CoreCell& cc = (*cells)[static_cast<std::size_t>(i)];
+                            std::vector<Element> parts;
+                            parts.push_back((text(cc.id) | nowrap | Bold | fgc(cc.id_c) | width(id_w)).build());
+                            parts.push_back((text(fmt::pct_pad(cc.f)) | nowrap
+                                             | fgc(load_color(cc.f)) | w_<4>).build());
+                            parts.push_back(Element{Meter{cc.f}.fill()} | grow(1));
+                            if (spark_w > 0)
+                                parts.push_back(Spark{cc.hist.data(), cc.hl}.cells(spark_w)
+                                                    .color(cc.spark_c).baseline(true).build_fixed());
+                            e = (h(std::move(parts)) | gap(1)).build();
+                        }
+                        line.push_back((Element{std::move(e)} | width(col_w)).build());
+                    }
+                    grid.push_back((h(std::move(line)) | gap(gutter)).build());
+                }
+                return v(std::move(grid)).build();
+            },
+            .measure = [per_col](int max_width) -> Size {
+                return {Columns{max_width > 0 ? max_width : 1}, Rows{std::max(1, per_col)}};
+            },
+        }});
         }
 
         // Temp chip on the border.

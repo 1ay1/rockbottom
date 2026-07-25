@@ -52,6 +52,70 @@ Sampler::Sampler() {
     read_static();
 }
 
+// Stamp every logical core with the class + physical id discovered once at
+// read_static(), then recompute the cluster tallies from what was actually
+// stamped. Deriving the counts here (instead of trusting a separate sysctl)
+// keeps CpuCore::kind and CpuInfo::perf_cores structurally incapable of
+// disagreeing — the histogram IS the counts.
+void Sampler::apply_topology(CpuInfo& cpu) const {
+    cpu.perf_cores = cpu.eff_cores = 0;
+    cpu.perf_label = perf_label_;
+    cpu.eff_label  = eff_label_;
+    for (std::size_t i = 0; i < cpu.cores.size(); ++i) {
+        CpuCore& c = cpu.cores[i];
+        c.kind = i < core_kind_.size() ? core_kind_[i] : CoreKind::Unknown;
+        c.phys = i < core_phys_.size() ? core_phys_[i] : -1;
+        if (c.kind == CoreKind::Perf) ++cpu.perf_cores;
+        else if (c.kind == CoreKind::Eff) ++cpu.eff_cores;
+    }
+    // A "heterogeneous" machine where one cluster is empty is just a
+    // homogeneous machine with a noisy probe — fall back to the flat view
+    // rather than labelling every core P.
+    if (cpu.perf_cores == 0 || cpu.eff_cores == 0) {
+        cpu.perf_cores = cpu.eff_cores = 0;
+        cpu.perf_label.clear();
+        cpu.eff_label.clear();
+        for (CpuCore& c : cpu.cores) c.kind = CoreKind::Unknown;
+    }
+}
+
+// Attach per-core die temperatures to the cores themselves.
+//
+// The sensor label is the only link the kernel gives us, and it names a
+// PHYSICAL core ("Core 5" from Intel coretemp / zenpower), not a logical cpu.
+// With SMT enabled physical core 5 backs logical cpus 10 and 11, and on hybrid
+// parts the ids are sparse — so indexing cores[] by the label's integer, as a
+// naive reading does, silently files temperatures onto the wrong cores. We
+// resolve through the sibling map instead, and only fall back to a direct
+// index when the machine reported no topology at all.
+void Sampler::apply_core_temps(CpuInfo& cpu, const std::vector<Sensor>& sensors) const {
+    const int n = static_cast<int>(cpu.cores.size());
+    if (n == 0) return;
+    for (CpuCore& c : cpu.cores) c.temp_c = 0;
+
+    for (const Sensor& sn : sensors) {
+        if (sn.zone != "cpu" || sn.temp_c <= 0) continue;
+        // Must name a core AND carry an index: "Core 5", "core5", "Core 5 Temp".
+        // A package/die/Tctl sensor has no per-core meaning and is skipped —
+        // it already rides the panel's border chip as CpuInfo::temp_c.
+        const std::string& lb = sn.label;
+        if (lb.find("ore") == std::string::npos) continue;
+        std::size_t p = lb.find_first_of("0123456789");
+        if (p == std::string::npos) continue;
+        const int phys = std::atoi(lb.c_str() + p);
+
+        auto it = phys_siblings_.find(phys);
+        if (it != phys_siblings_.end()) {
+            for (int lg : it->second)
+                if (lg >= 0 && lg < n) cpu.cores[static_cast<std::size_t>(lg)].temp_c = sn.temp_c;
+        } else if (core_phys_.empty() && phys >= 0 && phys < n) {
+            // No topology available (container with a masked /sys, exotic
+            // kernel): the historic 1:1 reading is still better than nothing.
+            cpu.cores[static_cast<std::size_t>(phys)].temp_c = sn.temp_c;
+        }
+    }
+}
+
 Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     auto now = std::chrono::steady_clock::now();
     double dt = first_ ? 0.0 : std::chrono::duration<double>(now - last_time_).count();
@@ -96,6 +160,11 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // Hardware temperatures drift slowly — refresh ~every 2s.
     if (due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
     s.sensors = sensors_cache_;
+
+    // Resolve per-core die temps onto the cores now that both halves exist.
+    // Doing it HERE, once, means the UI never has to parse a sensor label and
+    // every view (panel, drill-down, verdict) sees the same resolved figure.
+    apply_core_temps(s.cpu, s.sensors);
 
     // SNAPPY: the per-fd socket scan is the single most expensive collector and
     // listening ports change slowly, so refresh it on a wall-clock cadence

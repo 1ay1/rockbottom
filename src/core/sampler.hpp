@@ -71,8 +71,22 @@ private:
 
     // Collectors (each lives in its own .cpp under platform/<os>/).
     void    read_static();
+    // Probes the STATIC cpu topology (P/E class + physical core id per logical
+    // cpu) into core_kind_/core_phys_/phys_siblings_. Called once from
+    // read_static(); per-OS because the evidence differs (sysfs on Linux,
+    // hw.perflevel* sysctls on Darwin).
+    void    probe_topology();
     std::uint64_t uptime_sec() const;   // seconds since boot (platform-specific)
     void    sample_cpu(CpuInfo&);
+    // Stamps CpuCore::kind/phys from the topology probed at read_static() and
+    // recomputes the perf/eff tallies. Platform-agnostic (the probe itself is
+    // per-OS), so it lives in the orchestrator and both backends call it after
+    // filling the per-core load figures.
+    void    apply_topology(CpuInfo&) const;
+    // Fans hwmon/SMC per-core temperatures out onto CpuCore::temp_c using the
+    // physical->logical sibling map. Called by the orchestrator once sensors
+    // and cpu are both sampled, so the UI never parses a sensor label.
+    void    apply_core_temps(CpuInfo&, const std::vector<Sensor>&) const;
     void    sample_mem(MemInfo&);
     void    sample_mem_rates(MemInfo&, double dt);   // vmstat swap in/out
     void    sample_disks(std::vector<DiskInfo>&);
@@ -89,6 +103,20 @@ private:
     // leak/rise detection) can report true per-minute rates at ANY refresh
     // cadence instead of assuming one sample per second.
     Verdict judge(const Snapshot&, double dt) const;
+
+    // ── CPU topology, probed ONCE at read_static() ──
+    // Heterogeneous-core class + physical-core id per logical CPU. Both are
+    // static machine facts (the kernel never re-clusters a core at runtime),
+    // so probing them per tick would be pure sysfs waste. `core_kind_` is
+    // empty when the machine is homogeneous or the probe found nothing, and
+    // every consumer treats that as CoreKind::Unknown.
+    std::vector<CoreKind>                 core_kind_;   // by logical cpu index
+    std::vector<int>                      core_phys_;   // logical -> physical core id
+    // physical core id -> every logical cpu on it (SMT siblings). Lets a
+    // per-PHYSICAL-core sensor ("Core 5" from Intel coretemp) fan out onto
+    // both of its hyperthreads instead of being misfiled onto cpu5.
+    std::unordered_map<int, std::vector<int>> phys_siblings_;
+    std::string                           perf_label_, eff_label_;
 
     // ── Cross-tick delta state ──
     CpuTimes                              prev_total_{};

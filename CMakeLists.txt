@@ -124,3 +124,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel"
 endif()
 
 install(TARGETS rockbottom RUNTIME DESTINATION bin)
+
+# ── tests ──────────────────────────────────────────────────
+# Headless render assertions for the widgets whose bugs are invisible to a
+# compiler — column alignment, cluster labelling. They render the REAL widget
+# onto a real canvas and inspect the resulting cells, so a layout regression
+# fails the build instead of shipping. Not built by default; `make rb_tests`.
+add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
+target_link_libraries(rb_tests PRIVATE maya)
+if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    target_compile_features(rb_tests PRIVATE cxx_std_26)
+else()
+    target_compile_features(rb_tests PRIVATE cxx_std_23)
+endif()

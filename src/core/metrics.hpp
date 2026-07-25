@@ -16,10 +16,22 @@
 
 namespace rockbottom {
 
+// Scheduling class of a logical CPU on heterogeneous silicon (Apple
+// P/E clusters, Intel hybrid Core/Atom, ARM big.LITTLE). Carried PER CORE
+// rather than as a pair of counts: the two vendors disagree about cluster
+// ORDERING (macOS enumerates efficiency first, Linux enumerates performance
+// first, Intel hybrid interleaves SMT siblings), so a count plus an assumed
+// layout is not enough to label core N. Unknown = homogeneous or unprobeable,
+// and every consumer degrades to the flat view.
+enum class CoreKind : std::uint8_t { Unknown = 0, Perf = 1, Eff = 2 };
+
 // A single logical CPU with a small ring of recent load samples for the graph.
 struct CpuCore {
     Ratio                usage{};      // 0..1 busy fraction over the last interval
     Hertz                freq{};       // current clock, 0 if unknown
+    float                temp_c = 0;   // this core's die temperature, 0 if unknown
+    CoreKind             kind = CoreKind::Unknown;   // performance / efficiency cluster
+    int                  phys = -1;    // physical core id (SMT siblings share one), -1 unknown
     std::array<float, 48> history{};   // rolling load for the sparkline
     int                  hist_len = 0; // number of valid samples (grows to 48)
 };
@@ -27,8 +39,15 @@ struct CpuCore {
 struct CpuInfo {
     std::string          model = "CPU";
     int                  logical = 0;
+    // Derived cluster tallies — a convenience for header strings. The
+    // authoritative per-core answer is CpuCore::kind; these are just its
+    // histogram, recomputed by the backend after it stamps the cores.
     int                  perf_cores = 0;  // performance cores (0 = homogeneous/unknown)
     int                  eff_cores = 0;   // efficiency cores
+    // Vendor's own names for the two clusters ("Performance"/"Efficiency" on
+    // Apple, "Core"/"Atom" on Intel hybrid). Empty = use the generic wording.
+    std::string          perf_label, eff_label;
+    bool hetero() const { return perf_cores > 0 && eff_cores > 0; }
     Ratio                total{};      // aggregate busy fraction
     Ratio                user{};       // busy fraction spent in user code
     Ratio                system{};     // busy fraction spent in the kernel

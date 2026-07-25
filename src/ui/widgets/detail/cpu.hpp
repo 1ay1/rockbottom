@@ -70,7 +70,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         "15m", fmt::fixed2(c.loadavg[2]), pal::label));
     // Core topology reads "8 (4P + 4E)" on heterogeneous silicon.
     std::string topo = std::to_string(c.logical);
-    if (c.perf_cores > 0 && c.eff_cores > 0)
+    if (c.hetero())
         topo += " (" + std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E)";
     L.push_back(kv3(
         "logical cpus", topo, pal::text,
@@ -105,43 +105,49 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         if (hi - lo > 0.6 && hi > 0.8)
             L.push_back(verdict("▲ load is lopsided — one core is pinned while others idle "
                                 "(a single-threaded hog?)", pal::hot));
+        // On heterogeneous silicon the SINGLE most actionable number is where
+        // the work landed: heavy load on the efficiency cluster while the
+        // performance cluster idles means your job is running slow for no
+        // reason. Show both cluster averages side by side, and say so plainly.
+        if (c.hetero()) {
+            double ps = 0, es = 0;
+            int pn = 0, en = 0;
+            for (const auto& core : c.cores) {
+                if (core.kind == CoreKind::Eff)       { es += core.usage.v; ++en; }
+                else if (core.kind == CoreKind::Perf) { ps += core.usage.v; ++pn; }
+            }
+            const double pavg = pn ? ps / pn : 0, eavg = en ? es / en : 0;
+            L.push_back(kv3(
+                "P cores", fmt::pct(pavg) + " avg", load_color(pavg),
+                "E cores", fmt::pct(eavg) + " avg", load_color(eavg),
+                "headroom", pn ? fmt::pct(1.0 - pavg) + " on P" : "",
+                1.0 - pavg > 0.5 ? pal::good : pal::hot));
+            if (eavg > 0.7 && pavg < 0.3)
+                L.push_back(verdict("▲ the efficiency cores are doing the work while the "
+                                    "performance cores idle — pin the hot process to a P core",
+                                    pal::hot));
+        }
         L.push_back(gap_row());
     }
 
-    // ── per-core meters ──────────────────────────────────────────────────
-    // On Apple Silicon macOS enumerates the efficiency cluster first (M1:
-    // cpu0-3 = E, cpu4-7 = P). Tag each core with its cluster so "why is
-    // core 6 pinned" answers itself; P-core ids get the brighter accent.
+    // ── per-core meters ────────────────────────────────────────
+    // Every logical core: a load meter, its own history spark, load %, clock,
+    // die temperature, and — on heterogeneous silicon — which cluster it
+    // belongs to. The class and the temperature both arrive RESOLVED from the
+    // sampler (CpuCore::kind / ::temp_c); this pane never parses a sensor
+    // label or guesses a cluster layout from core counts.
     const int n = static_cast<int>(c.cores.size());
-    const bool hetero = c.perf_cores > 0 && c.eff_cores > 0 &&
-                        c.perf_cores + c.eff_cores == n;
+    const bool hetero = c.hetero();
 
-    // Per-core temperature, where the platform reports it. Intel coretemp
-    // labels each die sensor "Core 0".."Core N" — map those onto the logical
-    // core ids so a hot core shows its °C right in its own row (AMD k10temp /
-    // Apple only expose a package/die sensor, so this map is simply empty and
-    // the temp column never appears — no wasted space).
-    std::vector<float> core_temp(static_cast<std::size_t>(std::max(0, n)), 0.0f);
     bool have_core_temp = false;
-    for (const Sensor& sn : s.sensors) {
-        if (sn.zone != "cpu") continue;
-        const std::string& L = sn.label;
-        // Accept "Core 5", "core5", "Core 5 Temp" — grab the first integer.
-        std::size_t p = L.find_first_of("0123456789");
-        if (p == std::string::npos) continue;
-        if (L.find("ore") == std::string::npos) continue;   // must say "Core"
-        int idx = std::atoi(L.c_str() + p);
-        if (idx >= 0 && idx < n && sn.temp_c > 0) {
-            core_temp[static_cast<std::size_t>(idx)] = sn.temp_c;
-            have_core_temp = true;
-        }
-    }
+    for (const CpuCore& core : c.cores) if (core.temp_c > 0) { have_core_temp = true; break; }
+
     // Column legend in the section chip so the trailing bare figures read
     // unambiguously — a per-core row is "id  meter  spark  <load>%  <clock>GHz
     // [<temp>°C]", and without this the % / G / ° columns are unlabelled.
     // Cluster split (nP+mE) still leads when the chip has room.
     {
-        std::string chip = c.perf_cores > 0 && c.eff_cores > 0
+        std::string chip = hetero
             ? std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E · "
             : std::to_string(n) + " cores · ";
         chip += have_core_temp ? "load · GHz · °C" : "load · GHz";
@@ -163,50 +169,110 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // that vertical room with real per-core trend history instead of blanks.
     if (split && cols > 1 && core_w / cols < 40 && core_w / (cols - 1) >= 40)
         --cols;
-    const int per = (n + cols - 1) / cols;
+    const int col_w = core_w / std::max(1, cols);
     // Spark width scales with the room each column actually has — a wide split
     // column gets a longer history trace, a tight one the compact 12-cell run.
-    const int spark_cells = core_w / std::max(1, cols) >= 56 ? 18 : 12;
-    for (int r = 0; r < per; ++r) {
-        std::vector<Element> line;
-        for (int col = 0; col < cols; ++col) {
-            int i = col * per + r;
-            if (i >= n) { line.push_back(Element{blank()} | grow(1)); continue; }
-            const CpuCore& core = c.cores[static_cast<std::size_t>(i)];
-            const double f = core.usage.v;
-            char id[10];
-            if (hetero)
-                std::snprintf(id, sizeof id, "%2d·%c", i, i < c.eff_cores ? 'E' : 'P');
-            else
-                std::snprintf(id, sizeof id, "%2d", i);
-            std::string fq = core.freq.value > 0
-                ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
-            // Per-core temperature cell, when the platform exposes it and the
-            // column is wide enough to carry it after the meter/spark/%/freq.
-            const float ct = core_temp[static_cast<std::size_t>(i)];
-            const bool show_temp = have_core_temp && ct > 0
-                                   && core_w / cols >= 44;
-            std::string tp = show_temp
-                ? std::to_string(static_cast<int>(ct + 0.5f)) + "\xc2\xb0" : "";
-            const maya::Color tp_c = load_color(std::clamp((ct - 40.0) / 50.0, 0.0, 1.0));
-            // Per-core load sparkline: the core's own recent history, so you
-            // see WHICH cores have been busy over time, not just this instant.
-            // Shown when the column is wide enough to carry a meter + a spark.
-            const bool room = core_w / cols >= 40;
-            line.push_back(Element{(h(
-                text(id) | nowrap | fgc(hetero && i >= c.eff_cores
-                                            ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.5))
-                    | width(hetero ? 5 : 3),
-                Element{Meter{f}.fill().groove(false)} | grow(1),
-                room ? Spark{core.history.data(), core.hist_len}.cells(spark_cells).build_fixed()
-                     : Element{blank()} | width(0),
-                text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f)) | width(5) | justify(Justify::End),
-                text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End),
-                show_temp ? (text(tp) | nowrap | Bold | fgc(tp_c) | width(5) | justify(Justify::End)).build()
-                          : (Element{blank()} | width(0))
-            ) | gap(1)).build()} | grow(1));
+    const int spark_cells = col_w >= 56 ? 18 : 12;
+    // ALIGNMENT CONTRACT for a core row: the meter is the ONLY elastic cell;
+    // everything to its right is a fixed reserved column that is present on
+    // EVERY row whether or not this particular core has a figure for it. The
+    // original code dropped the temp cell to width(0) on cores with no probe,
+    // which let the meter eat those cells and shifted that row's %/GHz left of
+    // its neighbours' — the ragged grid in issue #2. Reserve-and-blank, never
+    // drop, is what makes the columns line up.
+    const bool show_spark = col_w >= 40;
+    const bool show_temp_col = have_core_temp && col_w >= 44;
+    const bool show_freq_col = [&] {
+        for (const CpuCore& core : c.cores) if (core.freq.value > 0) return true;
+        return false;
+    }();
+    const int id_w = hetero ? 5 : 3;
+
+    // One core's row. Rendered identically for every core so the fixed columns
+    // land at the same offset down the whole grid.
+    auto core_row = [&](int i) -> Element {
+        const CpuCore& core = c.cores[static_cast<std::size_t>(i)];
+        const double f = core.usage.v;
+        char id[12];
+        if (hetero)
+            std::snprintf(id, sizeof id, "%2d·%c", i, core.kind == CoreKind::Eff ? 'E' : 'P');
+        else
+            std::snprintf(id, sizeof id, "%2d", i);
+        const std::string fq = core.freq.value > 0
+            ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
+        const std::string tp = core.temp_c > 0
+            ? std::to_string(static_cast<int>(core.temp_c + 0.5f)) + "\xc2\xb0" : "";
+        const maya::Color tp_c = load_color(std::clamp((core.temp_c - 40.0) / 50.0, 0.0, 1.0));
+        // P cores read in the full accent, E cores dimmed — the cluster
+        // boundary is legible as COLOR before you read a single letter.
+        const maya::Color id_c = !hetero || core.kind == CoreKind::Perf
+            ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.55);
+        std::vector<Element> row;
+        row.push_back((text(id) | nowrap | Bold | fgc(id_c) | width(id_w)).build());
+        row.push_back((Element{Meter{f}.fill().groove(false)} | grow(1)).build());
+        if (show_spark)
+            row.push_back(Spark{core.history.data(), core.hist_len}.cells(spark_cells).build_fixed());
+        row.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f))
+                       | width(5) | justify(Justify::End)).build());
+        if (show_freq_col)
+            row.push_back((text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)).build());
+        if (show_temp_col)
+            row.push_back((text(tp) | nowrap | Bold | fgc(tp_c) | width(5) | justify(Justify::End)).build());
+        return (h(std::move(row)) | gap(1)).build();
+    };
+
+    // On heterogeneous silicon, group the grid by CLUSTER with its own
+    // sub-heading and average load. "Which kind of core is my work landing on"
+    // is the question issue #3 asks, and an interleaved flat list answers it
+    // only if you decode ids one at a time. Homogeneous machines keep the
+    // single flat grid — no wasted heading.
+    auto emit_grid = [&](const std::vector<int>& idx) {
+        const int m = static_cast<int>(idx.size());
+        if (m == 0) return;
+        const int gc = std::min(cols, m);
+        const int per = (m + gc - 1) / gc;
+        for (int r = 0; r < per; ++r) {
+            std::vector<Element> cells;
+            for (int col = 0; col < gc; ++col) {
+                const int k = col * per + r;
+                cells.push_back(k < m ? core_row(idx[static_cast<std::size_t>(k)])
+                                      : Element{blank()});
+            }
+            R.push_back(grid_row(std::move(cells), gc, 3));
         }
-        R.push_back((h(line) | gap(3)).build());
+    };
+
+    if (hetero) {
+        std::vector<int> perf, eff;
+        for (int i = 0; i < n; ++i) {
+            if (c.cores[static_cast<std::size_t>(i)].kind == CoreKind::Eff) eff.push_back(i);
+            else perf.push_back(i);
+        }
+        auto cluster_avg = [&](const std::vector<int>& idx) {
+            if (idx.empty()) return 0.0;
+            double sum = 0;
+            for (int i : idx) sum += c.cores[static_cast<std::size_t>(i)].usage.v;
+            return sum / static_cast<double>(idx.size());
+        };
+        auto heading = [&](const std::string& name, const std::vector<int>& idx, maya::Color ac) {
+            const double av = cluster_avg(idx);
+            R.push_back((h(
+                text("  " + name) | nowrap | Bold | fgc(ac),
+                text("  " + std::to_string(idx.size()) + " cores") | nowrap | fgc(pal::faint),
+                Element{blank()} | grow(1),
+                text("avg " + fmt::pct(av)) | nowrap | Bold | fgc(load_color(av))
+            ) | gap(0)).build());
+        };
+        heading(c.perf_label.empty() ? "PERFORMANCE" : c.perf_label, perf, pal::cpu_ac);
+        emit_grid(perf);
+        R.push_back(gap_row());
+        heading(c.eff_label.empty() ? "EFFICIENCY" : c.eff_label, eff,
+                mix(pal::cpu_ac, pal::dim, 0.55));
+        emit_grid(eff);
+    } else {
+        std::vector<int> all(static_cast<std::size_t>(std::max(0, n)));
+        for (int i = 0; i < n; ++i) all[static_cast<std::size_t>(i)] = i;
+        emit_grid(all);
     }
     R.push_back(gap_row());
 

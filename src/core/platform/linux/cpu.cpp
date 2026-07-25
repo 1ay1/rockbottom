@@ -2,6 +2,7 @@
 
 #include "../../sampler.hpp"
 #include "procfs.hpp"
+#include "topology.hpp"
 
 #include <algorithm>
 #include <array>
@@ -50,6 +51,42 @@ void Sampler::read_static() {
             break;
         }
     }
+
+    probe_topology();
+}
+
+namespace {
+
+// Root of the sysfs tree the topology probe reads. Always "" (i.e. the real
+// /sys) in normal operation; RB_SYSFS_ROOT redirects it at a captured tree so
+// the probe can be exercised against real topologies from machines we don't
+// have. Read once; costs one getenv at startup.
+const std::string& sysfs_root() {
+    static const std::string root = [] {
+        const char* e = std::getenv("RB_SYSFS_ROOT");
+        return e ? std::string(e) : std::string();
+    }();
+    return root;
+}
+
+}  // namespace
+
+// Probe the static CPU topology (P/E class + physical core id per logical cpu).
+//
+// The DECISION procedure lives in topology.hpp as a pure function over an
+// injected file reader, so it can be tested against captured sysfs layouts;
+// this is just the adapter that points it at the real /sys and copies the
+// result into the sampler's caches. Runs ONCE at startup: a handful of small
+// sysfs reads, nothing forks, and the per-tick path is untouched.
+void Sampler::probe_topology() {
+    const topo::Topology t = topo::classify(ncpu_, [](const std::string& p) {
+        return slurp((sysfs_root() + p).c_str());
+    });
+    core_kind_     = t.kind;
+    core_phys_     = t.phys;
+    phys_siblings_ = t.siblings;
+    perf_label_    = t.perf_label;
+    eff_label_     = t.eff_label;
 }
 
 // Seconds since boot, from the first field of /proc/uptime. On Android the
@@ -133,6 +170,9 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
         push_hist(c.history, c.hist_len, static_cast<float>(c.usage.v));
         cpu.cores[i] = c;
     }
+
+    // Label each core with its cluster from the topology probed at startup.
+    apply_topology(cpu);
 
     // When /proc/stat is readable, push the real aggregate here. On Android
     // (blocked) sample_procs computes cpu.total from per-process deltas and
