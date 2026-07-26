@@ -72,8 +72,10 @@ public:
                 {"q / Esc", "quit"},
             }},
             {"MOUSE", {
-                {"click row", "select · header sorts · footer acts"},
+                {"click row", "pin + select it · header sorts · footer acts"},
+                {"double-click", "open the process detail pane"},
                 {"right-click", "end process (SIGTERM)"},
+                {"drag scrollbar", "slide any list / pane to any position"},
                 {"wheel", "scroll list · panes · this help"},
             }},
         };

@@ -18,6 +18,7 @@
 #include "../graph.hpp"
 #include "../spark.hpp"
 #include "../meter.hpp"
+#include "../hit_ids.hpp"
 
 #include <algorithm>
 #include <array>
@@ -868,7 +869,9 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             return (h(
                 std::move(placed) | grow(1),
                 text(" ") | nowrap,
-                v(std::move(barcol)) | width(1)
+                // Tag the bar column so the app can drag it: hit_rect() gives
+                // its painted {y,h} and a pointer y maps to a scroll offset.
+                v(std::move(barcol)) | width(1) | hit(hit_detail_scroll())
             )).build();
         },
         // Fill semantics: full slot width, 1-row basis — grow (baked on the

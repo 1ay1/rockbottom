@@ -58,6 +58,10 @@ struct App {
     // it. A function-local static keeps it out of a translation-unit global.
     static Config& boot_config() { static Config c; return c; }
 
+    // How close two Left clicks on the SAME process row must land to count as a
+    // double-click (open detail) rather than two single clicks (pin/unpin).
+    static constexpr long kDblClickMs = 400;
+
     struct Model {
         Snapshot snap;
         SortKey  sort = SortKey::Cpu;
@@ -90,6 +94,13 @@ struct App {
         int         follow_pid = 0;      // pinned pid: hoisted to the top row and
                                          // held there, selected, as the list
                                          // re-sorts around it (* toggles)
+        // Double-click detection for the process table. maya's MouseEvent has
+        // no click-count, so we synthesise it: a Left press on the SAME pid
+        // within kDblClickMs of the previous one counts as a double-click
+        // (opens the detail pane); a single click pins + selects. Keyed by pid,
+        // not row index, so a re-sort between the two clicks can't misfire.
+        int         last_click_pid = 0;
+        std::chrono::steady_clock::time_point last_click_at{};
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
 
@@ -337,6 +348,58 @@ struct App {
             return {std::move(m), C{}};
         }
 
+        // ── Drag-to-scroll ──
+        // A Left press OR a Left drag (maya reports Move with button==Left held)
+        // on a scrollbar gutter maps the pointer's Y within the bar's painted
+        // rect to a scroll offset. Using hit_rect() means the geometry comes
+        // from the SAME paint pass that drew the bar, so a click lands exactly
+        // on the thumb it points at — no hand-mirrored math, works at any size.
+        // This runs BEFORE the Press-only filter so drags aren't dropped.
+        if (me.button == MouseButton::Left
+            && (me.kind == MouseEventKind::Press || me.kind == MouseEventKind::Move)) {
+            auto scroll_from_bar = [&](maya::HitId id, int& off, int max_off) {
+                auto rr = maya::hit_rect(id);
+                if (!rr || rr->h <= 0 || max_off <= 0) return false;
+                // Fraction of the bar the pointer sits at (0 at top row).
+                const int rel = std::clamp(me.y.value - 1 - rr->y, 0, rr->h - 1);
+                const double frac = rr->h > 1
+                    ? static_cast<double>(rel) / static_cast<double>(rr->h - 1) : 0.0;
+                off = std::clamp(static_cast<int>(std::lround(frac * max_off)), 0, max_off);
+                return true;
+            };
+            if (hit && maya::hit_kind(*hit) == ui::HK_DetailScroll) {
+                if (m.show_help) { scroll_from_bar(ui::hit_detail_scroll(), m.help_scroll,   help_scroll_max(m));   clamp_help_scroll(m); }
+                else             { scroll_from_bar(ui::hit_detail_scroll(), m.detail_scroll, detail_scroll_max(m)); clamp_detail_scroll(m); }
+                return {std::move(m), C{}};
+            }
+            // The process table's scrollbar is baked into maya::Table's row
+            // cells (last 2 columns), so a gutter click resolves to HK_ProcRow,
+            // not a bar region. Detect it by X: a click on the rightmost 2
+            // cells of a windowed proc row is a scroll gesture, mapped from the
+            // Y span of the whole table body (row rects give us both bounds).
+            if (hit && maya::hit_kind(*hit) == ui::HK_ProcRow) {
+                const int body = std::max(1, compute_layout(m).body_rows);
+                const int max_top = std::max(0, n - body);
+                const int row_idx = static_cast<int>(maya::hit_index(*hit));
+                auto rr = maya::hit_rect(*hit);
+                if (max_top > 0 && rr && rr->w > 0
+                    && me.x.value - 1 >= rr->x + rr->w - 2) {
+                    // Row rects are one cell tall; the clicked row's screen
+                    // position (row_idx - scroll_top) plus the pointer gives the
+                    // absolute body Y, which we map to a scroll fraction.
+                    const int body_top_y = rr->y - (row_idx - m.scroll_top);
+                    const int rel = std::clamp(me.y.value - 1 - body_top_y, 0, body - 1);
+                    const double frac = body > 1
+                        ? static_cast<double>(rel) / static_cast<double>(body - 1) : 0.0;
+                    m.follow_pid = 0;
+                    m.scroll_top = std::clamp(
+                        static_cast<int>(std::lround(frac * max_top)), 0, max_top);
+                    m.sel = std::clamp(m.sel, m.scroll_top, m.scroll_top + body - 1);
+                    return {std::move(m), C{}};
+                }
+            }
+        }
+
         // Only act on button presses for the rest (ignore Move/Release so we
         // don't double-fire; drags fall through harmlessly).
         if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
@@ -412,13 +475,30 @@ struct App {
                         m.sel = idx;
                         if (me.button == MouseButton::Right)
                             return arm_kill(std::move(m), SIGTERM);
-                        // Left-click drills straight into the process's detail
-                        // pane, pinned to the row you clicked — the same view
-                        // Enter / 6 open, but reachable with the mouse.
                         if (me.button == MouseButton::Left) {
-                            m.detail = ui::Detail::Proc;
-                            m.detail_scroll = 0;
-                            pin_detail_pid(m);
+                            const int pid = selected_pid(m);
+                            // Double-click (same pid, within the window) opens
+                            // the process detail pane; a single click pins the
+                            // row in place and selects it. maya has no native
+                            // click-count, so we synthesise it off the pid +
+                            // timestamp we stashed last click.
+                            const auto now = std::chrono::steady_clock::now();
+                            const bool dbl = pid > 0 && pid == m.last_click_pid
+                                && now - m.last_click_at
+                                       <= std::chrono::milliseconds(kDblClickMs);
+                            if (dbl) {
+                                m.last_click_pid = 0;   // consume; a 3rd click is fresh
+                                m.detail = ui::Detail::Proc;
+                                m.detail_scroll = 0;
+                                pin_detail_pid(m);
+                            } else {
+                                m.last_click_pid = pid;
+                                m.last_click_at = now;
+                                // Pin in place + select: toggle the pin onto
+                                // THIS row (clicking an already-pinned row
+                                // unpins it), keeping the cursor glued to it.
+                                m.follow_pid = (m.follow_pid == pid) ? 0 : pid;
+                            }
                         }
                     }
                     return {std::move(m), C{}};
@@ -1073,20 +1153,14 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // Lock/unlock "pin": hoist the selected process to the TOP of the list and
-    // hold it there — statically, always selected — as everything else re-sorts
-    // around it, so you can keep your eyes on one process without it drifting.
-    // Re-pressing on the same process (or moving off it) unpins.
+    // Lock/unlock "pin": mark the selected process and keep the cursor glued
+    // to it (select_pid re-finds it every tick) so it stays highlighted right
+    // where it sits in the list — no hoisting, no jump. You can watch one
+    // process without losing it as the list re-sorts. Re-pressing on the same
+    // process (or moving the cursor off it) unpins.
     static std::pair<Model, maya::Cmd<Msg>> toggle_follow(Model m) {
         const int pid = selected_pid(m);
-        if (m.follow_pid == pid) {
-            m.follow_pid = 0;                 // unpin — leave cursor where it is
-        } else {
-            m.follow_pid = pid;               // pin — it hoists to row 0
-            m.sel = 0;                        // cursor onto the hoisted row
-            m.scroll_top = 0;                 // and bring it into view at the top
-            sync_scroll(m);
-        }
+        m.follow_pid = (m.follow_pid == pid) ? 0 : pid;   // pin in place / unpin
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
@@ -1120,23 +1194,33 @@ struct App {
     // Clamp the detail-pane scroll offset to [0, content - viewport]. Builds a
     // throwaway DetailPane to ask it how tall its body is at the current size.
     static void clamp_detail_scroll(Model& m) {
+        m.detail_scroll = std::clamp(m.detail_scroll, 0, detail_scroll_max(m));
+    }
+
+    // The detail pane's scroll ceiling (content rows − viewport). Built the
+    // same way clamp_detail_scroll measures it, exposed so the drag-scroll
+    // handler can map a pointer fraction onto [0, max].
+    static int detail_scroll_max(const Model& m) {
         // The NET pane in wide/split mode scrolls its CONNECTIONS column
         // independently, so its scroll ceiling is the socket count minus the
         // table viewport, not the generic body/viewport delta.
         if (m.detail == ui::Detail::Net) {
             ui::detail::Ctx cx = ui::detail::Ctx::make(m.width, m.height, 0);
             int cmax = ui::detail::net_conn_scroll_max(m.snap, cx);
-            if (cmax >= 0) { m.detail_scroll = std::clamp(m.detail_scroll, 0, cmax); return; }
+            if (cmax >= 0) return cmax;
         }
         const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
         ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
-        m.detail_scroll = std::clamp(m.detail_scroll, 0, pane.max_scroll());
+        return pane.max_scroll();
     }
 
     static void clamp_help_scroll(Model& m) {
-        const int max_scroll = std::max(0, ui::HelpOverlay::content_rows(m.width)
-                                           - ui::HelpOverlay::viewport_rows(m.height));
-        m.help_scroll = std::clamp(m.help_scroll, 0, max_scroll);
+        m.help_scroll = std::clamp(m.help_scroll, 0, help_scroll_max(m));
+    }
+
+    static int help_scroll_max(const Model& m) {
+        return std::max(0, ui::HelpOverlay::content_rows(m.width)
+                           - ui::HelpOverlay::viewport_rows(m.height));
     }
 
     // Open the signal picker on the selected process (single target). The

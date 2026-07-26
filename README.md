@@ -410,17 +410,20 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 
 | Do this | Get that |
 |---------|----------|
-| **click a process** | selects it (no more arrow-key pilgrimages) |
+| **click a process** | pins it in place + selects it, so it stops squirming as the list re-sorts and you can keep your eyes on it |
+| **double-click a process** | opens its detail pane |
 | **click a column header** | sorts by it (CPU, MEM, DISK, PORT, NAME) |
 | **click a panel** | opens its detail pane |
 | **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
+| **drag a scrollbar** | slides that list or pane to any position — the process list, every detail pane, and this help all grab-and-slide |
 | **scroll wheel** | rolls the process list (or the detail pane, if one's open) |
 
 The click-to-row math is anchored to the layout, so a click lands on *exactly* the
-row you clicked, at every terminal size. No "close enough," no "off by one," no
-"why did I just kill systemd." We checked. `btop` did not check. `btop` is beautiful
-and it did not check.
+row you clicked, at every terminal size — and the scrollbar drag reads the bar's
+real painted rectangle, so the thumb goes exactly where you drag it. No "close
+enough," no "off by one," no "why did I just kill systemd." We checked. `btop` did
+not check. `btop` is beautiful and it did not check.
 
 ## Platform
 
