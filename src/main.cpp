@@ -52,6 +52,7 @@ int main(int argc, char** argv) {
         const Snapshot s = sampler.sample(cfg.sort, 1, /*fast=*/true);
         const CpuInfo& c = s.cpu;
 
+        std::printf("%s\n", kVersionLine);
         std::printf("model      %s\n", c.model.c_str());
         std::printf("logical    %d\n", c.logical);
         if (c.hetero())

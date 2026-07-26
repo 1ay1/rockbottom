@@ -66,6 +66,24 @@ jobs:
           ./build/rb --version
           cp build/rb "${{ matrix.asset }}"
 
+      # The version has exactly one source (the project() line in
+      # CMakeLists.txt, via the generated core/version.hpp) — but the TAG is
+      # typed by hand, so it's the one thing that can still disagree with it.
+      # Publishing v0.2.0 assets from a binary that says 0.1.0 is silent,
+      # permanent, and only ever discovered by a confused user. Fail here
+      # instead, before anything is uploaded.
+      - name: Tag must match the binary version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built="$(./build/rb --version | awk '{print $2}')"
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != binary version ${built} — bump project(rockbottom VERSION ...) in CMakeLists.txt"
+            exit 1
+          fi
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

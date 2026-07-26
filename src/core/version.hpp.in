@@ -1,0 +1,23 @@
+// core/version.hpp.in — CMake template; the generated copy lands in the build
+// directory as core/version.hpp. Do NOT edit the generated file.
+//
+// The version lives in exactly ONE place: the `project(rockbottom VERSION ...)`
+// line in CMakeLists.txt. Everything else — `rb --version`, the release asset
+// names, the git tag, the About line — reads it from here. A hand-maintained
+// copy in a string literal is the classic way a project ends up announcing
+// 1.0 from a 2.3 binary, and it is invisible until someone files a bug report
+// with the wrong number in it.
+
+#pragma once
+
+namespace rockbottom {
+
+inline constexpr const char* kVersion = "@PROJECT_VERSION@";
+inline constexpr int kVersionMajor    = @PROJECT_VERSION_MAJOR@;
+inline constexpr int kVersionMinor    = @PROJECT_VERSION_MINOR@;
+inline constexpr int kVersionPatch    = @PROJECT_VERSION_PATCH@;
+
+// "rockbottom 0.1.0" — the exact string `rb --version` prints.
+inline constexpr const char* kVersionLine = "rockbottom @PROJECT_VERSION@";
+
+}  // namespace rockbottom

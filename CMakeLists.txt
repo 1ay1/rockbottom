@@ -15,7 +15,10 @@ if(APPLE AND NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
     endif()
 endif()
 
-project(rockbottom VERSION 1.0.0 LANGUAGES CXX)
+# The ONE place the version is written. `rb --version`, the generated
+# core/version.hpp, the release asset names and the git tag all derive from it;
+# nothing else hardcodes a version string.
+project(rockbottom VERSION 0.1.0 LANGUAGES CXX)
 
 # rockbottom targets the same modern standard maya uses.
 set(CMAKE_CXX_STANDARD 26)
@@ -61,6 +64,16 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
 endif()
 add_subdirectory(third_party/maya)
 
+# ── version ─────────────────────────────────────────────────────────────────
+# Generate core/version.hpp from the project() version above, into the build
+# tree. Both the app and the tests add ${CMAKE_CURRENT_BINARY_DIR} to their
+# include path, so `#include "core/version.hpp"` resolves to the generated file
+# and a stale hand-edited copy can never shadow it.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/core/version.hpp"
+    @ONLY)
+
 # ── rockbottom ──────────────────────────────────────────────────────────────
 # The sampler is split into an OS-agnostic core (orchestration + verdict) and a
 # per-platform backend. Exactly ONE backend compiles, chosen here by the host
@@ -87,6 +100,7 @@ add_executable(rockbottom
     ${RB_PLATFORM_SRC}
 )
 target_link_libraries(rockbottom PRIVATE maya)
+target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 # Request cxx_std_26 only when CMake actually advertises it (CMake >= 3.30 with a
 # C++26-capable compiler). On older CMake the CMAKE_CXX_STANDARD set above still
 # applies the right -std flag; asking for the unknown feature here is what broke
@@ -132,6 +146,7 @@ install(TARGETS rockbottom RUNTIME DESTINATION bin)
 # fails the build instead of shipping. Not built by default; `make rb_tests`.
 add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
 target_link_libraries(rb_tests PRIVATE maya)
+target_include_directories(rb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_tests PRIVATE cxx_std_26)
 else()

@@ -13,6 +13,8 @@
 #pragma once
 
 #include "sampler.hpp"   // SortKey
+#include "core/version.hpp"   // kVersionLine — GENERATED into the build dir
+                              // from src/core/version.hpp.in by CMake.
 
 #include <cstdlib>
 #include <fstream>
@@ -150,7 +152,7 @@ struct Config {
                 return std::nullopt;
             };
             if (a == "-h" || a == "--help")    { exit_msg = usage(); exit_ok = true; return false; }
-            if (a == "-v" || a == "--version") { exit_msg = "rockbottom 1.0\n"; exit_ok = true; return false; }
+            if (a == "-v" || a == "--version") { exit_msg = std::string(kVersionLine) + "\n"; exit_ok = true; return false; }
             if (a == "--tree") { c.tree = true; continue; }
             if (a == "--flat") { c.tree = false; continue; }
             if (a == "--no-config") { continue; }   // handled before load in main
