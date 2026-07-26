@@ -81,7 +81,10 @@ int cf_int(CFDictionaryRef d, CFStringRef key) {
 
 }  // namespace
 
-void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
+void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool /*with_procs*/) {
+    // macOS has no per-process GPU app table (no fdinfo/pmon equivalent), so
+    // with_procs is a no-op here — the signature matches the Linux backend and
+    // the shared sampler.hpp declaration.
     gpus.clear();
 
     io_iterator_t it = MACH_PORT_NULL;
