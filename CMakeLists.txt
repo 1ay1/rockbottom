@@ -122,6 +122,25 @@ endif()
 # The binary is `rb` — short, one hand, the way you'll actually type it.
 set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 
+# ── standalone linking ──────────────────────────────────────────────────────
+# rockbottom is built with GCC 14 (Apple Clang's libc++ lacks the
+# std::move_only_function maya needs), and GCC links its OWN libstdc++ by
+# default. On macOS that means the published binary referenced
+#   /opt/homebrew/opt/gcc@14/lib/gcc/14/libstdc++.6.dylib
+# which exists on the CI runner and on nobody else's machine — the download
+# aborted at dyld before main(). On Linux it's the quieter version of the same
+# bug: it runs only where libstdc++ is at least as new as the builder's.
+#
+# Since we promise "standalone binary — no build, no deps", link both the C++
+# runtime and libgcc statically. This is exactly what the RB_STANDALONE option
+# is for; it defaults ON so a plain `cmake -B build` produces a binary you can
+# hand to someone. Turn it OFF for a distro package, where linking against the
+# system libstdc++ is the correct behaviour.
+option(RB_STANDALONE "Statically link the C++ runtime so `rb` is portable" ON)
+if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+
 # Strip the Release binary. Unstripped, `rb` is ~33MB (94% debug symbols); the
 # kernel mmaps the image at exec and pages in a lot of that on a cold start.
 # Stripping drops it to ~2MB, cutting page-in / load latency at launch — the

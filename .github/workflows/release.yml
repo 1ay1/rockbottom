@@ -84,6 +84,34 @@ jobs:
             exit 1
           fi
 
+      # We advertise these as standalone binaries ("no build, no deps"), and
+      # v0.1.0 shipped a macOS build that referenced Homebrew GCC's
+      # libstdc++.6.dylib — present on the runner, present on nobody else's
+      # machine, so the download died in dyld before main(). A --version smoke
+      # test on the BUILDER cannot catch that; only inspecting the link table
+      # can. Anything outside the OS's own directories fails the release.
+      - name: Binary must be standalone
+        shell: bash
+        run: |
+          asset="${{ matrix.asset }}"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "otool -L $asset"; otool -L "$asset"
+            bad=$(otool -L "$asset" | tail -n +2 | awk '{print $1}' \
+                  | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)
+          else
+            echo "ldd $asset"; ldd "$asset" || true
+            # Only the base system set is acceptable; libstdc++/libgcc_s must
+            # have been linked in statically.
+            bad=$(ldd "$asset" | awk '{print $1}' \
+                  | grep -E 'libstdc\+\+|libgcc_s' || true)
+          fi
+          if [ -n "$bad" ]; then
+            echo "::error::$asset is not standalone — unexpected runtime deps:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "ok: $asset carries no non-system runtime dependencies"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
