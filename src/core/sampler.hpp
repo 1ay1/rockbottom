@@ -92,7 +92,7 @@ private:
     void    sample_disks(std::vector<DiskInfo>&);
     void    sample_disk_io(DiskIO&, double dt);
     void    sample_net(std::vector<NetIface>&, double dt);
-    void    sample_gpu(std::vector<GpuInfo>&);
+    void    sample_gpu(std::vector<GpuInfo>&, bool with_procs);
     void    sample_sensors(std::vector<Sensor>&);
     void    sample_procs(Snapshot&, SortKey, int top_n, double dt);
     void    sample_ports();                          // fills pid_ports_
@@ -177,9 +177,10 @@ private:
     // first run.
     std::chrono::steady_clock::time_point disks_at_{}, sensors_at_{},
                                           battery_at_{}, psi_at_{}, ports_at_{},
-                                          wireless_at_{};
+                                          wireless_at_{}, gpus_at_{}, gpu_procs_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
+    std::vector<GpuInfo>                  gpus_cache_;
     Battery                               battery_cache_{};
     Psi                                   psi_cache_{};
     Wireless                              wireless_cache_{};

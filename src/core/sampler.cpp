@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <sys/resource.h>
@@ -115,25 +116,44 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     s.kernel = kernel_;
     s.uptime_sec = uptime_sec();
 
+    // Env-gated phase timing (RB_PHASE=1): prints per-collector ms to stderr.
+    // Debug aid only; zero cost when the var is unset.
+    static const bool kPhase = [] { const char* e = std::getenv("RB_PHASE"); return e && *e && *e != '0'; }();
+    auto pnow = [] { return std::chrono::steady_clock::now(); };
+    auto pms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    auto pt = pnow();
+    auto phase = [&](const char* nm) { if (kPhase) { auto n = pnow(); std::fprintf(stderr, "  %-14s %.3f ms\n", nm, pms(pt, n)); pt = n; } };
+
     // Fast, genuinely per-tick metrics: CPU, memory, network, disk I/O rates,
     // GPU. These change every frame and must run every tick.
-    sample_cpu(s.cpu);
-    sample_mem(s.mem);
+    sample_cpu(s.cpu);        phase("cpu");
+    sample_mem(s.mem);        phase("mem");
     sample_mem_rates(s.mem, dt);
-    sample_disk_io(s.disk_io, dt);
-    sample_net(s.nets, dt);
-    // GPU can fork nvidia-smi on desktop NVIDIA boxes; skip it on the fast
-    // startup prime so the first paint never blocks on a subprocess. It runs
-    // on the first background tick.
-    if (!fast) sample_gpu(s.gpus);
+    sample_disk_io(s.disk_io, dt); phase("disk_io");
+    sample_net(s.nets, dt);   phase("net");
+    // GPU collection can fork nvidia-smi, the most expensive thing the sampler
+    // does. Two cadences: the always-visible gauges (util/temp/vram/clocks)
+    // refresh every ~1s, but the per-process app table — which needs TWO more
+    // forks (`--query-compute-apps` + `pmon -c 1`) or an O(all-pids) fdinfo
+    // walk — refreshes every ~3s and is carried over in between. On the fast
+    // startup prime we skip GPU entirely so the first paint never blocks on a
+    // subprocess; it populates on the first real background tick.
+    if (!fast && due(gpus_at_, ms(1000))) {
+        const bool with_procs = due(gpu_procs_at_, ms(3000));
+        sample_gpu(gpus_cache_, with_procs);
+    }
+    s.gpus = gpus_cache_;
+    phase("gpu");
 
     // Disk CAPACITY (statvfs per mount) barely moves — refresh ~every 5s.
     if (due(disks_at_, ms(5000))) { disks_cache_.clear(); sample_disks(disks_cache_); }
     s.disks = disks_cache_;
+    phase("disks");
 
     // Hardware temperatures drift slowly — refresh ~every 2s.
     if (due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
     s.sensors = sensors_cache_;
+    phase("sensors");
 
     // Resolve per-core die temps onto the cores now that both halves exist.
     // Doing it HERE, once, means the UI never has to parse a sensor label and
@@ -146,7 +166,9 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // always runs it — UNLESS this is a fast startup prime, where we skip it so
     // the first paint doesn't wait on walking every process's fd table.
     if (!fast && due(ports_at_, ms(1500))) sample_ports();
+    phase("ports");
     sample_procs(s, sort, top_n, dt);
+    phase("procs");
     // Attach the connection table (collected during the throttled ports scan)
     // and stamp each row with its owning process's name for the UI.
     {
@@ -160,6 +182,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // PSI pressure (/proc/pressure/*) is a moving average already; ~1s is ample.
     if (due(psi_at_, ms(1000))) { psi_cache_ = Psi{}; sample_psi(psi_cache_); }
     s.psi = psi_cache_;
+    phase("psi");
 
     // Battery: percent/temp crawl, and on Termux the collector forks a whole
     // process (termux-battery-status). Refresh ~every 15s — plenty for a

@@ -79,7 +79,7 @@ bool nvidia_smi_exists() {
 }
 
 // ── NVIDIA ────────────────────────────────────────────────────────────────
-void collect_nvidia(std::vector<GpuInfo>& out) {
+void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
     const char* q =
         "nvidia-smi --query-gpu="
         "name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
@@ -120,7 +120,14 @@ void collect_nvidia(std::vector<GpuInfo>& out) {
     }
     if (out.empty()) return;
 
-    // Per-process VRAM. Query BOTH compute apps (CUDA/OpenCL) and graphics apps
+    // Per-process VRAM + utilisation come from TWO extra nvidia-smi forks
+    // (--query-compute-apps and `pmon -c 1`). pmon in particular is the single
+    // most expensive thing the whole sampler does. The per-process app table
+    // changes slowly and is secondary to the always-visible util/temp/vram
+    // gauges, so the caller runs it on a slower cadence — skip both forks when
+    // with_procs is false.
+    if (!with_procs) return;
+
     // (games, browsers, compositors, video players) — the compute-apps query
     // alone misses every non-CUDA GPU user, which is most of them on a desktop.
     // Attribute to the first GPU since these free queries don't name the card.
@@ -398,7 +405,15 @@ void scan_drm_fdinfo(const std::string& driver_match,
 
 }  // namespace
 
-void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
+void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
+    // Carry the previous per-process app table over a base-only refresh: the
+    // expensive per-process forks (nvidia pmon, DRM fdinfo walk) run on a
+    // slower cadence, so on the ticks we skip them the panel keeps showing the
+    // last-known apps rather than flickering empty. Keyed by GPU name.
+    std::vector<std::pair<std::string, std::vector<GpuProc>>> prev_procs;
+    if (!with_procs)
+        for (auto& g : gpus)
+            if (!g.procs.empty()) prev_procs.emplace_back(g.name, std::move(g.procs));
     gpus.clear();
 
     // FAST PATH: probe for any supported GPU (NVIDIA smi, or an AMD/Intel DRM
@@ -420,13 +435,15 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
     if (!have_gpu) return;
 
     if (nvidia_smi_exists() && has_nvidia_card())
-        collect_nvidia(gpus);
+        collect_nvidia(gpus, with_procs);
     collect_amd(gpus);
     collect_intel(gpus);
 
     // AMD / Intel per-process VRAM via DRM fdinfo (nvidia already has its own
     // apps list from pmon/query). Attribute to the first matching-vendor GPU.
+    // Skipped on a base-only tick — the /proc/*/fdinfo walk is O(all pids).
     for (auto& g : gpus) {
+        if (!with_procs) break;
         if (g.vendor != "AMD" && g.vendor != "Intel") continue;
         if (!g.procs.empty()) continue;
         const char* drv = g.vendor == "AMD" ? "amdgpu" : "i915";
@@ -444,6 +461,13 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus) {
         }
         break;   // one integrated/discrete card owns the fdinfo attribution
     }
+
+    // On a base-only refresh, restore the per-process table we stashed above
+    // so the app list persists between the slower per-process ticks.
+    if (!with_procs)
+        for (auto& g : gpus)
+            for (auto& [name, ps] : prev_procs)
+                if (g.procs.empty() && g.name == name) { g.procs = std::move(ps); break; }
 
     // Attach rolling history per GPU index (survives across ticks).
     for (std::size_t i = 0; i < gpus.size(); ++i) {
