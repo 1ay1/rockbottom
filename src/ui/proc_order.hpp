@@ -54,6 +54,10 @@ struct OrderedProcs {
     // (0 = root) so the renderer can heat-grade rails by how deep the flow runs.
     std::vector<double>          sib_share;
     std::vector<int>             depth;
+    // PIN: the row was hoisted to the top and held there so a chosen process
+    // stays physically static and selected while the rest of the list churns.
+    // Exactly one row (at most) carries this; the renderer badges it.
+    std::vector<bool>            pinned;
     bool                         tree = false;
 };
 
@@ -317,23 +321,53 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
 // Top-level: filter → order. `filter` matches name OR pid substring. Flat mode
 // pre-filters to matches; tree mode receives the FULL list + filter and does
 // its own ancestor-preserving keep pass (so a matched leaf keeps its lineage).
+// Hoist the row for `pin_pid` (if present) to the front of an already-ordered
+// view and flag it, so a pinned process renders statically at the top instead
+// of drifting as the list re-sorts. Operates on every parallel array that the
+// builder populated (flat fills only `procs`; tree fills the rest), keeping
+// them index-aligned. No-op when pin_pid <= 0 or the process isn't visible.
+inline void hoist_pinned(OrderedProcs& o, int pin_pid) {
+    o.pinned.assign(o.procs.size(), false);
+    if (pin_pid <= 0) return;
+    std::size_t at = o.procs.size();
+    for (std::size_t i = 0; i < o.procs.size(); ++i)
+        if (o.procs[i] && o.procs[i]->pid == pin_pid) { at = i; break; }
+    if (at == o.procs.size()) return;   // pinned process gone / filtered out
+
+    // Rotate element `at` to the front of one vector, preserving relative order
+    // of the rest (std::rotate on [begin, at, at+1)).
+    auto lift = [&](auto& v) {
+        if (at < v.size()) std::rotate(v.begin(), v.begin() + at, v.begin() + at + 1);
+    };
+    lift(o.procs);
+    lift(o.prefix);   lift(o.has_kids); lift(o.collapsed); lift(o.hidden);
+    lift(o.context);  lift(o.sub_cpu);  lift(o.sub_mem);
+    lift(o.sib_share); lift(o.depth);
+    o.pinned[0] = true;
+}
+
 inline OrderedProcs order_procs(const std::vector<ProcInfo>& all,
                                 const std::string& filter,
                                 SortKey key, bool desc, bool tree,
-                                const std::set<int>& collapsed) {
+                                const std::set<int>& collapsed,
+                                int pin_pid = 0) {
+    OrderedProcs out;
     if (tree) {
         std::vector<const ProcInfo*> ptrs;
         ptrs.reserve(all.size());
         for (const auto& p : all) ptrs.push_back(&p);
-        return order_tree(ptrs, filter, key, desc, collapsed);
+        out = order_tree(ptrs, filter, key, desc, collapsed);
+    } else {
+        std::vector<const ProcInfo*> vis;
+        vis.reserve(all.size());
+        for (const auto& p : all) {
+            if (proc_matches(p, filter))
+                vis.push_back(&p);
+        }
+        out = order_flat(std::move(vis), key, desc);
     }
-    std::vector<const ProcInfo*> vis;
-    vis.reserve(all.size());
-    for (const auto& p : all) {
-        if (proc_matches(p, filter))
-            vis.push_back(&p);
-    }
-    return order_flat(std::move(vis), key, desc);
+    hoist_pinned(out, pin_pid);
+    return out;
 }
 
 }  // namespace rockbottom::ui

@@ -40,7 +40,7 @@ public:
                 {"← →", "collapse / expand subtree (flow)"},
                 {"= / +", "collapse-all / expand-all (flow)"},
                 {"▁▅█ gutter", "CPU share vs siblings — tallest/brightest = the hog"},
-                {"*", "follow: lock cursor to this process"},
+                {"*", "pin: hoist this process to the top & keep it there"},
                 {"x / Del", "end process (SIGTERM)"},
                 {"K", "force-kill (SIGKILL)"},
                 {"l", "send any signal (picker)"},

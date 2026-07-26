@@ -246,7 +246,7 @@ private:
                          : !view_.filter.empty() ? "/" + view_.filter + " · " + mode
                          : mode + " · " + std::to_string(n);
         if (view_.follow_pid)
-            chip = "◉ follow " + std::to_string(view_.follow_pid) + " · " + chip;
+            chip = "◉ pinned " + std::to_string(view_.follow_pid) + " · " + chip;
         return "PROCESSES · " + chip;
     }
 
@@ -416,6 +416,12 @@ private:
         if (culprit) {
             row.edge = "»";
             row.edge_color = pal::crit;
+        } else if (view_.follow_pid && p.pid == view_.follow_pid) {
+            // Pinned row: hoisted to the top and held static so it can be
+            // watched without chasing it. The ◉ in the gutter marks it as the
+            // locked row even when the cursor moves off to inspect others.
+            row.edge = "◉";
+            row.edge_color = pal::proc_ac;
         }
         return row;
     }

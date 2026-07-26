@@ -5,7 +5,7 @@
 // Interaction model (all keyboard, zero modes to memorize):
 //   ↑/↓ or j/k   move the process selection
 //   /            filter processes by name (Esc clears)
-//   t            toggle process tree · ←/→ collapse/expand · * follow
+//   t            toggle process tree · ←/→ collapse/expand · * pin
 //   x / Delete   ask to end the selected process (SIGTERM)
 //   K            ask to force-kill (SIGKILL)
 //   l            open the signal picker (send ANY signal)
@@ -87,7 +87,9 @@ struct App {
         bool        tree = false;         // flat sorted list (DEFAULT) vs process tree
         bool        auto_folded = false;  // (unused with expand-default tree; kept for compat)
         std::set<int> collapsed;         // pids whose subtree is folded (tree mode)
-        int         follow_pid = 0;      // keep this pid selected as the list moves (* toggles)
+        int         follow_pid = 0;      // pinned pid: hoisted to the top row and
+                                         // held there, selected, as the list
+                                         // re-sorts around it (* toggles)
         std::optional<PendingKill> pending;
         std::optional<Toast>       toast;
 
@@ -918,6 +920,9 @@ struct App {
         for (unsigned char c : m.filter) fold(c);
         fold(m.filter.size());
         if (m.tree) for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid) * 2654435761u);
+        // Pinned/followed pid hoists a row to the top, so the ordered vector
+        // itself changes when it changes — must recompute the cache.
+        fold(static_cast<std::uint64_t>(m.follow_pid) * 40503u);
         return h;
     }
 
@@ -931,7 +936,7 @@ struct App {
         auto& c = *m.ord_cache;
         if (c.key != key) {
             c.value = ui::order_procs(m.snap.procs, m.filter, m.sort, m.sort_desc,
-                                      m.tree, m.collapsed);
+                                      m.tree, m.collapsed, m.follow_pid);
             c.key = key;
         }
         return c.value;
@@ -1068,11 +1073,20 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // Lock/unlock "follow": keep the selected process under the cursor as the
-    // list re-sorts each tick, instead of the row index drifting.
+    // Lock/unlock "pin": hoist the selected process to the TOP of the list and
+    // hold it there — statically, always selected — as everything else re-sorts
+    // around it, so you can keep your eyes on one process without it drifting.
+    // Re-pressing on the same process (or moving off it) unpins.
     static std::pair<Model, maya::Cmd<Msg>> toggle_follow(Model m) {
         const int pid = selected_pid(m);
-        m.follow_pid = (m.follow_pid == pid) ? 0 : pid;
+        if (m.follow_pid == pid) {
+            m.follow_pid = 0;                 // unpin — leave cursor where it is
+        } else {
+            m.follow_pid = pid;               // pin — it hoists to row 0
+            m.sel = 0;                        // cursor onto the hoisted row
+            m.scroll_top = 0;                 // and bring it into view at the top
+            sync_scroll(m);
+        }
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 

@@ -395,6 +395,7 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | Key | Action |
 |-----|--------|
 | `↑↓` / `j k` | pick a process (`j k` is for people who use vim and cannot physically stop telling you) |
+| `*` | **pin** the selected process to the top of the list and hold it there, still selected, while everything else re-sorts around it — so you can *watch one thing* without it squirming away the instant its CPU% changes. Press again (or just move the cursor) to let go. |
 | `/` | filter by name or pid (`Esc` un-does it the instant you inevitably typo) |
 | `x` / `Del` | politely ask a process to leave (SIGTERM — it even knocks first) |
 | `K` | *firmly* remove a process (SIGKILL — still asks you first; we're unhinged, not savages) |
