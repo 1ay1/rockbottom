@@ -68,6 +68,7 @@ void Sampler::probe_topology() {
     // SMT, so there are no siblings to resolve); leave both empty.
     core_phys_.clear();
     phys_siblings_.clear();
+    core_id_siblings_.clear();
 
     const int levels = static_cast<int>(sysctl_num<std::int32_t>("hw.nperflevels").value_or(0));
     if (levels < 2) { core_kind_.clear(); return; }

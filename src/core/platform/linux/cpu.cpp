@@ -1,6 +1,7 @@
 // collectors/cpu.cpp — /proc/stat + /sys cpufreq + thermal zones.
 
 #include "../../sampler.hpp"
+#include "armid.hpp"
 #include "procfs.hpp"
 #include "topology.hpp"
 
@@ -31,14 +32,39 @@ void Sampler::read_static() {
     std::ifstream ci("/proc/cpuinfo");
     std::string line;
     int cores = 0;
+    std::string hw_impl, hw_part, arm_fallback;
     while (std::getline(ci, line)) {
         if (line.rfind("processor", 0) == 0) ++cores;
         else if (cpu_model_.empty() && line.rfind("model name", 0) == 0) {
             auto c = line.find(':');
             if (c != std::string::npos) cpu_model_ = trim(line.substr(c + 1));
         }
+        // arm64 /proc/cpuinfo has NO "model name" line at all — it publishes
+        // "CPU implementer"/"CPU part" hex ids instead. Without this every
+        // aarch64 box (Ampere, Graviton, Pi, most Android) showed the literal
+        // string "CPU" as its processor. Collect the pieces; resolve below.
+        else if (line.rfind("CPU implementer", 0) == 0) {
+            auto c = line.find(':');
+            if (c != std::string::npos && hw_impl.empty()) hw_impl = trim(line.substr(c + 1));
+        } else if (line.rfind("CPU part", 0) == 0) {
+            auto c = line.find(':');
+            if (c != std::string::npos && hw_part.empty()) hw_part = trim(line.substr(c + 1));
+        } else if (arm_fallback.empty() &&
+                   (line.rfind("Hardware", 0) == 0 || line.rfind("Model", 0) == 0)) {
+            // Pi / many SoCs put a human name here; better than a hex pair.
+            auto c = line.find(':');
+            if (c != std::string::npos) arm_fallback = trim(line.substr(c + 1));
+        }
     }
     ncpu_ = std::max(1, cores);
+
+    if (cpu_model_.empty()) cpu_model_ = arm::model_name(hw_impl, hw_part);
+    if (cpu_model_.empty()) cpu_model_ = arm_fallback;
+    if (cpu_model_.empty()) {
+        // Device-tree machines (and arm64 VMs) name the board here.
+        std::string dt = trim(first_line(slurp("/proc/device-tree/model")));
+        if (!dt.empty()) cpu_model_ = dt;
+    }
     if (cpu_model_.empty()) cpu_model_ = "CPU";
 
     std::ifstream mi("/proc/meminfo");
@@ -56,6 +82,29 @@ void Sampler::read_static() {
 }
 
 namespace {
+
+// Per-cpu current clock from /proc/cpuinfo's "cpu MHz" lines, in Hz.
+//
+// This is the fallback for machines with no cpufreq driver bound — cloud VMs,
+// most virtualised guests, containers with a masked /sys. x86 kernels emit one
+// "cpu MHz" line per processor block even there, so the Nth line belongs to
+// cpuN. Returns an empty vector when the field is absent (arm64 never has it),
+// which the caller reads as "no clock available" and renders as a dash rather
+// than inventing a number.
+std::vector<std::uint64_t> cpuinfo_mhz(std::size_t n) {
+    std::vector<std::uint64_t> out;
+    out.reserve(n);
+    std::ifstream ci("/proc/cpuinfo");
+    std::string line;
+    while (std::getline(ci, line) && out.size() < n) {
+        if (line.rfind("cpu MHz", 0) != 0) continue;
+        const auto c = line.find(':');
+        if (c == std::string::npos) continue;
+        const double mhz = std::strtod(line.c_str() + c + 1, nullptr);
+        out.push_back(mhz > 0 ? static_cast<std::uint64_t>(mhz * 1e6) : 0);
+    }
+    return out;
+}
 
 // Root of the sysfs tree the topology probe reads. Always "" (i.e. the real
 // /sys) in normal operation; RB_SYSFS_ROOT redirects it at a captured tree so
@@ -85,6 +134,7 @@ void Sampler::probe_topology() {
     core_kind_     = t.kind;
     core_phys_     = t.phys;
     phys_siblings_ = t.siblings;
+    core_id_siblings_ = t.by_core_id;
     perf_label_    = t.perf_label;
     eff_label_     = t.eff_label;
 }
@@ -157,19 +207,41 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     cpu.cores.resize(cores.size());
     if (prev_cores_.size() != cores.size()) prev_cores_.assign(cores.size(), CpuTimes{});
 
+    // Per-core clock. cpufreq is a DRIVER, not a guarantee: cloud VMs and
+    // most virtualised guests expose no /sys/.../cpufreq tree at all (the CI
+    // runners show exactly this), and some kernels ship cpuinfo_cur_freq
+    // without scaling_cur_freq. Try the accurate source, then the alternate
+    // sysfs name, then fall back to the per-cpu "cpu MHz" line in
+    // /proc/cpuinfo, which x86 fills in even with no cpufreq driver bound.
+    const std::vector<std::uint64_t> cpuinfo_hz =
+        cpufreq_missing_ ? cpuinfo_mhz(cores.size()) : std::vector<std::uint64_t>{};
+    bool any_cpufreq = false;
+
     for (std::size_t i = 0; i < cores.size(); ++i) {
         CpuCore& c = core_hist_[static_cast<int>(i)];
         if (!first_) c.usage = busy(cores[i], prev_cores_[i]);
         prev_cores_[i] = cores[i];
 
-        std::string fp = "/sys/devices/system/cpu/cpu" + std::to_string(i) +
-                         "/cpufreq/scaling_cur_freq";
-        std::string fs = first_line(slurp(fp.c_str()));
-        if (!fs.empty()) c.freq = Hertz{std::strtoull(fs.c_str(), nullptr, 10) * 1000};
+        const std::string base = "/sys/devices/system/cpu/cpu" + std::to_string(i) + "/cpufreq/";
+        std::string fs;
+        if (!cpufreq_missing_) {
+            fs = first_line(slurp((base + "scaling_cur_freq").c_str()));
+            if (fs.empty()) fs = first_line(slurp((base + "cpuinfo_cur_freq").c_str()));
+        }
+        if (!fs.empty()) {
+            c.freq = Hertz{std::strtoull(fs.c_str(), nullptr, 10) * 1000};
+            any_cpufreq = true;
+        } else if (i < cpuinfo_hz.size() && cpuinfo_hz[i] > 0) {
+            c.freq = Hertz{cpuinfo_hz[i]};
+        }
 
         push_hist(c.history, c.hist_len, static_cast<float>(c.usage.v));
         cpu.cores[i] = c;
     }
+    // Latch the "no cpufreq here" answer after the first full sweep, so we
+    // stop paying two failed opens per core per tick on machines that will
+    // never have the tree. Whether a cpufreq driver is bound is static.
+    if (!cpufreq_missing_ && !any_cpufreq) cpufreq_missing_ = true;
 
     // Label each core with its cluster from the topology probed at startup.
     apply_topology(cpu);

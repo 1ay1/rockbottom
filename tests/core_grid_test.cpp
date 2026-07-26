@@ -18,6 +18,7 @@
 #include <maya/maya.hpp>
 
 #include "../src/core/metrics.hpp"
+#include "../src/core/platform/linux/armid.hpp"
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
 #include "../src/ui/widgets/detail/cpu.hpp"
@@ -321,6 +322,88 @@ void test_topology() {
         const topo::Topology t = topo::classify(8, fs_reader(fs));
         expect_kinds("partial capacity read", t, "(homogeneous)");
     }
+
+    // Kernels that do NOT number core_id from 0. The ubuntu-24.04-arm CI
+    // runner does exactly this — it numbers by MPIDR affinity, so the raw ids
+    // are values like 36865 and the UI displayed them verbatim. The public
+    // `phys` id must be dense and small, while the sensor-matching map keeps
+    // the kernel's own numbering.
+    {
+        FakeFs fs;
+        for (int i = 0; i < 4; ++i) {
+            const std::string b = "/sys/devices/system/cpu/cpu" + std::to_string(i) + "/topology/";
+            fs[b + "core_id"] = std::to_string(36865 + i);
+            fs[b + "physical_package_id"] = "0";
+        }
+        const topo::Topology t = topo::classify(4, fs_reader(fs));
+        const bool dense = t.phys.size() == 4 && t.phys[0] == 0 && t.phys[1] == 1 &&
+                           t.phys[2] == 2 && t.phys[3] == 3;
+        check(dense, "MPIDR core_ids are renumbered densely 0..3");
+        check(t.by_core_id.count(36867) == 1,
+              "kernel core_id 36867 still resolvable for sensor matching");
+    }
+
+    // Dense ids must not merge SMT siblings or collapse sockets.
+    {
+        FakeFs fs;
+        add_cpus(fs, 16, 2);
+        const topo::Topology t = topo::classify(16, fs_reader(fs));
+        check(t.siblings.size() == 8, "SMT: 16 threads over 8 dense physical ids (got " +
+                                          std::to_string(t.siblings.size()) + ")");
+        int max_id = -1;
+        for (int p : t.phys) max_id = std::max(max_id, p);
+        check(max_id == 7, "SMT: dense ids stop at 7 (got " + std::to_string(max_id) + ")");
+    }
+
+    // Dual socket, dense: still 8 distinct cores, ids 0..7, no collision
+    // between socket 0's "core 0" and socket 1's.
+    {
+        FakeFs fs;
+        for (int i = 0; i < 8; ++i) {
+            const std::string b = "/sys/devices/system/cpu/cpu" + std::to_string(i) + "/topology/";
+            fs[b + "core_id"] = std::to_string(i % 4);
+            fs[b + "physical_package_id"] = std::to_string(i / 4);
+        }
+        const topo::Topology t = topo::classify(8, fs_reader(fs));
+        int max_id = -1;
+        for (int p : t.phys) max_id = std::max(max_id, p);
+        check(max_id == 7, "dual-socket: dense ids 0..7 (got max " + std::to_string(max_id) + ")");
+        // Sensor matching is per-socket-ambiguous by nature; both sockets'
+        // "core 0" must at least be reachable together rather than lost.
+        check(t.by_core_id.at(0).size() == 2, "dual-socket: core_id 0 covers both sockets");
+    }
+}
+
+// The ARM naming table — arm64 /proc/cpuinfo has no "model name" line, so
+// without this every aarch64 machine reported the literal string "CPU".
+// CI's ubuntu-24.04-arm runner is what exposed it.
+void test_arm_names() {
+    std::printf("\narm64 CPU naming (no \"model name\" in /proc/cpuinfo):\n");
+
+    const struct { const char* impl; const char* part; const char* want; } cases[] = {
+        {"0x41", "0xd0c", "ARM Neoverse-N1"},    // Graviton2 / Ampere Altra
+        {"0x41", "0xd49", "ARM Neoverse-N2"},
+        {"0x41", "0xd08", "ARM Cortex-A72"},     // Raspberry Pi 4
+        {"0x41", "0xd03", "ARM Cortex-A53"},
+        {"0xc0", "0xac3", "Ampere-1"},          // not "Ampere Ampere-1"
+        {"0x61", "0x022", "Apple M1"},           // must not stutter "Apple Apple M1"
+        {"65",   "3340",  "ARM Neoverse-N1"},    // decimal-formatted kernels
+    };
+    for (const auto& c : cases) {
+        const std::string got = arm::model_name(c.impl, c.part);
+        check(got == c.want, std::string(c.impl) + "/" + c.part + " -> \"" + got +
+                                 "\"" + (got == c.want ? std::string() : " (wanted \"" + std::string(c.want) + "\")"));
+    }
+
+    // A known vendor with an unknown part still beats "CPU" in a bug report.
+    {
+        const std::string got = arm::model_name("0x41", "0xfff");
+        check(got.rfind("ARM", 0) == 0 && got.find("fff") != std::string::npos,
+              "unknown ARM part degrades to vendor + raw id (" + got + ")");
+    }
+    // Total garbage yields "", so the caller falls through to the board name.
+    check(arm::model_name("", "").empty(), "empty ids yield no name");
+    check(arm::model_name("0x99", "0x1").empty(), "unknown implementer yields no name");
 }
 
 }  // namespace
@@ -329,6 +412,7 @@ int main() {
     std::printf("\n\x1b[1mper-core grid tests\x1b[0m\n\n");
 
     test_topology();
+    test_arm_names();
 
     // ── issue #2: sparse temps must not shift rows ──────────────────
     // 130 cols keeps the pane in SINGLE-column mode (ultrawide splits at 146),

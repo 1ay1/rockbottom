@@ -39,8 +39,14 @@ using ReadFile = std::function<std::string(const std::string& path)>;
 
 struct Topology {
     std::vector<CoreKind> kind;    // by logical cpu; empty = homogeneous
-    std::vector<int>      phys;    // logical -> physical core id; empty = unknown
-    std::unordered_map<int, std::vector<int>> siblings;   // physical -> logicals
+    std::vector<int>      phys;    // logical -> DENSE physical core id (0..k-1)
+    std::unordered_map<int, std::vector<int>> siblings;   // dense phys -> logicals
+    // Kernel `topology/core_id` -> every logical cpu on it. Deliberately a
+    // SECOND map: `phys` above is renumbered densely for display, but an Intel
+    // coretemp / zenpower sensor label ("Core 5") names the kernel's raw
+    // core_id, so matching a sensor against the dense id would misfile every
+    // reading on any machine whose core_ids aren't already 0..n-1.
+    std::unordered_map<int, std::vector<int>> by_core_id;
     std::string           perf_label, eff_label;
 };
 
@@ -95,7 +101,16 @@ inline Topology classify(int n_cpus, const ReadFile& read) {
     // topology/core_id is per-PACKAGE, so on a multi-socket box two sockets
     // both have a "core 0". Key by (package, core) and fall back to the raw id
     // when the package file is missing.
+    //
+    // That composite key is an internal disambiguator, NOT an id fit to show or
+    // to match a sensor against: sock*1024+core turns socket 1's core 1 into
+    // "1025", and CI caught the arm64 runner reporting core ids like 36865
+    // because its kernel numbers core_id by MPIDR affinity rather than 0..n.
+    // So we collapse the distinct keys to a DENSE 0..k-1 range afterwards,
+    // preserving grouping (siblings stay together, sockets stay distinct)
+    // while keeping the ids small and stable.
     bool any_phys = false;
+    std::vector<int> raw(n, -1), kernel_core(n, -1);
     for (std::size_t i = 0; i < n; ++i) {
         const std::string base = cpu_base + std::to_string(i) + "/topology/";
         const std::string cid = trim_ws(read(base + "core_id"));
@@ -103,12 +118,26 @@ inline Topology classify(int n_cpus, const ReadFile& read) {
         const std::string pkg = trim_ws(read(base + "physical_package_id"));
         const int core = std::atoi(cid.c_str());
         const int sock = pkg.empty() ? 0 : std::atoi(pkg.c_str());
-        const int id = sock * 1024 + core;
-        t.phys[i] = id;
-        t.siblings[id].push_back(static_cast<int>(i));
+        raw[i] = sock * 4096 + core;
+        kernel_core[i] = core;
         any_phys = true;
     }
-    if (!any_phys) { t.phys.clear(); t.siblings.clear(); }
+    if (any_phys) {
+        // Assign dense ids in order of first appearance, so cpu0's physical
+        // core is 0 and the numbering reads the way a person would expect.
+        std::unordered_map<int, int> dense;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (raw[i] < 0) continue;
+            auto it = dense.emplace(raw[i], static_cast<int>(dense.size())).first;
+            t.phys[i] = it->second;
+            t.siblings[it->second].push_back(static_cast<int>(i));
+            t.by_core_id[kernel_core[i]].push_back(static_cast<int>(i));
+        }
+    } else {
+        t.phys.clear();
+        t.siblings.clear();
+        t.by_core_id.clear();
+    }
 
     // ── 1. Intel hybrid: the kernel names the two clusters outright ──
     {

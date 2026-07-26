@@ -111,12 +111,22 @@ private:
     // empty when the machine is homogeneous or the probe found nothing, and
     // every consumer treats that as CoreKind::Unknown.
     std::vector<CoreKind>                 core_kind_;   // by logical cpu index
-    std::vector<int>                      core_phys_;   // logical -> physical core id
+    std::vector<int>                      core_phys_;   // logical -> dense physical core id
     // physical core id -> every logical cpu on it (SMT siblings). Lets a
     // per-PHYSICAL-core sensor ("Core 5" from Intel coretemp) fan out onto
     // both of its hyperthreads instead of being misfiled onto cpu5.
     std::unordered_map<int, std::vector<int>> phys_siblings_;
+    // Same fan-out, keyed by the KERNEL's raw topology/core_id rather than the
+    // dense id above — that is what a coretemp/zenpower label actually names,
+    // and the two differ wherever core_ids aren't already 0..n-1 (arm64 MPIDR
+    // numbering, hybrid x86 gaps, multi-socket).
+    std::unordered_map<int, std::vector<int>> core_id_siblings_;
     std::string                           perf_label_, eff_label_;
+    // Latched once the per-core cpufreq tree is found to be absent (cloud VMs,
+    // most virtualised guests). Without it every tick pays two failed opens
+    // per logical cpu forever, on exactly the machines that have the most
+    // cores. Whether a cpufreq driver is bound doesn't change at runtime.
+    bool                                  cpufreq_missing_ = false;
 
     // ── Cross-tick delta state ──
     CpuTimes                              prev_total_{};

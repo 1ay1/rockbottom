@@ -102,16 +102,20 @@ void Sampler::apply_core_temps(CpuInfo& cpu, const std::vector<Sensor>& sensors)
         if (lb.find("ore") == std::string::npos) continue;
         std::size_t p = lb.find_first_of("0123456789");
         if (p == std::string::npos) continue;
-        const int phys = std::atoi(lb.c_str() + p);
+        const int core_id = std::atoi(lb.c_str() + p);
 
-        auto it = phys_siblings_.find(phys);
-        if (it != phys_siblings_.end()) {
+        // Match against the KERNEL's core_id map, not the dense display ids:
+        // the label mirrors topology/core_id verbatim, and those are not
+        // guaranteed to be 0..n-1 (arm64 numbers them by MPIDR affinity, and
+        // hybrid x86 leaves gaps).
+        auto it = core_id_siblings_.find(core_id);
+        if (it != core_id_siblings_.end()) {
             for (int lg : it->second)
                 if (lg >= 0 && lg < n) cpu.cores[static_cast<std::size_t>(lg)].temp_c = sn.temp_c;
-        } else if (core_phys_.empty() && phys >= 0 && phys < n) {
+        } else if (core_id_siblings_.empty() && core_id >= 0 && core_id < n) {
             // No topology available (container with a masked /sys, exotic
             // kernel): the historic 1:1 reading is still better than nothing.
-            cpu.cores[static_cast<std::size_t>(phys)].temp_c = sn.temp_c;
+            cpu.cores[static_cast<std::size_t>(core_id)].temp_c = sn.temp_c;
         }
     }
 }
