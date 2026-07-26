@@ -76,6 +76,12 @@ std::string proc_argv(int pid) {
 }  // namespace
 
 void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
+    // The process the detail pane is inspecting (0 = none). The expensive
+    // per-pid probes below are for that ONE row, so they're gated on it — the
+    // same contract the Linux backend already honoured. Without this the cost
+    // is paid ~750 times per tick to fill columns nothing is showing.
+    const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
+
     int cap = ::proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
     if (cap <= 0) return;
     std::vector<pid_t> pids(static_cast<std::size_t>(cap) / sizeof(pid_t) + 16);
@@ -131,7 +137,13 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // Honest per-process disk bytes (not cache hits) via rusage_info_v2.
         // RUSAGE_INFO_V4 additionally carries phys_footprint — the figure
         // Activity Monitor's "Memory" column shows — plus lifetime pageins.
+        //
+        // This one stays unconditional: the I/O rates feed the process table's
+        // io column AND the verdict's "which process is hammering the disk"
+        // finding, so they are needed for every row, not just the inspected
+        // one. footprint/pageins ride along for free in the same call.
         std::uint64_t io_r = 0, io_w = 0, footprint = 0, pageins = 0;
+        const bool want_detail = (pid == want_detail_pid);
         rusage_info_v4 ru{};
         if (::proc_pid_rusage(pid, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t*>(&ru)) == 0) {
             io_r = ru.ri_diskio_bytesread;
@@ -205,8 +217,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
         // Open-fd census — proc_pidinfo(LISTFDS) with a null buffer returns
         // the byte size needed; divide by the record size for the count.
-        int fdbytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
-        p.fds = fdbytes > 0 ? fdbytes / PROC_PIDLISTFD_SIZE : -1;
+        //
+        // SNAPPY: this walks the process's whole descriptor table in the
+        // kernel and is ONLY read by the detail pane, so it runs for the
+        // inspected pid alone. Every other row reports -1 ("not measured"),
+        // which is what the UI already renders as a dash.
+        p.fds = -1;
+        if (want_detail) {
+            int fdbytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+            p.fds = fdbytes > 0 ? fdbytes / PROC_PIDLISTFD_SIZE : -1;
+        }
 
         // Full command line for the table's cmd-trail and the detail pane:
         // prefer argv (distinguishes two `python` rows by their script) via

@@ -7,11 +7,13 @@
 #include "core/config.hpp"
 #include "core/sampler.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <thread>
+#include <vector>
 
 int main(int argc, char** argv) {
     using namespace rockbottom;
@@ -19,9 +21,11 @@ int main(int argc, char** argv) {
     // --no-config bypasses the persisted file (fresh defaults + flags only).
     bool no_config = false;
     bool topology  = false;
+    bool bench     = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-config") == 0) no_config = true;
         if (std::strcmp(argv[i], "--topology") == 0) topology = true;
+        if (std::strcmp(argv[i], "--bench") == 0) bench = true;
     }
 
     // Precedence: defaults < config file < CLI flags.
@@ -33,6 +37,44 @@ int main(int argc, char** argv) {
         return exit_ok ? 0 : 2;
     }
     App::boot_config() = cfg;
+
+    // --bench: time the SAMPLER alone, with no terminal and no rendering.
+    //
+    // A monitor's steady-state cost is dominated by what it asks the kernel
+    // for every tick, and that is the part a screenshot can't show. Timing it
+    // in isolation makes optimisation measurable instead of anecdotal: run it
+    // before and after a change and the difference is the change. Reports the
+    // median as well as the mean because collector cost is spiky (a throttled
+    // collector firing on one tick shouldn't read as a regression).
+    if (bench) {
+        using clock = std::chrono::steady_clock;
+        Sampler sampler;
+        (void)sampler.sample(cfg.sort, 40, /*fast=*/true);   // prime: cold caches
+
+        constexpr int kIters = 40;
+        std::vector<double> ms;
+        ms.reserve(kIters);
+        for (int i = 0; i < kIters; ++i) {
+            const auto t0 = clock::now();
+            const Snapshot s = sampler.sample(cfg.sort, 40, /*fast=*/false);
+            ms.push_back(std::chrono::duration<double, std::milli>(clock::now() - t0).count());
+            // Sleep between samples so throttled collectors reach their due
+            // time at a realistic cadence rather than being starved or spun.
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            (void)s;
+        }
+
+        std::vector<double> sorted = ms;
+        std::sort(sorted.begin(), sorted.end());
+        double sum = 0;
+        for (double d : ms) sum += d;
+        std::printf("sample() x%d   mean %.2f ms   median %.2f ms   p90 %.2f ms   max %.2f ms\n",
+                    kIters, sum / kIters, sorted[kIters / 2],
+                    sorted[(kIters * 9) / 10], sorted.back());
+        std::printf("steady-state CPU at 1s refresh ≈ %.2f%% of one core\n",
+                    (sorted[kIters / 2] / 1000.0) * 100.0);
+        return 0;
+    }
 
     // --topology: dump what the probe actually decided, as plain text, and
     // exit. This exists because the per-core work (issues #2/#3) is only as
@@ -94,9 +136,17 @@ int main(int argc, char** argv) {
 
     maya::run<rockbottom::App>({
         .title = "rockbottom",
-        .fps   = 30,     // smooth animation ceiling; visual_hash still skips
-                         // unchanged frames, so a static screen renders ~0 fps
-                         // and idle CPU stays near zero.
+        // Event-driven, NOT a fixed frame rate.
+        //
+        // fps=N makes maya's poll wake every 1000/N ms purely to re-check
+        // whether anything changed — at 30 that is 30 wakeups a second on a
+        // screen that repaints at most once per sample. Nothing here is
+        // frame-animated: the footer spinner advances one step per TICK (see
+        // visual_hash), and the tick, key, mouse and resize subscriptions all
+        // wake the loop on their own. So 0 costs no responsiveness and lets an
+        // idle monitor sit in poll() instead of spinning through a hash 30
+        // times a second.
+        .fps   = 0,
         .mouse = true,
         .mode  = maya::Mode::Fullscreen,
     });
