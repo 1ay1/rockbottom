@@ -185,6 +185,9 @@ going *"…so what?"*
   "pinned at full load — this is your bottleneck"). Works with NVIDIA
   (`nvidia-smi`), AMD (`amdgpu` sysfs), and Intel; whatever your card refuses to
   cough up is quietly left out instead of shown as a sad `N/A`. Multiple GPUs stack.
+  And it's **cheap** — the `nvidia-smi` query is throttled to once a second (the
+  per-process VRAM table to once every few), so keeping an eye on your GPU doesn't
+  itself become a background job pegging a core.
 
 - **`5` DISK** — system-wide read/write sparklines, I/O pressure with a bottleneck
   verdict, **every filesystem** with its backing device, free space, used/size,
@@ -273,6 +276,43 @@ That's why `4.2G` and `118M/s` and `3.60GHz` are *always* right — not because 
 exhausted human remembered the unit at 2am, but because the **type** remembered it,
 permanently, so no human ever has to again. You are safe here. The nerds have
 handled it. Go outside.
+
+## "Okay but does the fancy monitor make my fans spin?" — No. That's the whole point.
+
+A system monitor that costs you a chunk of a core to run is a monitor that becomes
+part of the problem it's describing — a smoke detector that's on fire. So rb is
+**cheap on purpose**, and we measured it instead of vibing it:
+
+| At 1s refresh, idle desktop | steady-state CPU | RSS |
+|-----------------------------|:----------------:|:---:|
+| **rb** | **~1.8% of one core** | **9 MB** |
+| btop | ~1.6% | 38 MB |
+| htop | ~0.7% (no GPU) | 6 MB |
+
+Dead even with btop on CPU at **a quarter of the memory**, and it's reading your
+GPU the whole time — htop isn't. Two things buy that:
+
+- **The render is basically free.** `view()` is a pure function and maya only
+  repaints the cells that actually changed, so a frame costs **~1.4ms** and — the
+  part every *other* monitor gets wrong — that cost is **flat as your terminal
+  grows**. Stretch rb across a 300-column ultrawide and it does *not* quietly start
+  eating a core the way a certain gorgeous braille-fireworks monitor does; the
+  process table only builds the rows in the visible window, so 400 processes or
+  40,000, same frame.
+- **The sampler asks the kernel for the least it can get away with.** Fast signals
+  (CPU, memory, net, disk rates) refresh every tick; slow ones (filesystems,
+  sensors, ports, GPU) run on their own throttled cadences and serve a cache in
+  between. Nothing forks a subprocess on the hot path if we can read a file
+  instead, and the one collector that *has* to shell out — `nvidia-smi` — is polled
+  once a second, with its expensive per-process query on an even slower beat,
+  instead of the naive three-forks-every-frame that used to quietly cost ~15% of a
+  core all by itself. (btop wins the last hair here because it links NVML and never
+  forks at all. We see you, btop. We're coming for that too.)
+
+Want to check it yourself instead of trusting a README that has, admittedly, been
+unreliable about tone? `rb --bench` times the sampler alone with no UI and prints
+the steady-state cost; `RB_PHASE=1 rb --bench` breaks it down per collector so you
+can see exactly what each tick spends. The numbers above came straight out of it.
 
 ## Architecture (skip this; we both know you were going to)
 
