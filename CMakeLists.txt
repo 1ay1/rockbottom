@@ -171,3 +171,27 @@ if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
 else()
     target_compile_features(rb_tests PRIVATE cxx_std_23)
 endif()
+
+# ── render bench ────────────────────────────────────────────
+# Headless per-frame cost breakdown: builds one synthetic Snapshot and loops
+# view()+render_tree at a chosen pty size, timing each phase. This is how we
+# localise the super-linear-with-area cost the pty benchmark only detects.
+# Not built by default; `make rb_render_bench`.
+add_executable(rb_render_bench EXCLUDE_FROM_ALL
+    tests/render_bench.cpp
+    src/core/sampler.cpp
+    src/core/verdict.cpp
+    ${RB_PLATFORM_SRC}
+)
+target_link_libraries(rb_render_bench PRIVATE maya)
+target_include_directories(rb_render_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    target_compile_features(rb_render_bench PRIVATE cxx_std_26)
+else()
+    target_compile_features(rb_render_bench PRIVATE cxx_std_23)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    target_link_libraries(rb_render_bench PRIVATE
+        "-framework CoreFoundation"
+        "-framework IOKit")
+endif()

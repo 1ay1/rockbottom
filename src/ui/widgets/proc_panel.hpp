@@ -72,10 +72,38 @@ public:
         Table tbl(columns(), config());
         std::vector<TableRow> rows;
         rows.reserve(static_cast<std::size_t>(n));
-        for (int i = 0; i < n; ++i)
-            rows.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
-                                    i == view_.selected,
-                                    loud && i == hi, i));
+
+        // Build full TableRows only for the VISIBLE window. proc_row() is the
+        // heaviest per-row work in the whole frame (a dozen string allocs, a
+        // Meter sparkline, snprintf/dtoa) and it was running for ALL N procs
+        // — hundreds of rows that the table clips away unseen. The Table now
+        // reads off-window rows nowhere but their count (scrollbar + cursor
+        // clamp) and cells.size() (bounds); a default TableRow satisfies both.
+        // So we materialize [win_lo, win_hi) — the same slice render_at paints
+        // — and leave the rest empty. On a 700-process list at an 80-row
+        // terminal this cut per-frame allocation ~9x. The window math mirrors
+        // the Table's own (config().window_top / visible_rows). A small pad
+        // absorbs any off-by-one between max_rows (the layout's predicted body
+        // height) and the Table's own height-derived count — cheaper to build
+        // a few extra rows than to risk a blank visible row.
+        constexpr int kPad = 2;
+        int count = n;
+        if (view_.max_rows > 0) count = std::min(view_.max_rows + 2 * kPad, n);
+        int win_lo = 0;
+        if (count < n) {
+            const int anchor = view_.scroll >= 0 ? view_.scroll
+                                                 : view_.selected - count / 2;
+            win_lo = std::clamp(anchor - kPad, 0, n - count);
+        }
+        const int win_hi = win_lo + count;
+        for (int i = 0; i < n; ++i) {
+            if (i >= win_lo && i < win_hi)
+                rows.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
+                                        i == view_.selected,
+                                        loud && i == hi, i));
+            else
+                rows.emplace_back();   // off-screen: never rendered, only counted
+        }
         tbl.set_rows(std::move(rows));
         tbl.set_selected(view_.selected);
 
