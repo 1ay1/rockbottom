@@ -18,6 +18,7 @@
 #include <maya/maya.hpp>
 
 #include "../src/core/metrics.hpp"
+#include "../src/core/cluster_skew.hpp"
 #include "../src/core/platform/linux/armid.hpp"
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
@@ -406,6 +407,49 @@ void test_arm_names() {
     check(arm::model_name("0x99", "0x1").empty(), "unknown implementer yields no name");
 }
 
+// The "work is on the slow cores" advisory (issue #3's second ask). Pinned at
+// the boundaries because a threshold that quietly stops firing still compiles
+// and still looks reasonable — it just never speaks again.
+void test_cluster_skew() {
+    std::printf("\nissue #3 — work-on-slow-cores advisory:\n");
+
+    // Build 4 E + 4 P cores at the given loads (percent).
+    auto mk = [](double eff_pct, double perf_pct) {
+        std::vector<CpuCore> v(8);
+        for (int i = 0; i < 8; ++i) {
+            const bool e = i < 4;
+            v[static_cast<std::size_t>(i)].kind = e ? CoreKind::Eff : CoreKind::Perf;
+            v[static_cast<std::size_t>(i)].usage = Ratio{(e ? eff_pct : perf_pct) / 100.0};
+        }
+        return v;
+    };
+
+    {
+        const ClusterLoad c = cluster_load(mk(100, 5));
+        check(c.eff_n == 4 && c.perf_n == 4, "counts both clusters");
+        check(c.eff_avg > 99 && c.perf_avg < 6, "averages per cluster, not overall");
+        check(c.misplaced(), "E pegged + P idle -> advise");
+    }
+    // The whole machine is busy: there is nowhere faster to move the work, so
+    // the advice would be noise.
+    check(!cluster_load(mk(100, 95)).misplaced(), "both clusters busy -> stay quiet");
+    // Light background work on the E cluster is what it is FOR.
+    check(!cluster_load(mk(40, 5)).misplaced(), "idle-ish E cluster -> stay quiet");
+    // Inverted: heavy on P, quiet on E. Correct scheduling; nothing to say.
+    check(!cluster_load(mk(5, 100)).misplaced(), "work already on P -> stay quiet");
+    // Boundaries: strictly greater / strictly less.
+    check(!cluster_load(mk(70, 10)).misplaced(), "E exactly at the 70% floor -> quiet");
+    check(cluster_load(mk(71, 10)).misplaced(), "E just over the floor -> advise");
+    check(!cluster_load(mk(90, 30)).misplaced(), "P exactly at the 30% ceiling -> quiet");
+    check(cluster_load(mk(90, 29)).misplaced(), "P just under the ceiling -> advise");
+    // A homogeneous machine has no clusters to be wrong about.
+    {
+        std::vector<CpuCore> flat(8);
+        for (auto& c : flat) c.usage = Ratio{1.0};
+        check(!cluster_load(flat).misplaced(), "homogeneous machine never advises");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -413,6 +457,7 @@ int main() {
 
     test_topology();
     test_arm_names();
+    test_cluster_skew();
 
     // ── issue #2: sparse temps must not shift rows ──────────────────
     // 130 cols keeps the pane in SINGLE-column mode (ultrawide splits at 146),
