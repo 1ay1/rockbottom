@@ -7,3 +7,10 @@ compile_commands.json
 
 # untracked local render-inspection tooling
 tools/render_lab/
+
+# release binaries live in GitHub Releases, never in git history
+assets/bin/
+
+# unrelated local checkouts that live alongside this repo
+ish/
+termux-exec/
