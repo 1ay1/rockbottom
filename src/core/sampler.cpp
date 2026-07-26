@@ -2,6 +2,7 @@
 // collectors/*.cpp; this file wires them together and owns lifecycle.
 
 #include "sampler.hpp"
+#include "core_temps.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -81,43 +82,12 @@ void Sampler::apply_topology(CpuInfo& cpu) const {
 
 // Attach per-core die temperatures to the cores themselves.
 //
-// The sensor label is the only link the kernel gives us, and it names a
-// PHYSICAL core ("Core 5" from Intel coretemp / zenpower), not a logical cpu.
-// With SMT enabled physical core 5 backs logical cpus 10 and 11, and on hybrid
-// parts the ids are sparse — so indexing cores[] by the label's integer, as a
-// naive reading does, silently files temperatures onto the wrong cores. We
-// resolve through the sibling map instead, and only fall back to a direct
-// index when the machine reported no topology at all.
+// The resolution rules live in core_temps.hpp as a pure function; this is just
+// the member that hands it the sampler's cached sibling map. Doing the work
+// HERE rather than in the widget is what stopped the UI from parsing sensor
+// labels — every view now sees the same resolved figure.
 void Sampler::apply_core_temps(CpuInfo& cpu, const std::vector<Sensor>& sensors) const {
-    const int n = static_cast<int>(cpu.cores.size());
-    if (n == 0) return;
-    for (CpuCore& c : cpu.cores) c.temp_c = 0;
-
-    for (const Sensor& sn : sensors) {
-        if (sn.zone != "cpu" || sn.temp_c <= 0) continue;
-        // Must name a core AND carry an index: "Core 5", "core5", "Core 5 Temp".
-        // A package/die/Tctl sensor has no per-core meaning and is skipped —
-        // it already rides the panel's border chip as CpuInfo::temp_c.
-        const std::string& lb = sn.label;
-        if (lb.find("ore") == std::string::npos) continue;
-        std::size_t p = lb.find_first_of("0123456789");
-        if (p == std::string::npos) continue;
-        const int core_id = std::atoi(lb.c_str() + p);
-
-        // Match against the KERNEL's core_id map, not the dense display ids:
-        // the label mirrors topology/core_id verbatim, and those are not
-        // guaranteed to be 0..n-1 (arm64 numbers them by MPIDR affinity, and
-        // hybrid x86 leaves gaps).
-        auto it = core_id_siblings_.find(core_id);
-        if (it != core_id_siblings_.end()) {
-            for (int lg : it->second)
-                if (lg >= 0 && lg < n) cpu.cores[static_cast<std::size_t>(lg)].temp_c = sn.temp_c;
-        } else if (core_id_siblings_.empty() && core_id >= 0 && core_id < n) {
-            // No topology available (container with a masked /sys, exotic
-            // kernel): the historic 1:1 reading is still better than nothing.
-            cpu.cores[static_cast<std::size_t>(core_id)].temp_c = sn.temp_c;
-        }
-    }
+    resolve_core_temps(cpu, sensors, core_id_siblings_);
 }
 
 Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {

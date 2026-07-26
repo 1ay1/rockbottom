@@ -4,12 +4,16 @@
 // host_processor_info(PROCESSOR_CPU_LOAD_INFO), which returns cumulative tick
 // counters (user/system/idle/nice) per logical CPU — we delta them exactly the
 // way the Linux backend deltas /proc/stat. The aggregate is the tick-weighted
-// sum. loadavg comes from getloadavg(3). macOS doesn't expose a stable
-// per-core clock or an iowait split without private SMC/IOReport access, so
-// those stay at their sentinels and the panes omit them — the same
-// graceful-degradation contract every backend follows.
+// sum. loadavg comes from getloadavg(3). macOS has no iowait analogue, so that
+// stays at its sentinel and the panes omit it — the same graceful-degradation
+// contract every backend follows.
+//
+// Per-core CLOCK is recovered in freq.hpp from the IORegistry DVFS tables plus
+// IOReport residency counters; see that header for why it isn't simply a
+// sysctl.
 
 #include "../../sampler.hpp"
+#include "freq.hpp"
 #include "mach_util.hpp"
 
 #include <algorithm>
@@ -150,12 +154,21 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
 
     cpu.cores.resize(cores.size());
     if (prev_cores_.size() != cores.size()) prev_cores_.assign(cores.size(), CpuTimes{});
+
+    // Live per-core clock. One sampler for the process lifetime: it holds an
+    // IOReport subscription and the previous residency counters, and reports
+    // the time-weighted mean clock over the interval between ticks. Empty
+    // until the second tick (a delta needs two samples) and empty forever on a
+    // machine where IOReport isn't available — in both cases freq stays 0 and
+    // the UI omits the column, exactly as it did before.
+    static macfreq::Sampler freq_sampler;
+    const std::vector<std::uint64_t> freqs = freq_sampler.sample();
+
     for (std::size_t i = 0; i < cores.size(); ++i) {
         CpuCore& c = core_hist_[static_cast<int>(i)];
         if (!first_) c.usage = busy(cores[i], prev_cores_[i]);
         prev_cores_[i] = cores[i];
-        // No stable per-core cur-freq surface on Apple Silicon / Intel Macs
-        // without private frameworks; leave c.freq at 0.
+        if (i < freqs.size() && freqs[i] > 0) c.freq = Hertz{freqs[i]};
         sys::push_hist(c.history, c.hist_len, static_cast<float>(c.usage.v));
         cpu.cores[i] = c;
     }
