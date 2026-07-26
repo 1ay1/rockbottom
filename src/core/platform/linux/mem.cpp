@@ -31,7 +31,13 @@ void Sampler::sample_mem(MemInfo& m) {
     m.buffers    = Bytes{kv["Buffers"]};
     m.used       = Bytes{m.total.value > m.available.value ? m.total.value - m.available.value : 0};
     m.swap_total = Bytes{kv["SwapTotal"]};
-    m.swap_used  = Bytes{kv["SwapTotal"] > kv["SwapFree"] ? kv["SwapTotal"] - kv["SwapFree"] : 0};
+    // Only derive used-swap when BOTH fields are present. If SwapFree is missing
+    // (some sandboxed/again-restricted /proc views expose SwapTotal but not
+    // SwapFree), kv[] would default it to 0 and report the swap as 100% full —
+    // a phantom that can trip the verdict's thrashing warning. Absent → 0 used.
+    m.swap_used  = Bytes{(kv.count("SwapTotal") && kv.count("SwapFree")
+                          && kv["SwapTotal"] > kv["SwapFree"])
+                             ? kv["SwapTotal"] - kv["SwapFree"] : 0};
 
     procfs::push_hist(mem_hist_, mem_hist_len_, static_cast<float>(m.usage().v));
     m.usage_history = mem_hist_;

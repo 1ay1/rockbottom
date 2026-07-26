@@ -28,6 +28,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace rockbottom::ui {
@@ -194,9 +195,15 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
         std::vector<std::pair<const ProcInfo*, bool>> st;
         for (auto it = roots.rbegin(); it != roots.rend(); ++it) st.push_back({*it, false});
         std::vector<const ProcInfo*> post;
+        // Cycle guard: a pid-reuse race can produce a parent/child loop
+        // (A.ppid=B while B.ppid=A). Without a visited set the DFS pushes the
+        // same nodes forever and hangs/OOMs the render thread. A pid enters
+        // `seen` when first expanded; a second visit is skipped.
+        std::unordered_set<int> seen;
         while (!st.empty()) {
             auto [node, done] = st.back(); st.pop_back();
             if (done) { post.push_back(node); continue; }
+            if (!seen.insert(node->pid).second) continue;
             st.push_back({node, true});
             if (auto k = kids.find(node->pid); k != kids.end())
                 for (const ProcInfo* c : k->second) st.push_back({c, false});
@@ -275,9 +282,13 @@ inline OrderedProcs order_tree(const std::vector<const ProcInfo*>& all,
     for (std::size_t i = roots.size(); i-- > 0;)
         st.push_back({roots[i], "", i + 1 == roots.size(), 0, 0});
 
+    // Same cycle guard as the post-order pass: never emit a pid twice, so a
+    // pid-reuse parent/child loop can't spin the emit stack forever.
+    std::unordered_set<int> emitted;
     while (!st.empty()) {
         Frame f = std::move(st.back()); st.pop_back();
         const ProcInfo* node = f.node;
+        if (!emitted.insert(node->pid).second) continue;
         auto k = kids.find(node->pid);
         const bool kids_exist = k != kids.end() && !k->second.empty();
         const bool is_collapsed = collapsed.count(node->pid) > 0;

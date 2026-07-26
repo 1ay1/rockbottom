@@ -62,6 +62,7 @@ public:
 private:
     struct CpuTimes { std::uint64_t idle = 0, total = 0, user = 0, system = 0; };
     struct ProcPrev {
+        std::uint64_t starttime = 0;        // /proc/pid/stat field 22; guards pid reuse
         std::uint64_t cpu_ticks = 0;
         std::uint64_t io_read = 0, io_write = 0;
         std::uint64_t faults = 0, csw = 0;

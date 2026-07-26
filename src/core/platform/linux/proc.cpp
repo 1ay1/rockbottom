@@ -121,8 +121,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // ONE lookup into last tick's state (was up to 5 hash probes/proc):
         // reuse this iterator for cpu, io, faults, csw and the history ring.
         auto prev_it = prev_proc_.find(pid);
-        const bool have_prev = !first_ && prev_it != prev_proc_.end();
+        // Guard the delta cache against PID reuse: a recycled pid points at a
+        // brand-new process whose cumulative counters are unrelated to the
+        // dead one's. starttime (immutable per process) disambiguates them, so
+        // a reused pid is treated as "no previous sample" (0 rates this tick)
+        // instead of diffing against a stranger and emitting a phantom CPU/IO
+        // spike that would sort to the top and can trip the verdict.
+        const bool have_prev = !first_ && prev_it != prev_proc_.end()
+                               && prev_it->second.starttime == starttime;
         ProcPrev& np = cur[pid];
+        np.starttime = starttime;
         np.cpu_ticks = cpu_ticks;
         double cpu_pct = 0;
         if (have_prev && dt_ticks > 0) {

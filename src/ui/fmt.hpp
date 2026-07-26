@@ -36,10 +36,30 @@ namespace rockbottom::ui::fmt {
     return b;
 }
 
-// Truncate a UTF-8-unaware ASCII-ish name to n display cells with ellipsis.
+// Truncate a UTF-8 string to at most n display cells, with a trailing ellipsis
+// when it doesn't fit. Counts and cuts on whole codepoints (not bytes), so a
+// name containing accented Latin, CJK or emoji is never split mid-sequence into
+// a broken glyph. (Treats each codepoint as one cell — good enough for the
+// single-width scripts in process/interface names; double-width CJK will read a
+// touch wide but never corrupt.) n==0 yields the empty string.
 [[nodiscard]] inline std::string clip(const std::string& s, std::size_t n) {
-    if (s.size() <= n) return s;
-    return s.substr(0, n - 1) + "…";
+    // Count codepoints; bail early the moment we know it fits in n cells.
+    std::size_t cells = 0;
+    for (std::size_t i = 0; i < s.size();) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        i += c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        if (++cells > n) break;
+    }
+    if (cells <= n) return s;
+    if (n == 0) return {};
+    // Keep n-1 codepoints, then the ellipsis (which is itself one cell).
+    std::size_t i = 0, kept = 0;
+    while (i < s.size() && kept < n - 1) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        i += c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        ++kept;
+    }
+    return s.substr(0, i) + "…";
 }
 
 // "AMD Ryzen 5 1600 Six-Core Processor" → "AMD Ryzen 5 1600 Six-Core"
