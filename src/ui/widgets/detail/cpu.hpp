@@ -3,7 +3,9 @@
 // More than btop's per-core strip: a hero load graph with a real y-axis, a
 // distribution strip (min / median / max / spread across cores), a saturation
 // verdict that compares load-average to core count, package temperature, and
-// every logical core as its own labelled meter with live frequency.
+// a PER-CORE TABLE — one logical core per row, under one column header, in the
+// pane's most visible position (the whole left column when the screen is wide
+// enough to split).
 
 #pragma once
 
@@ -11,37 +13,185 @@
 
 namespace rockbottom::ui::detail {
 
+// ── PER-CORE TABLE ──────────────────────────────────────────────────────
+// ONE logical core per row: id · load bar · trend spark · load% · clock · °C.
+//
+// LAYOUT CONTRACT. Every cell in a row is FIXED-WIDTH, and the widths come
+// from core_cols() against the row's REAL slot width — the same function the
+// header row calls. Two consequences, both load-bearing:
+//
+//   * the header and every data row agree at ANY terminal size, because they
+//     solved the same arithmetic rather than both trusting flex;
+//   * no cell can be flex-shrunk by a long sibling, so a core with no
+//     temperature probe can't slide its neighbours' numbers left (issue #2 —
+//     the widths are a property of the TABLE, never of the row's contents).
+//
+// Columns are shed cheapest-information-first as the slot narrows (°C, then
+// clock, then the trend spark, then the bar itself), so the table degrades to
+// a legible "id + %" list on a phone-width terminal instead of overflowing.
+struct CoreTableCfg {
+    int  id_w = 3;        // widest id string in the table ("ALL", "127", "12·E")
+    bool freq = false;    // any core reports a clock
+    bool temp = false;    // any core reports a die temperature
+};
+
+struct CoreCols {
+    int gap = 1;
+    int id_w = 3, meter_w = 0, spark_w = 0, pct_w = 5, freq_w = 0, temp_w = 0;
+};
+
+inline CoreCols core_cols(int w, const CoreTableCfg& cfg) {
+    CoreCols c;
+    c.id_w   = std::max(3, cfg.id_w);
+    c.pct_w  = 5;                      // "100%" + a cell of air
+    c.freq_w = cfg.freq ? 5 : 0;       // "3.90" (header carries the unit)
+    c.temp_w = cfg.temp ? 4 : 0;       // "100"  (header carries the unit)
+    const int W = std::max(1, w);
+
+    // Total row width if the bar took `meter` cells and the spark `spark`.
+    // Counts the inter-cell gaps for the cells actually PRESENT, so the
+    // arithmetic stays exact as columns drop out.
+    auto span = [&](int meter, int spark) {
+        int cells = 2, sum = c.id_w + c.pct_w;      // id + % never drop
+        if (meter > 0)  { ++cells; sum += meter; }
+        if (spark > 0)  { ++cells; sum += spark; }
+        if (c.freq_w)   { ++cells; sum += c.freq_w; }
+        if (c.temp_w)   { ++cells; sum += c.temp_w; }
+        return sum + c.gap * (cells - 1);
+    };
+
+    constexpr int kMeterMin = 6;   // below this a bar is decoration, not data
+    if (span(kMeterMin, 0) > W && c.temp_w) c.temp_w = 0;
+    if (span(kMeterMin, 0) > W && c.freq_w) c.freq_w = 0;
+
+    // Whatever is left belongs to the bar; the trend takes a slice of it once
+    // the row is roomy enough for both to say something. The bar stays the
+    // DOMINANT cell — it's the column you scan vertically — and the spark caps
+    // at 40 because CpuCore::history only holds 48 samples; a wider spark would
+    // just be stretched air.
+    const int room = W - span(0, 0) - c.gap;
+    if (room < 3) return c;            // no bar at all at this width
+    if (room >= 34) {
+        c.spark_w = std::clamp(room * 2 / 5, 10, 40);
+        c.meter_w = room - c.spark_w - c.gap;
+    } else {
+        c.meter_w = room;
+    }
+    return c;
+}
+
+// One table row's data, resolved to strings/colors before render so the
+// component lambda owns everything it paints (no dangling spans into a
+// snapshot that may have been resampled by paint time).
+struct CoreRow {
+    std::string        id;
+    maya::Color        id_c = pal::cpu_ac;
+    double             load = 0;
+    std::vector<float> hist;
+    std::string        freq, temp;
+    maya::Color        temp_c = pal::dim;
+    bool               anchor = false;   // the ALL row: brighter ink, no dimming
+};
+
+inline Element core_row_el(CoreRow d, CoreTableCfg cfg) {
+    using namespace maya;
+    return Element{maya::ComponentElement{
+        .render = [d, cfg](int w, int) -> Element {
+            using namespace maya; using namespace maya::dsl;
+            const CoreCols cc = core_cols(w, cfg);
+            const maya::Color lc = load_color(d.load);
+            std::vector<Element> row;
+            row.push_back((text(d.id) | nowrap | Bold | fgc(d.id_c)
+                           | width(cc.id_w)).build());
+            if (cc.meter_w > 0) {
+                // Groove ON: the empty remainder is a recessed slab, so the
+                // bars form one continuous track down the table and two cores
+                // are comparable by eye without reading either number.
+                row.push_back((Element{Meter{d.load}.width(cc.meter_w).color(lc)}
+                               | width(cc.meter_w)).build());
+            }
+            if (cc.spark_w > 0) {
+                Element sp = d.hist.empty()
+                    ? Element{blank()}
+                    : Spark{d.hist.data(), static_cast<int>(d.hist.size())}
+                          .cells(cc.spark_w).build_fixed();
+                row.push_back((std::move(sp) | width(cc.spark_w)).build());
+            }
+            row.push_back((text(fmt::pct_pad(d.load)) | nowrap | Bold | fgc(lc)
+                           | width(cc.pct_w) | justify(Justify::End)).build());
+            if (cc.freq_w)
+                row.push_back((text(d.freq) | nowrap
+                               | fgc(d.anchor ? pal::label : pal::dim)
+                               | width(cc.freq_w) | justify(Justify::End)).build());
+            if (cc.temp_w)
+                row.push_back((text(d.temp) | nowrap | Bold | fgc(d.temp_c)
+                               | width(cc.temp_w) | justify(Justify::End)).build());
+            return (h(std::move(row)) | gap(cc.gap)).build();
+        },
+    }};
+}
+
+// The column header — same widths, same order, so it labels what is actually
+// underneath it at every width (and disappears column by column with it).
+inline Element core_head_row(CoreTableCfg cfg) {
+    using namespace maya;
+    return Element{maya::ComponentElement{
+        .render = [cfg](int w, int) -> Element {
+            using namespace maya; using namespace maya::dsl;
+            const CoreCols cc = core_cols(w, cfg);
+            auto cell = [](const char* t, int cw, bool right) {
+                Element e = (text(cw >= static_cast<int>(std::string(t).size()) ? t : "")
+                             | nowrap | fgc(pal::faint) | width(cw)
+                             | justify(right ? Justify::End : Justify::Start)).build();
+                return e;
+            };
+            std::vector<Element> row;
+            row.push_back(cell(cc.id_w >= 4 ? "CORE" : "CPU", cc.id_w, false));
+            if (cc.meter_w > 0) row.push_back(cell("LOAD", cc.meter_w, false));
+            if (cc.spark_w > 0) row.push_back(cell("TREND", cc.spark_w, false));
+            row.push_back(cell("USE", cc.pct_w, true));
+            if (cc.freq_w) row.push_back(cell("GHz", cc.freq_w, true));
+            if (cc.temp_w) row.push_back(cell("\xc2\xb0" "C", cc.temp_w, true));
+            return (h(std::move(row)) | gap(cc.gap)).build();
+        },
+    }};
+}
+
 // Returns the body rows for the CPU pane (unframed, unscrolled).
 inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
     const CpuInfo& c = s.cpu;
 
-    // In ultrawide mode the pane splits into two side-by-side columns so the
-    // screen fills horizontally instead of one tall scrolling column. `L`
-    // collects the left column (load graph + live stats + distribution), `R`
-    // the right (per-core meters + top consumers + sensors). In normal mode
-    // both point at the same vector and everything stacks as before.
-    std::vector<Element> single;
-    std::vector<Element> hero, left, right;
+    // READING ORDER. The per-core table is the thing you open this pane FOR,
+    // so it gets the most visible real estate: the LEFT column when the screen
+    // is wide enough to split (eye lands there first, and it's the column that
+    // grows with core count), and the slot directly under the hero graph when
+    // it isn't. The interpretation — right-now stats, distribution, verdicts,
+    // top consumers, sensors — rides the right column / below.
+    //
+    // Three collectors, assembled at the bottom of the function, so the same
+    // section code serves both layouts and neither can drift from the other.
+    std::vector<Element> hero, core_col, stat_col;
     const bool split = cx.ultrawide;
-    std::vector<Element>& L = split ? left : single;
-    std::vector<Element>& R = split ? right : single;
+    std::vector<Element>& L = stat_col;   // stats, verdicts, consumers, sensors
+    std::vector<Element>& R = core_col;   // the per-core table
 
     // ── hero: BIG number + graph ───────────────────────────────
     // Grafana stat-panel idiom: the headline figure in block digits with a
     // trend arrow, parked left of the load graph — readable across the room.
     // In split mode the hero rides the FULL pane width (hero_split) so the
     // trace spans the whole first band instead of a half-width sliver.
-    std::vector<Element>& H = split ? hero : single;
+    std::vector<Element>& H = hero;
     H.push_back(section("LOAD OVER TIME", pal::cpu_ac));
     {
         const int gh = cx.graph_h;
         H.push_back(hero_graph(c.total.v, load_color(c.total.v), "cpu load",
                                c.total_history.data(), c.total_hist_len, gh));
     }
-    if (!split) L.push_back(gap_row());
+    if (!split) H.push_back(gap_row());
 
-    // ── right-now stat strip ─────────────────────────────────────────────────
+    // ── right-now stat strip ────────────────────────────────────────
+    if (!split) L.push_back(gap_row());
     L.push_back(section("RIGHT NOW", pal::cpu_ac));
     L.push_back(bar("total", c.total.v, "busy across all cores", load_color(c.total.v), cx.wide ? 34 : 0));
     // User/system split — the first question about a busy CPU: is it MY code
@@ -130,116 +280,119 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         L.push_back(gap_row());
     }
 
-    // ── per-core meters ────────────────────────────────────────
-    // Every logical core: a load meter, its own history spark, load %, clock,
-    // die temperature, and — on heterogeneous silicon — which cluster it
-    // belongs to. The class and the temperature both arrive RESOLVED from the
-    // sampler (CpuCore::kind / ::temp_c); this pane never parses a sensor
-    // label or guesses a cluster layout from core counts.
+    // ── PER-CORE TABLE ──────────────────────────────────────────────────
+    // ONE logical core per row, under ONE header, in the pane's primary slot.
+    //
+    // Why not the old N-column grid: with 3-4 columns you had to re-find the
+    // number rails for every column, the row you wanted sat in an arbitrary
+    // one of them (column-major fill), and each core's cells were squeezed to a
+    // third of the width — so the trend spark and the °C column got dropped on
+    // exactly the wide machines that most need them. One core per row is
+    // scannable top-to-bottom, every core carries its FULL data (bar, trend,
+    // load, clock, temperature), and the bars form one continuous track you can
+    // read as a profile of the whole package without reading a single digit.
+    //
+    // The class and the temperature arrive RESOLVED from the sampler
+    // (CpuCore::kind / ::temp_c); this pane never parses a sensor label or
+    // guesses a cluster layout from core counts.
     const int n = static_cast<int>(c.cores.size());
     const bool hetero = c.hetero();
 
     bool have_core_temp = false;
     for (const CpuCore& core : c.cores) if (core.temp_c > 0) { have_core_temp = true; break; }
+    bool have_freq = false;
+    for (const CpuCore& core : c.cores) if (core.freq.value > 0) { have_freq = true; break; }
 
-    // Column legend in the section chip so the trailing bare figures read
-    // unambiguously — a per-core row is "id  meter  spark  <load>%  <clock>GHz
-    // [<temp>°C]", and without this the % / G / ° columns are unlabelled.
-    // Cluster split (nP+mE) still leads when the chip has room.
+    // The id column is sized from the WIDEST id the table can contain, not
+    // from a constant: a 4-thread laptop spends 3 cells, a 256-thread server
+    // spends 5, and a hybrid part adds the "·P"/"·E" tag. Nothing here can be
+    // outgrown by a bigger machine.
+    const int id_digits = std::max<int>(2, static_cast<int>(
+        std::to_string(std::max(0, n - 1)).size()));
+    CoreTableCfg cfg;
+    cfg.id_w = std::max(3, hetero ? id_digits + 2 : id_digits);
+    cfg.freq = have_freq;
+    cfg.temp = have_core_temp;
+
     {
-        std::string chip = hetero
-            ? std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E · "
-            : std::to_string(n) + " cores · ";
-        chip += have_core_temp ? "load · GHz · °C" : "load · GHz";
+        std::string chip = std::to_string(n) + (n == 1 ? " thread" : " threads");
+        if (hetero)
+            chip = std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores)
+                 + "E · " + chip;
         R.push_back(section("PER-CORE", pal::cpu_ac, chip));
     }
-    // Responsive column count. In split mode the per-core block owns only HALF
-    // the pane width, so use fewer columns; single-column uses the full width.
-    const int core_w = split ? cx.w / 2 : cx.w;
-    int cols = core_w >= 140 ? 4 : core_w >= 104 ? 3 : core_w >= 68 ? 2 : 1;
-    if (n <= 4) cols = 1;
-    else if (n <= 8 && cols > 2) cols = 2;
-    // A per-core row reads BEST when it can carry its own history sparkline
-    // (id + meter + spark + % + freq — needs ~40 cells). Column count above
-    // maximizes density, but in the ultrawide SPLIT layout the per-core block
-    // owns only half the pane and the OTHER half runs out of content long
-    // before this one does — leaving a tall band of dead space below the split.
-    // So when we're split and a narrower grid would let every core show its
-    // spark, step DOWN one column: fewer, richer rows that stack TALLER fill
-    // that vertical room with real per-core trend history instead of blanks.
-    if (split && cols > 1 && core_w / cols < 40 && core_w / (cols - 1) >= 40)
-        --cols;
-    const int col_w = core_w / std::max(1, cols);
-    // Spark width scales with the room each column actually has — a wide split
-    // column gets a longer history trace, a tight one the compact 12-cell run.
-    const int spark_cells = col_w >= 56 ? 18 : 12;
-    // ALIGNMENT CONTRACT for a core row: the meter is the ONLY elastic cell;
-    // everything to its right is a fixed reserved column that is present on
-    // EVERY row whether or not this particular core has a figure for it. The
-    // original code dropped the temp cell to width(0) on cores with no probe,
-    // which let the meter eat those cells and shifted that row's %/GHz left of
-    // its neighbours' — the ragged grid in issue #2. Reserve-and-blank, never
-    // drop, is what makes the columns line up.
-    const bool show_spark = col_w >= 40;
-    const bool show_temp_col = have_core_temp && col_w >= 44;
-    const bool show_freq_col = [&] {
-        for (const CpuCore& core : c.cores) if (core.freq.value > 0) return true;
-        return false;
-    }();
-    const int id_w = hetero ? 5 : 3;
+    R.push_back(core_head_row(cfg));
 
-    // One core's row. Rendered identically for every core so the fixed columns
-    // land at the same offset down the whole grid.
+    // Package row FIRST, on the same rails as the cores below it: "is this core
+    // above or below the machine as a whole" becomes a straight horizontal
+    // comparison instead of mental arithmetic against a number in another
+    // section.
+    {
+        CoreRow all;
+        all.id = "ALL";
+        all.id_c = pal::white;
+        all.load = c.total.v;
+        all.anchor = true;
+        all.hist.assign(c.total_history.data(),
+                        c.total_history.data() + std::clamp(c.total_hist_len, 0,
+                            static_cast<int>(c.total_history.size())));
+        if (have_freq) {
+            double sum = 0; int k = 0;
+            for (const CpuCore& core : c.cores)
+                if (core.freq.value > 0) { sum += static_cast<double>(core.freq.value); ++k; }
+            if (k) all.freq = fmt::fixed2(sum / k / 1e9);
+        }
+        if (have_core_temp) {
+            // The HOTTEST core, not the package sensor. This row heads a column
+            // of per-core die temperatures, and on plenty of machines the
+            // package/"Tctl" sensor reads far below them — printing it here
+            // would make the summary row contradict every row beneath it.
+            float t = 0;
+            for (const CpuCore& core : c.cores) t = std::max(t, core.temp_c);
+            if (t > 1) {
+                all.temp = std::to_string(static_cast<int>(t + 0.5f));
+                all.temp_c = load_color(std::clamp((t - 40.0) / 50.0, 0.0, 1.0));
+            }
+        }
+        R.push_back(core_row_el(std::move(all), cfg));
+    }
+    // One core → one row. Everything is resolved to plain strings/colors here;
+    // core_row_el owns the copy, so a row can be laid out (and re-laid out at a
+    // new width) without reaching back into the snapshot.
     auto core_row = [&](int i) -> Element {
         const CpuCore& core = c.cores[static_cast<std::size_t>(i)];
-        const double f = core.usage.v;
-        char id[12];
+        CoreRow d;
+        char id[16];
         if (hetero)
-            std::snprintf(id, sizeof id, "%2d·%c", i, core.kind == CoreKind::Eff ? 'E' : 'P');
+            std::snprintf(id, sizeof id, "%*d\xc2\xb7%c", id_digits, i,
+                          core.kind == CoreKind::Eff ? 'E' : 'P');
         else
-            std::snprintf(id, sizeof id, "%2d", i);
-        const std::string fq = core.freq.value > 0
-            ? fmt::fixed2(static_cast<double>(core.freq.value) / 1e9) + "G" : "";
-        const std::string tp = core.temp_c > 0
-            ? std::to_string(static_cast<int>(core.temp_c + 0.5f)) + "\xc2\xb0" : "";
-        const maya::Color tp_c = load_color(std::clamp((core.temp_c - 40.0) / 50.0, 0.0, 1.0));
+            std::snprintf(id, sizeof id, "%*d", id_digits, i);
+        d.id = id;
         // P cores read in the full accent, E cores dimmed — the cluster
         // boundary is legible as COLOR before you read a single letter.
-        const maya::Color id_c = !hetero || core.kind == CoreKind::Perf
+        d.id_c = !hetero || core.kind == CoreKind::Perf
             ? pal::cpu_ac : mix(pal::cpu_ac, pal::dim, 0.55);
-        std::vector<Element> row;
-        row.push_back((text(id) | nowrap | Bold | fgc(id_c) | width(id_w)).build());
-        row.push_back((Element{Meter{f}.fill().groove(false)} | grow(1)).build());
-        if (show_spark)
-            row.push_back(Spark{core.history.data(), core.hist_len}.cells(spark_cells).build_fixed());
-        row.push_back((text(fmt::pct_pad(f)) | nowrap | fgc(load_color(f))
-                       | width(5) | justify(Justify::End)).build());
-        if (show_freq_col)
-            row.push_back((text(fq) | nowrap | fgc(pal::faint) | width(6) | justify(Justify::End)).build());
-        if (show_temp_col)
-            row.push_back((text(tp) | nowrap | Bold | fgc(tp_c) | width(5) | justify(Justify::End)).build());
-        return (h(std::move(row)) | gap(1)).build();
+        d.load = core.usage.v;
+        d.hist.assign(core.history.data(),
+                      core.history.data() + std::clamp(core.hist_len, 0,
+                          static_cast<int>(core.history.size())));
+        if (core.freq.value > 0)
+            d.freq = fmt::fixed2(static_cast<double>(core.freq.value) / 1e9);
+        if (core.temp_c > 0) {
+            d.temp = std::to_string(static_cast<int>(core.temp_c + 0.5f));
+            d.temp_c = load_color(std::clamp((core.temp_c - 40.0) / 50.0, 0.0, 1.0));
+        }
+        return core_row_el(std::move(d), cfg);
     };
 
-    // On heterogeneous silicon, group the grid by CLUSTER with its own
+    // On heterogeneous silicon, group the table by CLUSTER with its own
     // sub-heading and average load. "Which kind of core is my work landing on"
     // is the question issue #3 asks, and an interleaved flat list answers it
     // only if you decode ids one at a time. Homogeneous machines keep the
-    // single flat grid — no wasted heading.
-    auto emit_grid = [&](const std::vector<int>& idx) {
-        const int m = static_cast<int>(idx.size());
-        if (m == 0) return;
-        const int gc = std::min(cols, m);
-        const int per = (m + gc - 1) / gc;
-        for (int r = 0; r < per; ++r) {
-            std::vector<Element> cells;
-            for (int col = 0; col < gc; ++col) {
-                const int k = col * per + r;
-                cells.push_back(k < m ? core_row(idx[static_cast<std::size_t>(k)])
-                                      : Element{blank()});
-            }
-            R.push_back(grid_row(std::move(cells), gc, 3));
-        }
+    // single flat table — no wasted heading.
+    auto emit_rows = [&](const std::vector<int>& idx) {
+        for (int i : idx) R.push_back(core_row(i));
     };
 
     if (hetero) {
@@ -256,44 +409,48 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         };
         auto heading = [&](const std::string& name, const std::vector<int>& idx, maya::Color ac) {
             const double av = cluster_avg(idx);
+            R.push_back(gap_row());
             R.push_back((h(
-                text("  " + name) | nowrap | Bold | fgc(ac),
+                text(name) | nowrap | Bold | fgc(ac),
                 text("  " + std::to_string(idx.size()) + " cores") | nowrap | fgc(pal::faint),
                 Element{blank()} | grow(1),
                 text("avg " + fmt::pct(av)) | nowrap | Bold | fgc(load_color(av))
             ) | gap(0)).build());
         };
         heading(c.perf_label.empty() ? "PERFORMANCE" : c.perf_label, perf, pal::cpu_ac);
-        emit_grid(perf);
-        R.push_back(gap_row());
+        emit_rows(perf);
         heading(c.eff_label.empty() ? "EFFICIENCY" : c.eff_label, eff,
                 mix(pal::cpu_ac, pal::dim, 0.55));
-        emit_grid(eff);
+        emit_rows(eff);
     } else {
         std::vector<int> all(static_cast<std::size_t>(std::max(0, n)));
         for (int i = 0; i < n; ++i) all[static_cast<std::size_t>(i)] = i;
-        emit_grid(all);
+        emit_rows(all);
     }
     R.push_back(gap_row());
 
-    // ── top CPU consumers ──────────────────────────────────────────────────
+    // ── top CPU consumers ───────────────────────────────────────────
     // The question a hot CPU pane exists to answer: WHO. Same ranked-list
-    // grid as the memory / disk panes.
+    // grid as the memory / disk panes. Lives with the INTERPRETATION column,
+    // beside the per-core table — "core 7 is pinned" and "this is the process
+    // pinning it" read together instead of a screen apart.
     {
         std::vector<const ProcInfo*> top;
         for (const auto& p : s.procs) top.push_back(&p);
         std::sort(top.begin(), top.end(),
                   [](const ProcInfo* a, const ProcInfo* b2) { return a->cpu > b2->cpu; });
-        // On a tall ultrawide the right column has room to spare below the
-        // per-core grid — show a deeper top-N there instead of blank rows.
-        const int cap = split && cx.tall ? 12 : cx.tall ? 8 : 4;
+        // The table column grows with the core count, so on a hybrid/server box
+        // the stat column has vertical room to spare — spend it on a deeper
+        // top-N rather than leaving the band blank.
+        const int cap = split ? std::clamp(n, 8, 16) : cx.tall ? 8 : 4;
         const int show = std::min<int>(cap, static_cast<int>(top.size()));
-        R.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac, "top " + std::to_string(show) + " · cpu%"));
+        L.push_back(gap_row());
+        L.push_back(section("TOP CPU CONSUMERS", pal::cpu_ac, "top " + std::to_string(show) + " · cpu%"));
         for (int i = 0; i < show; ++i) {
             const ProcInfo& p = *top[static_cast<std::size_t>(i)];
             const double f = std::clamp(p.cpu / 100.0, 0.0, 1.0);
             char pct[16]; std::snprintf(pct, sizeof pct, "%5.1f%%", p.cpu);
-            R.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
+            L.push_back(rank_row(i + 1, std::to_string(p.pid), maya::truncate_end(p.name, 22),
                                  f, pal::cpu_ac,
                                  pct, load_color(f), 7));
         }
@@ -305,20 +462,20 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // `sensors` for. Grouped by zone, each with a small heat bar. Empty on
     // macOS (no public temperature API), so the section just doesn't appear.
     if (!s.sensors.empty()) {
-        R.push_back(gap_row());
-        R.push_back(section("SENSORS", pal::cpu_ac,
+        L.push_back(gap_row());
+        L.push_back(section("SENSORS", pal::cpu_ac,
                             std::to_string(s.sensors.size()) + " probes"));
         std::string cur_zone = "\x01";   // sentinel so the first row prints its zone
         for (const Sensor& sn : s.sensors) {
-            // Per-core "Core N" temps are already shown inline in the PER-CORE
-            // grid — don't repeat them here as a long redundant list.
+            // Per-core "Core N" temps already have their own °C column in the
+            // PER-CORE table — don't repeat them here as a long redundant list.
             if (have_core_temp && sn.zone == "cpu"
                 && sn.label.find("ore") != std::string::npos
                 && sn.label.find_first_of("0123456789") != std::string::npos)
                 continue;
             if (sn.zone != cur_zone) {
                 cur_zone = sn.zone;
-                R.push_back((text("  " + cur_zone) | nowrap | fgc(pal::faint)).build());
+                L.push_back((text("  " + cur_zone) | nowrap | fgc(pal::faint)).build());
             }
             // Heat fraction: 30°C floor → crit (or 95°C) ceiling on the load ramp.
             // Some sensors report garbage thresholds (e.g. 65261°C on nvme
@@ -337,7 +494,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             const std::string label = sn.label;
             const std::string temp = t;
             const maya::Color tc = load_color(frac);
-            R.push_back(Element{maya::ComponentElement{
+            L.push_back(Element{maya::ComponentElement{
                 .render = [label, tail, temp, frac, tc](int w, int) -> Element {
                     using namespace maya; using namespace maya::dsl;
                     constexpr int kGap = 1, kMeterMin = 4, kTempW = 7;
@@ -363,8 +520,18 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         }
     }
 
-    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
-    return single;
+    // ── ASSEMBLY ───────────────────────────────────────────────────────
+    // Wide: hero band across the top, then the per-core TABLE on the left and
+    // the interpretation on the right — the table is what the eye lands on.
+    // Narrow: one column, table FIRST (right under the hero) so it's visible
+    // without scrolling; the interpretation follows.
+    if (split) return hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
+    std::vector<Element> out = std::move(hero);
+    out.insert(out.end(), std::make_move_iterator(core_col.begin()),
+                          std::make_move_iterator(core_col.end()));
+    out.insert(out.end(), std::make_move_iterator(stat_col.begin()),
+                          std::make_move_iterator(stat_col.end()));
+    return out;
 }
 
 }  // namespace rockbottom::ui::detail

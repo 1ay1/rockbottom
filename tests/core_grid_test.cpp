@@ -74,6 +74,18 @@ std::vector<int> pct_columns(const std::string& row) {
     return cols;
 }
 
+// How many '%' columns of a row belong to the thing under test.
+//
+// The dashboard CPU panel still lays cores out as an N-column GRID, so every
+// '%' on the line is a core's and all of them must align. The DETAIL pane puts
+// the per-core TABLE in its own column with unrelated content (the RIGHT NOW /
+// DISTRIBUTION strips, whose values also carry '%') beside it on the same
+// physical line — there only the table's own USE column, the FIRST one, is
+// ours to compare. Comparing the neighbours' too would be asserting that two
+// independent columns happen to share a rail, which is not a contract and was
+// never true.
+enum class Scan { AllColumns, LeadingColumn };
+
 // Is this row a PER-CORE row?
 //
 // Both views put the core id first, so after stripping the panel border and
@@ -127,16 +139,19 @@ Snapshot make_snapshot(CpuInfo cpu) {
     return s;
 }
 
-// ── #2: the numeric columns must line up ────────────────────────────────
+// ── #2: the numeric columns must line up ─────────────────────────────
 // Collect the rows that carry per-core figures and assert every one of them
 // places its '%' at the same set of columns. A ragged grid produces different
 // offsets per row — which is exactly what the reporter saw.
-void test_alignment(const std::string& name, const std::vector<std::string>& rows) {
+void test_alignment(const std::string& name, const std::vector<std::string>& rows,
+                    Scan scan = Scan::AllColumns) {
     std::vector<std::vector<int>> shapes;
     for (const std::string& r : rows) {
         if (!is_core_row(r)) continue;
-        const std::vector<int> cols = pct_columns(r);
-        if (!cols.empty()) shapes.push_back(cols);
+        std::vector<int> cols = pct_columns(r);
+        if (cols.empty()) continue;
+        if (scan == Scan::LeadingColumn) cols.resize(1);
+        shapes.push_back(std::move(cols));
     }
     check(shapes.size() >= 2, name + ": found per-core rows to compare (" +
                                   std::to_string(shapes.size()) + ")");
@@ -558,6 +573,67 @@ void test_core_temps() {
 
 }  // namespace
 
+// ── the PER-CORE TABLE contract ────────────────────────────────────
+// The table promises four things at EVERY terminal size and core count, and
+// each is a bug someone would file if it broke:
+//
+//   1. ONE ROW PER CORE — exactly n core rows plus the ALL package row. A grid
+//      that silently packed two cores onto a line, or dropped the tail of a
+//      256-thread machine, would look plausible in a screenshot.
+//   2. The USE column sits at ONE x for the header and every row, so the
+//      numbers read as a column (this is issue #2, now table-shaped).
+//   3. Nothing OVERFLOWS its slot — no row is longer than the pane, so no
+//      number can be pushed off-screen or wrap into the row below.
+//   4. Every core's LOAD is legible: its own "NN%" appears on its own row.
+//
+// Runs over a large matrix, so it accumulates FAILURE STRINGS rather than
+// printing a PASS line per case — a hundred green lines would bury the red one.
+std::vector<std::string> table_faults;
+
+void test_core_table(int n, bool hybrid, int temp_every, int w) {
+    const std::string name = "n=" + std::to_string(n) + " w=" + std::to_string(w)
+                           + (hybrid ? " hybrid" : "") + " t/" + std::to_string(temp_every);
+    const CpuInfo cpu = make_cpu(n, hybrid, temp_every);
+    const auto rows = render_detail(make_snapshot(cpu), w, 40 + n * 3);
+    auto fault = [&](const std::string& why) { table_faults.push_back(name + ": " + why); };
+
+    // Locate the table by its header — the row carrying the USE label. Its '%'
+    // rail is then the rail every core row must hit.
+    int use_x = -1;
+    for (const std::string& r : rows) {
+        const std::size_t k = r.find("USE");
+        if (k != std::string::npos && r.find("LOAD") != std::string::npos) {
+            use_x = static_cast<int>(k) + 2;   // 'USE' is right-aligned on '%'
+            break;
+        }
+    }
+    if (use_x < 0) { fault("no table header"); return; }
+
+    // A core row is one whose FIRST token is this table's id — count them.
+    int core_rows = 0, all_rows = 0, misaligned = 0, overflow = 0;
+    for (const std::string& r : rows) {
+        if (static_cast<int>(r.size()) > w) ++overflow;
+        std::size_t i = 0;
+        while (i < r.size() && r[i] == ' ') ++i;
+        if (i >= r.size()) continue;
+        const bool is_all = r.compare(i, 3, "ALL") == 0;
+        const bool is_core = std::isdigit(static_cast<unsigned char>(r[i]))
+                          && r.find('%') != std::string::npos;
+        if (!is_all && !is_core) continue;
+        if (is_all) ++all_rows; else ++core_rows;
+        const std::vector<int> pc = pct_columns(r);
+        if (pc.empty() || pc[0] != use_x) ++misaligned;
+    }
+    if (core_rows != n)
+        fault("expected " + std::to_string(n) + " core rows, got " + std::to_string(core_rows));
+    if (all_rows != 1)
+        fault("expected 1 ALL row, got " + std::to_string(all_rows));
+    if (misaligned)
+        fault(std::to_string(misaligned) + " row(s) off the USE rail at x=" + std::to_string(use_x));
+    if (overflow)
+        fault(std::to_string(overflow) + " row(s) wider than " + std::to_string(w));
+}
+
 int main() {
     std::printf("\n\x1b[1mper-core grid tests\x1b[0m\n\n");
 
@@ -573,7 +649,7 @@ int main() {
     {
         std::printf("issue #2 — detail pane, 22 cores, temps on 1 in 4:\n");
         const auto rows = render_detail(make_snapshot(make_cpu(22, false, 4)), 130, 60);
-        test_alignment("detail/sparse-temps", rows);
+        test_alignment("detail/sparse-temps", rows, Scan::LeadingColumn);
         dump("detail pane (22 cores, sparse temps)", rows);
     }
 
@@ -581,7 +657,7 @@ int main() {
     {
         std::printf("\nissue #2 — detail pane, 22 cores, no per-core temps:\n");
         const auto rows = render_detail(make_snapshot(make_cpu(22, false, 0)), 130, 60);
-        test_alignment("detail/no-temps", rows);
+        test_alignment("detail/no-temps", rows, Scan::LeadingColumn);
     }
 
     // ── the reporter's exact shape: temps on a sparse, IRREGULAR subset ────
@@ -593,7 +669,7 @@ int main() {
         for (int i : {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20})
             cpu.cores[static_cast<std::size_t>(i)].temp_c = 60.0f + static_cast<float>(i % 9);
         const auto rows = render_detail(make_snapshot(cpu), 130, 60);
-        test_alignment("detail/irregular-temps", rows);
+        test_alignment("detail/irregular-temps", rows, Scan::LeadingColumn);
         dump("detail pane (irregular temps)", rows);
     }
 
@@ -605,7 +681,7 @@ int main() {
         std::printf("\nissue #2 — alignment holds across widths:\n");
         for (int w : {71, 83, 100, 107, 128, 141, 173, 199}) {
             const auto rows = render_detail(make_snapshot(make_cpu(22, false, 4)), w, 70);
-            test_alignment("detail/w=" + std::to_string(w), rows);
+            test_alignment("detail/w=" + std::to_string(w), rows, Scan::LeadingColumn);
         }
         for (int w : {64, 90, 113, 130, 161}) {
             const CpuInfo cpu = make_cpu(22, false, 4);
@@ -649,7 +725,7 @@ int main() {
         }
         check(perf_heading, "performance cluster is titled");
         check(eff_heading, "efficiency cluster is titled");
-        test_alignment("detail/hybrid", rows);
+        test_alignment("detail/hybrid", rows, Scan::LeadingColumn);
         dump("detail pane (hybrid 8P+8E)", rows);
     }
 
@@ -678,6 +754,38 @@ int main() {
                 r.find("Performance") != std::string::npos ||
                 r.find("EFFICIENCY") != std::string::npos) has_cluster = true;
         check(!has_cluster, "no cluster headings on a homogeneous machine");
+    }
+
+    // ── the per-core TABLE, across every shape a machine can have ──────────
+    // One core per row, aligned to its header, never overflowing — asserted
+    // over the whole matrix of core counts × widths × hybrid × temp coverage.
+    // The extremes are the point: 1 core on a 24-col phone terminal and 256
+    // threads on an ultrawide are the two ends where a layout breaks.
+    {
+        std::printf("\nper-core TABLE — one row per core at every size:\n");
+        int cases = 0;
+        auto run = [&](int n, bool hy, int te, int w) { ++cases; test_core_table(n, hy, te, w); };
+        for (int n : {1, 2, 4, 8, 22, 64, 128, 256})
+            for (int w : {24, 40, 71, 100, 130, 173, 240})
+                run(n, false, 4, w);
+        // Hybrid: the cluster headings and the ·P/·E id tag both widen the id
+        // column, which is exactly where an off-by-one would show up.
+        for (int n : {2, 8, 16, 24, 128})
+            for (int w : {24, 40, 71, 100, 130, 173, 240})
+                run(n, true, 0, w);
+        // Temp coverage variants: none, sparse, every core. The °C column is
+        // reserve-and-blank, so a core with no probe must not shift its row.
+        for (int te : {0, 1, 3, 7})
+            for (int w : {40, 71, 100, 130, 173})
+                run(22, false, te, w);
+
+        check(table_faults.empty(),
+              std::to_string(cases) + " shapes: one row per core, on the header rail, "
+              "nothing overflowing");
+        for (std::size_t i = 0; i < table_faults.size() && i < 12; ++i)
+            std::printf("       → %s\n", table_faults[i].c_str());
+        if (table_faults.size() > 12)
+            std::printf("       → … and %zu more\n", table_faults.size() - 12);
     }
 
     std::printf("\n%s\n\n", failures ? ("\x1b[31m" + std::to_string(failures) +

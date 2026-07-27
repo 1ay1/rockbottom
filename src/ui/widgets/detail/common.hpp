@@ -598,43 +598,6 @@ inline Element gap_row() {
     return blank();
 }
 
-// ── EQUAL-WIDTH GRID ROW ─────────────────────────────────────
-// Lay `cells` out as `cols` columns that are EXACTLY the same width.
-//
-// The obvious spelling — `h(cell | grow(1), cell | grow(1), …)` — does not
-// give equal columns. Flex hands the integer rounding residue of the free
-// space to the leading grow items one cell at a time, so with 22 cores in 3
-// columns the first column ends up 1-2 cells wider than the others. Every
-// fixed-width column INSIDE the cells then sits at a different absolute x per
-// grid column, and the numbers rag instead of forming a scannable column.
-//
-// So we solve the column width ourselves against the real slot width and give
-// each cell a FIXED width. The undistributable remainder (< cols cells) stays
-// as quiet right margin rather than being smeared into one lucky column.
-// Cells receive their exact width in their own render(), so anything they lay
-// out internally lines up across the whole grid.
-inline Element grid_row(std::vector<Element> cells, int cols, int gutter) {
-    using namespace maya;
-    const int nc = std::max(1, cols);
-    const int gw = std::max(0, gutter);
-    auto shared = std::make_shared<std::vector<Element>>(std::move(cells));
-    return Element{maya::ComponentElement{
-        .render = [shared, nc, gw](int w, int) -> Element {
-            using namespace maya::dsl;
-            const int inner = std::max(0, w - gw * (nc - 1));
-            const int cw = std::max(1, inner / nc);
-            std::vector<Element> row;
-            row.reserve(static_cast<std::size_t>(nc));
-            for (int i = 0; i < nc; ++i) {
-                const std::size_t k = static_cast<std::size_t>(i);
-                Element e = k < shared->size() ? (*shared)[k] : Element{blank()};
-                row.push_back((Element{std::move(e)} | width(cw)).build());
-            }
-            return (h(std::move(row)) | gap(gw)).build();
-        },
-    }};
-}
-
 // ── WIDTH-AWARE THROUGHPUT ROW ───────────────────────────────────────
 // The rx/tx (and disk read/write) strip: an arrow+label, a live sparkline
 // that fills the slack, the current rate, and OPTIONAL trailing figures
