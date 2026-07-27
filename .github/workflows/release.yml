@@ -85,32 +85,82 @@ jobs:
           fi
 
       # We advertise these as standalone binaries ("no build, no deps"), and
-      # v0.1.0 shipped a macOS build that referenced Homebrew GCC's
-      # libstdc++.6.dylib — present on the runner, present on nobody else's
-      # machine, so the download died in dyld before main(). A --version smoke
-      # test on the BUILDER cannot catch that; only inspecting the link table
-      # can. Anything outside the OS's own directories fails the release.
+      # THE RELEASE GATE. Three shipped-broken releases came through here, so
+      # this step is deliberately paranoid about the one thing a --version
+      # smoke test on the BUILDER can never catch: a dependency that exists
+      # here and nowhere else.
+      #
+      #   v0.1.0 (macOS) referenced Homebrew GCC's libstdc++.6.dylib and died
+      #   in dyld before main() on every machine but the runner's.
+      #
+      #   Then the Linux artifact passed a check that only grepped for
+      #   libstdc++/libgcc_s while still importing GLIBC_2.29…2.38 from the
+      #   runner's glibc 2.39 — so it aborted on any stable enterprise host
+      #   with a wall of "version `GLIBC_2.xx' not found (required by rb)".
+      #   Passing "no libstdc++" is NOT the same as being portable.
+      #
+      # So on Linux we now assert the strongest available property: the image
+      # is fully static and imports NO versioned symbol from any host library.
+      # That is checkable, and it is what "standalone" actually means.
       - name: Binary must be standalone
         shell: bash
         run: |
+          set -uo pipefail
           asset="${{ matrix.asset }}"
+          fail=0
+
           if [ "${{ runner.os }}" = "macOS" ]; then
-            echo "otool -L $asset"; otool -L "$asset"
+            # Apple ships no libc.a, so a fully static mach-o isn't possible.
+            # The achievable bar: nothing outside the OS's own directories.
+            echo "== otool -L $asset"; otool -L "$asset"
             bad=$(otool -L "$asset" | tail -n +2 | awk '{print $1}' \
                   | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)
+            if [ -n "$bad" ]; then
+              echo "::error::$asset links libraries that ship with no other Mac:"
+              echo "$bad"; fail=1
+            fi
           else
-            echo "ldd $asset"; ldd "$asset" || true
-            # Only the base system set is acceptable; libstdc++/libgcc_s must
-            # have been linked in statically.
-            bad=$(ldd "$asset" | awk '{print $1}' \
-                  | grep -E 'libstdc\+\+|libgcc_s' || true)
+            # 1. Fully static — no interpreter, so no host loader involvement.
+            echo "== file $asset"; file "$asset"
+            if ! file "$asset" | grep -q 'statically linked'; then
+              echo "::error::$asset is NOT statically linked — it will inherit the"
+              echo "::error::builder's glibc version floor. Check RB_STANDALONE."
+              file "$asset"; fail=1
+            fi
+
+            # 2. No dynamic dependencies at all.
+            if ldd "$asset" 2>&1 | grep -qv 'not a dynamic executable'; then
+              echo "::error::$asset has dynamic dependencies:"
+              ldd "$asset" 2>&1; fail=1
+            fi
+
+            # 3. THE REGRESSION THAT SHIPPED: zero imported versioned symbols.
+            #    This is the check whose absence let GLIBC_2.29…2.38 out the
+            #    door. objdump -T on a static binary lists no UND imports at
+            #    all, so any GLIBC_* here means we regressed to dynamic glibc.
+            vers=$(objdump -T "$asset" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' \
+                   | sort -uV || true)
+            if [ -n "$vers" ]; then
+              echo "::error::$asset imports versioned glibc symbols — it will fail"
+              echo "::error::on any host with an older glibc than this runner:"
+              echo "$vers"; fail=1
+            fi
+
+            # 4. It must actually START on a host that is not the builder.
+            #    Runs in a deliberately ANCIENT container: if the binary is
+            #    truly self-contained this works, and if we ever regress to
+            #    dynamic glibc this is where it gets caught with a real
+            #    "GLIBC_2.xx not found" instead of a passing grep.
+            if [ "${{ matrix.asset }}" = "rb-linux-x86_64" ]; then
+              echo "== smoke test under centos:7 (glibc 2.17)"
+              docker run --rm --platform linux/amd64 \
+                -v "$PWD/$asset:/rb:ro" centos:7 /rb --version \
+                || { echo "::error::$asset does not run on glibc 2.17"; fail=1; }
+            fi
           fi
-          if [ -n "$bad" ]; then
-            echo "::error::$asset is not standalone — unexpected runtime deps:"
-            echo "$bad"
-            exit 1
-          fi
-          echo "ok: $asset carries no non-system runtime dependencies"
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "ok: $asset is standalone"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

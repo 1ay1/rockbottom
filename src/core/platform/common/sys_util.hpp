@@ -10,6 +10,9 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -67,8 +70,50 @@ inline void push_hist2(std::array<float, N>& a, std::array<float, N>& b,
     b[N - 1] = vb;
 }
 
+// uid → login name.
+//
+// STATIC-LINKING HAZARD, and the reason this is not a one-line getpwuid call.
+// `rb` ships as a fully static binary so it runs on any Linux regardless of
+// the host's glibc version. But glibc resolves users through NSS, which
+// dlopen()s libnss_* at runtime — and a static binary has no dynamic loader,
+// so getpwuid() can only ever see /etc/passwd. On an LDAP/AD/SSSD host (where
+// every interactive account is a directory account and /etc/passwd holds only
+// system users) that means every process would display a bare numeric uid.
+// "1000" instead of "ayush" is a legibility regression, and a silent one.
+//
+// So: try getpwuid first — correct and complete on a normally-linked build,
+// and on a static build it still resolves every local/system account. Only if
+// that misses do we ask the SYSTEM's own dynamically-linked `getent`, which
+// loads the NSS stack we cannot, and therefore does see directory accounts.
+// The uid→name result is cached by the caller (Sampler::uid_cache_), so this
+// costs at most one fork per distinct uid per run, not one per sample tick.
+//
+// Returns the uid as a decimal string if even getent can't name it — an
+// unresolvable uid is a real state (deleted account, unmapped container id),
+// not an error worth surfacing.
 inline std::string user_of(uid_t uid) {
     if (passwd* pw = ::getpwuid(uid)) return pw->pw_name;
+
+#ifndef _WIN32
+    // getent is in the base install of every distro we target (glibc's own
+    // package on Debian/Ubuntu/RHEL/SUSE, busybox on Alpine). Absent it, we
+    // fall through to the numeric form rather than failing.
+    char cmd[64];
+    std::snprintf(cmd, sizeof cmd, "getent passwd %lu 2>/dev/null",
+                  static_cast<unsigned long>(uid));
+    if (FILE* p = ::popen(cmd, "r")) {
+        char line[512];
+        std::string name;
+        if (std::fgets(line, sizeof line, p)) {
+            // passwd format: name:passwd:uid:gid:gecos:dir:shell — take field 1.
+            if (const char* colon = std::strchr(line, ':'))
+                name.assign(line, static_cast<std::size_t>(colon - line));
+        }
+        ::pclose(p);
+        if (!name.empty()) return name;
+    }
+#endif
+
     return std::to_string(uid);
 }
 

@@ -14,3 +14,6 @@ assets/bin/
 # unrelated local checkouts that live alongside this repo
 ish/
 termux-exec/
+
+# local agent workspace state (memory, session scratch)
+.agentty/

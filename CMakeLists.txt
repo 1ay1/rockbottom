@@ -122,23 +122,50 @@ endif()
 # The binary is `rb` — short, one hand, the way you'll actually type it.
 set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 
-# ── standalone linking ──────────────────────────────────────────────────────
-# rockbottom is built with GCC 14 (Apple Clang's libc++ lacks the
-# std::move_only_function maya needs), and GCC links its OWN libstdc++ by
-# default. On macOS that means the published binary referenced
-#   /opt/homebrew/opt/gcc@14/lib/gcc/14/libstdc++.6.dylib
-# which exists on the CI runner and on nobody else's machine — the download
-# aborted at dyld before main(). On Linux it's the quieter version of the same
-# bug: it runs only where libstdc++ is at least as new as the builder's.
+# ── standalone linking ────────────────────────────────────────────
+# We promise "standalone binary — no build, no deps". Getting there took three
+# separate bugs, all the same shape: the published artifact depended on
+# something that existed on the BUILD machine and nowhere else.
 #
-# Since we promise "standalone binary — no build, no deps", link both the C++
-# runtime and libgcc statically. This is exactly what the RB_STANDALONE option
-# is for; it defaults ON so a plain `cmake -B build` produces a binary you can
-# hand to someone. Turn it OFF for a distro package, where linking against the
-# system libstdc++ is the correct behaviour.
-option(RB_STANDALONE "Statically link the C++ runtime so `rb` is portable" ON)
+#   1. macOS/libstdc++. GCC links its OWN libstdc++, so v0.1.0's mac build
+#      referenced /opt/homebrew/opt/gcc@14/lib/gcc/14/libstdc++.6.dylib and
+#      died in dyld before main() on every machine but the runner's.
+#
+#   2. Linux/libstdc++. The quieter version of the same bug: the binary ran
+#      only where the system libstdc++ was at least as new as the builder's.
+#
+#   3. Linux/GLIBC SYMBOL VERSIONS — the one that survived the first fix.
+#      -static-libstdc++ leaves *glibc itself* dynamic, and the linker stamps
+#      in the version tag of whatever glibc it built against. Built on
+#      ubuntu-latest (glibc 2.39) the artifact demanded GLIBC_2.29 through
+#      2.38, so on a stable enterprise host it aborted with a wall of
+#      "version `GLIBC_2.xx' not found (required by rb)" — before main(),
+#      with no hint that the download simply wasn't built for that machine.
+#      A binary is not portable because it avoided libstdc++; it is portable
+#      when it needs NO versioned symbol from the host at all.
+#
+# So on Linux: link EVERYTHING statically. `rb` reads /proc and issues
+# syscalls — the kernel ABI is stable in a way the glibc symbol table is not,
+# so a static image is the right shape for this program. On macOS full static
+# linking is unsupported (no crt0.o, Apple ships no libc.a), so there we do the
+# most that platform allows: static libstdc++/libgcc, with libSystem dynamic.
+#
+# ONE BEHAVIOURAL CONSEQUENCE, handled in sys_util.hpp: static glibc cannot
+# dlopen NSS modules, so getpwuid() sees only /etc/passwd and directory
+# (LDAP/AD/SSSD) accounts would render as bare numeric uids. user_of() falls
+# back to the system's own `getent` for exactly that case — see the comment
+# there before touching either half of this.
+#
+# Defaults ON so a plain `cmake -B build` yields a binary you can hand to
+# someone. Turn it OFF for a distro package, where linking against the system
+# libraries is the correct behaviour.
+option(RB_STANDALONE "Statically link so `rb` runs on any host of its OS" ON)
 if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(rockbottom PRIVATE -static)
+    else()
+        target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
+    endif()
 endif()
 
 # Strip the Release binary. Unstripped, `rb` is ~33MB (94% debug symbols); the

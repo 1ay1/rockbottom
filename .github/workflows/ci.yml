@@ -97,3 +97,60 @@ jobs:
             echo "::error::classifier reported a P/E split on a homogeneous CI runner"
             exit 1
           fi
+
+      # PORTABILITY, checked on every push rather than only at release.
+      #
+      # The release gate used to be the only place this was verified, and it
+      # was checking the wrong property ("no libstdc++" instead of "no host
+      # symbol deps"), so a binary importing GLIBC_2.29…2.38 from the runner's
+      # glibc shipped and aborted before main() on stable enterprise hosts.
+      # Catching it here means a portability regression fails the PR that
+      # introduces it, when the cause is one commit away instead of a tag.
+      #
+      # A default `cmake -B build` must produce a portable binary — if you have
+      # to remember a flag, the default is wrong.
+      - name: Binary must be portable
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail=0
+
+          file build/rb
+          file build/rb | grep -q 'statically linked' || {
+            echo "::error::build/rb is not static — it will only run where glibc"
+            echo "::error::is at least as new as this runner's. See RB_STANDALONE."
+            fail=1; }
+
+          vers=$(objdump -T build/rb 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -uV || true)
+          if [ -n "$vers" ]; then
+            echo "::error::build/rb imports versioned glibc symbols:"
+            echo "$vers"
+            fail=1
+          fi
+
+          # The strongest statement of "standalone" that can be made without a
+          # second machine: run it in a chroot holding NOTHING but the binary.
+          # No /lib, no /usr, no glibc. If it starts there, it starts anywhere
+          # with a compatible kernel.
+          jail=$(mktemp -d)
+          cp build/rb "$jail/rb"
+          sudo chroot "$jail" /rb --version || {
+            echo "::error::build/rb cannot run in an empty chroot — it still needs"
+            echo "::error::something from the host filesystem."
+            fail=1; }
+
+          [ "$fail" -eq 0 ] || exit 1
+          echo "ok: build/rb is self-contained"
+
+      # RB_STANDALONE=OFF is the distro-package path (link against the system
+      # libstdc++ so the package manager owns the ABI). Nobody builds that way
+      # day to day, so it silently rots unless CI compiles it.
+      - name: Distro-package link mode still builds
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          export CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}"
+          cmake -B build-shared -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=OFF
+          cmake --build build-shared -j
+          ./build-shared/rb --version
