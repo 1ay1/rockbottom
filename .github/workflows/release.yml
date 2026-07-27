@@ -1,9 +1,10 @@
 name: release
 
 # On a `v*` tag (or manual dispatch), build a stripped standalone `rb` binary
-# for every supported platform/arch, publish them as GitHub Release assets, AND
-# commit the binaries into the repo's assets/ directory so they're directly
-# downloadable from the tree.
+# for every supported platform/arch and publish them as GitHub Release assets.
+# Binaries are deliberately NOT committed into the tree (d8dac27) — a repo that
+# carries its own build artifacts grows without bound and invites the "is the
+# checked-in binary current?" question on every clone.
 #
 # Supported platforms: Linux (x86_64 + arm64) and Apple Silicon macOS. There is
 # deliberately no Windows build, and no Intel macOS build (the macos-13 runner
@@ -19,7 +20,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # create releases + push the committed binaries
+  contents: write   # create the release + upload assets
 
 concurrency:
   group: release-${{ github.ref }}
@@ -170,7 +171,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: publish release + commit assets
+    name: publish release
     needs: build
     runs-on: ubuntu-latest
     steps:
