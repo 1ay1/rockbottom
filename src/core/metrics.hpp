@@ -70,6 +70,17 @@ struct MemInfo {
                                        // and "the machine is thrashing"
     ByteRate page_in{}, page_out{};    // file-backed pagein/pageout traffic
     double   faults_ps = 0;            // page faults per second (all kinds)
+    // ── Hugepages (Linux /proc/meminfo) — the classic leak is pages that are
+    // reserved-and-free forever: memory the kernel can't reclaim. huge_size is
+    // the pool page size (typically 2 MiB); *_total/free are page COUNTS.
+    std::uint64_t huge_total = 0, huge_free = 0, huge_rsvd = 0;
+    Bytes         huge_size{};          // one hugepage's size, 0 = no pool
+    Bytes         huge_idle{};          // (free-rsvd)*size — reserved but unused
+    // ── NUMA auto-balancing (Linux /proc/vmstat) — a high hint-fault rate on a
+    // multi-socket box means the kernel is churning page faults chasing memory
+    // locality, which stalls memory-heavy apps. numa_on gates the display.
+    bool     numa_on = false;           // /proc/sys/kernel/numa_balancing != 0
+    double   numa_hint_faults_ps = 0;   // numa_hint_faults delta/sec
     std::array<float, 120> usage_history{};   // usage fraction ring (leak trend)
     int hist_len = 0;
     Ratio usage() const { return Ratio::of(used, total); }
@@ -95,6 +106,7 @@ struct NetIface {
     std::uint64_t rx_packets = 0, tx_packets = 0;  // lifetime packet counts
     std::uint64_t rx_errs = 0, tx_errs = 0;        // lifetime error counts
     std::uint64_t drops = 0;                       // lifetime dropped inbound
+    double        err_ps = 0, drop_ps = 0;         // rx+tx errors / drops per sec (live)
     std::array<float, 48> rx_history{}, tx_history{};
     int         hist_len = 0;
     bool        up = false;
@@ -166,6 +178,38 @@ struct DiskIO {
     double   read_iops = 0, write_iops = 0;   // read/write OPERATIONS per second
     std::array<float, 48> read_history{}, write_history{};
     int hist_len = 0;
+};
+
+// Per-physical-device I/O + service latency, from /proc/diskstats fields the
+// aggregate DiskIO discards: read_ticks (f3), write_ticks (f7), io_ticks (f9).
+// Average latency = Δticks/Δops; busy = Δio_ticks/dt. A single slow drive is the
+// whole point of watching this — latency is the best early warning of a
+// failing or saturated disk, so it's tracked PER DEVICE, not summed.
+struct DriveIO {
+    std::string name;                 // "nvme0n1", "sda", …
+    ByteRate    read{}, write{};
+    double      read_lat_ms = 0;      // avg ms per read this interval
+    double      write_lat_ms = 0;     // avg ms per write this interval
+    double      busy = 0;             // 0..1 fraction of wall time doing I/O
+    std::array<float, 48> lat_history{};   // peak-normalized max(r,w) latency ring
+    int         hist_len = 0;
+    double      worst_lat_ms() const {
+        return read_lat_ms > write_lat_ms ? read_lat_ms : write_lat_ms;
+    }
+};
+
+// SSD/NVMe write-endurance + health, from the NVMe SMART log page (0x02) read
+// via ioctl. Root-only: on permission-denied or non-NVMe the vector stays
+// empty and the UI shows nothing (same discipline as PSI/sensors). pct_used
+// can legitimately exceed 100 — the drive is past its rated write budget.
+struct SsdHealth {
+    std::string   name;               // "nvme0", …
+    int           pct_used = 0;       // % of rated write endurance consumed
+    int           spare_pct = 100;    // available spare blocks, %
+    int           spare_thresh = 10;  // vendor's low-spare alert threshold, %
+    std::uint64_t media_errors = 0;   // lifetime uncorrectable media errors
+    int           crit_warning = 0;   // SMART critical-warning bitmask (0 = ok)
+    float         temp_c = 0;         // composite temperature, 0 if unknown
 };
 
 struct Battery {
@@ -267,6 +311,8 @@ struct Snapshot {
     MemInfo               mem;
     std::vector<DiskInfo> disks;
     DiskIO                disk_io;
+    std::vector<DriveIO>  drives;    // per-device I/O + latency (Linux); empty on macOS
+    std::vector<SsdHealth> ssd_health; // NVMe endurance (Linux, root); empty otherwise
     std::vector<NetIface> nets;
     std::vector<Connection> connections;   // active sockets + owning pids
     std::vector<GpuInfo>  gpus;

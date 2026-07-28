@@ -418,7 +418,10 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         }
         // Errors / drops broken out where the link is actually seeing them —
         // a healthy interface skips this row entirely, so it only appears as
-        // a warning when there's something to warn about.
+        // a warning when there's something to warn about. The live RATE (per
+        // second) is the actionable signal: a rising rate means a cable, link
+        // or driver fault happening NOW, not a stale boot-time counter.
+        const double bad_ps = ni.err_ps + ni.drop_ps;
         if (ni.rx_errs || ni.tx_errs || ni.drops) {
             ifcol.push_back(kv3(
                 "rx errors", fmt::count(static_cast<double>(ni.rx_errs)),
@@ -427,6 +430,15 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 ni.tx_errs ? pal::hot : pal::dim,
                 "dropped in", fmt::count(static_cast<double>(ni.drops)),
                 ni.drops ? pal::crit : pal::dim));
+        }
+        if (bad_ps >= 0.5) {
+            const maya::Color rc = bad_ps > 100 ? pal::crit : pal::hot;
+            std::string live = "  \xe2\x96\xb2 ";
+            if (ni.drop_ps >= 0.5) live += fmt::count(ni.drop_ps) + " drops/s";
+            if (ni.err_ps >= 0.5) live += (ni.drop_ps >= 0.5 ? "  " : "") +
+                                          fmt::count(ni.err_ps) + " errors/s";
+            live += " \xe2\x80\x94 check cable / link / driver";
+            ifcol.push_back((text(live) | nowrap | Bold | fgc(rc)).build());
         }
         ifcol.push_back(gap_row());
     }

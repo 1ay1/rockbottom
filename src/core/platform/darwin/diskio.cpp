@@ -78,4 +78,11 @@ void Sampler::sample_disk_io(DiskIO& io, double dt) {
     io.hist_len = io_hist_len_;
 }
 
+// Per-device latency and NVMe endurance have no cheap IORegistry analogue on
+// macOS today (SMART lives behind a separate IOKit user-client), so these are
+// no-ops here — the vectors stay empty and every consumer degrades to hiding
+// the section, exactly like sensors/PSI do on this platform.
+void Sampler::sample_drives(std::vector<DriveIO>&, double) {}
+void Sampler::sample_ssd_health(std::vector<SsdHealth>&) {}
+
 }  // namespace rockbottom

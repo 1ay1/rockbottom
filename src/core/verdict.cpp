@@ -239,6 +239,83 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
             std::to_string(s.zombies) + " zombies — a parent isn't reaping its children"});
     }
 
+    // ── 10. Disk latency: the best early warning of a failing/saturated drive.
+    // We alert on SERVICE TIME, not throughput — a drive can be slow while
+    // barely busy (dying) or fast while pegged. Name the specific device.
+    for (const auto& d : s.drives) {
+        const double lat = d.worst_lat_ms();
+        if (lat < 20 && d.busy < 0.97) continue;
+        const bool rd = d.read_lat_ms >= d.write_lat_ms;
+        std::string ev = fmt_1(lat) + " ms average " + (rd ? "read" : "write") +
+                         " latency, " + fmt_pct(d.busy * 100) + " busy";
+        if (lat > 100)
+            findings.push_back({66, "Disk " + d.name + " is failing or overwhelmed", std::move(ev)});
+        else if (lat > 50 || d.busy > 0.97)
+            findings.push_back({48, "Disk " + d.name + " is slow to respond", std::move(ev)});
+        break;   // one disk finding — the worst — is enough for the headline
+    }
+
+    // ── 11. SSD write endurance: alert as the drive burns through its rated
+    // write budget. percentage_used can exceed 100 (past warranty).
+    for (const auto& h : s.ssd_health) {
+        if (h.crit_warning != 0) {
+            findings.push_back({80, "SSD " + h.name + " reports a critical health warning",
+                "SMART critical-warning flags set — back up this drive now"});
+            break;
+        }
+        if (h.spare_pct <= h.spare_thresh) {
+            findings.push_back({70, "SSD " + h.name + " is out of spare blocks",
+                fmt_pct(h.spare_pct) + " spare left (alert threshold " +
+                    fmt_pct(h.spare_thresh) + ") — drive is wearing out"});
+            break;
+        }
+        if (h.pct_used >= 100) {
+            findings.push_back({62, "SSD " + h.name + " is past its rated endurance",
+                fmt_pct(h.pct_used) + " of rated write endurance used"});
+            break;
+        } else if (h.pct_used >= 85) {
+            findings.push_back({40, "SSD " + h.name + " is wearing out",
+                fmt_pct(h.pct_used) + " of rated write endurance used"});
+            break;
+        }
+    }
+
+    // ── 12. NIC errors/drops: a live cable/link/driver fault. RATE-based, so
+    // old boot-time errors don't nag forever.
+    for (const auto& nic : s.nets) {
+        if (nic.name == "lo") continue;
+        const double bad = nic.err_ps + nic.drop_ps;
+        if (bad < 1.0) continue;
+        std::string ev;
+        if (nic.drop_ps >= 1) ev += fmt_1(nic.drop_ps) + " drops/s";
+        if (nic.err_ps >= 1) ev += (ev.empty() ? "" : ", ") + fmt_1(nic.err_ps) + " errors/s";
+        ev += " — check the cable, link speed, or NIC driver";
+        if (bad > 100)
+            findings.push_back({52, "NIC " + nic.name + " is dropping packets", std::move(ev)});
+        else
+            findings.push_back({30, "NIC " + nic.name + " has packet errors", std::move(ev)});
+        break;
+    }
+
+    // ── 13. Hugepages reserved but idle: memory the kernel can't reclaim, the
+    // exact leak the issue describes. Only worth a word once it's a real chunk.
+    if (s.mem.huge_idle.value >= 512ull * 1024 * 1024) {
+        const bool tight = avail_gb < 4.0;
+        findings.push_back({tight ? 46 : 28, "Hugepages are reserved but idle",
+            humanize_bytes(s.mem.huge_idle) + " in the hugepage pool is unused (" +
+                std::to_string(s.mem.huge_free - s.mem.huge_rsvd) + " of " +
+                std::to_string(s.mem.huge_total) + " pages) — the kernel can't reclaim it" +
+                (tight ? ", and RAM is tight" : "")});
+    }
+
+    // ── 14. NUMA auto-balancing thrash: high hint-fault rate on a multi-socket
+    // box means the kernel is churning faults chasing memory locality. Advisory.
+    if (s.mem.numa_on && s.cpu.loadavg[0] > 0 && s.mem.numa_hint_faults_ps > 20000) {
+        findings.push_back({33, "NUMA auto-balancing is thrashing page faults",
+            fmt_1(s.mem.numa_hint_faults_ps / 1000.0) + "k NUMA hint-faults/s — pin "
+            "memory-heavy processes or disable kernel.numa_balancing"});
+    }
+
     // ── Synthesis: strongest finding wins; runner-up rides in the detail ────
     Verdict v;
     if (findings.empty()) {

@@ -92,6 +92,8 @@ private:
     void    sample_mem_rates(MemInfo&, double dt);   // vmstat swap in/out
     void    sample_disks(std::vector<DiskInfo>&);
     void    sample_disk_io(DiskIO&, double dt);
+    void    sample_drives(std::vector<DriveIO>&, double dt);   // per-device latency
+    void    sample_ssd_health(std::vector<SsdHealth>&);        // NVMe SMART (root)
     void    sample_net(std::vector<NetIface>&, double dt);
     void    sample_gpu(std::vector<GpuInfo>&, bool with_procs);
     void    sample_sensors(std::vector<Sensor>&);
@@ -143,12 +145,25 @@ private:
     bool                                  loadavg_ok_ = true;    // /proc/loadavg readable
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_;  // rx,tx
     std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_pkts_;  // rx,tx packets
+    std::unordered_map<std::string, std::pair<std::uint64_t, std::uint64_t>> prev_net_errs_;  // (rx_errs+tx_errs), drops
     std::unordered_map<int, ProcPrev>     prev_proc_;
     std::uint64_t                         prev_io_read_ = 0, prev_io_write_ = 0;  // sectors
     std::uint64_t                         prev_io_rops_ = 0, prev_io_wops_ = 0;   // op counts (IOPS)
     std::uint64_t                         prev_pswpin_ = 0, prev_pswpout_ = 0;    // pages
     std::uint64_t                         prev_pgin_ = 0, prev_pgout_ = 0;        // file page io
     std::uint64_t                         prev_faults_ = 0;                       // page faults
+    std::uint64_t                         prev_numa_hint_faults_ = 0;             // numa_hint_faults (vmstat)
+    // Per-physical-device diskstats deltas, keyed by device name. Each entry
+    // holds last tick's sector + op + tick counters so we can derive per-drive
+    // rate, latency (Δticks/Δops) and busy% (Δio_ticks/dt).
+    struct DrivePrev {
+        std::uint64_t rd_sectors = 0, wr_sectors = 0;
+        std::uint64_t rd_ops = 0, wr_ops = 0;
+        std::uint64_t rd_ticks = 0, wr_ticks = 0, io_ticks = 0;
+        std::array<float, 48> lat_hist{};
+        int lat_hist_len = 0;
+    };
+    std::unordered_map<std::string, DrivePrev> prev_drive_;
     std::array<float, 48>                 io_read_hist_{}, io_write_hist_{};
     int                                   io_hist_len_ = 0;
     std::array<float, 120>                mem_hist_{};
@@ -178,10 +193,12 @@ private:
     // first run.
     std::chrono::steady_clock::time_point disks_at_{}, sensors_at_{},
                                           battery_at_{}, psi_at_{}, ports_at_{},
-                                          wireless_at_{}, gpus_at_{}, gpu_procs_at_{};
+                                          wireless_at_{}, gpus_at_{}, gpu_procs_at_{},
+                                          ssd_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
     std::vector<GpuInfo>                  gpus_cache_;
+    std::vector<SsdHealth>                ssd_cache_;
     Battery                               battery_cache_{};
     Psi                                   psi_cache_{};
     Wireless                              wireless_cache_{};

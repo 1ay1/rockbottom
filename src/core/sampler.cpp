@@ -130,6 +130,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     sample_mem(s.mem);        phase("mem");
     sample_mem_rates(s.mem, dt);
     sample_disk_io(s.disk_io, dt); phase("disk_io");
+    sample_drives(s.drives, dt);   phase("drives");
     sample_net(s.nets, dt);   phase("net");
     // GPU collection can fork nvidia-smi, the most expensive thing the sampler
     // does. Two cadences: the always-visible gauges (util/temp/vram/clocks)
@@ -154,6 +155,15 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     if (due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
     s.sensors = sensors_cache_;
     phase("sensors");
+
+    // SSD write-endurance (NVMe SMART ioctl) is a glacial figure — it moves
+    // percentage points over MONTHS — and the ioctl needs privilege, so it's
+    // refreshed only ~every 30s and cached. On non-root / non-NVMe the
+    // collector leaves the vector empty and the UI shows nothing. Skipped on a
+    // fast startup prime.
+    if (!fast && due(ssd_at_, ms(30000))) { ssd_cache_.clear(); sample_ssd_health(ssd_cache_); }
+    s.ssd_health = ssd_cache_;
+    phase("ssd");
 
     // Resolve per-core die temps onto the cores now that both halves exist.
     // Doing it HERE, once, means the UI never has to parse a sensor label and

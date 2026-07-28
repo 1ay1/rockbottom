@@ -129,7 +129,57 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         L.push_back(gap_row());
     }
 
-    // ── commit / composition detail ──────────────────────────────────
+    // ── hugepages + NUMA balancing ────────────────────────────────
+    // Only drawn when there's a hugepage pool or NUMA auto-balancing is on —
+    // both are absent on ordinary desktops, so the section stays silent there
+    // and only production/HPC boxes see it.
+    if (m.huge_total > 0 || m.numa_on) {
+        L.push_back(section("HUGEPAGES & NUMA", pal::mem_ac));
+        if (m.huge_total > 0) {
+            const std::uint64_t used_pages = m.huge_total > m.huge_free
+                                           ? m.huge_total - m.huge_free : 0;
+            const std::uint64_t idle_pages = m.huge_free > m.huge_rsvd
+                                           ? m.huge_free - m.huge_rsvd : 0;
+            const double used_f = m.huge_total
+                ? static_cast<double>(used_pages) / static_cast<double>(m.huge_total) : 0;
+            const Bytes pool{m.huge_total * m.huge_size.value};
+            L.push_back(bar("pool in use", used_f,
+                std::to_string(used_pages) + " / " + std::to_string(m.huge_total) +
+                " \xc3\x97 " + std::string(humanize_bytes(m.huge_size)),
+                pal::mem_ac, cx.wide ? 34 : 0));
+            L.push_back(kv3(
+                "pool size", humanize_bytes(pool), pal::text,
+                "reserved", std::to_string(m.huge_rsvd) + " pg", pal::teal,
+                "idle", humanize_bytes(m.huge_idle),
+                m.huge_idle.value >= 512ull*1024*1024 ? pal::hot : pal::dim));
+            // The leak the issue is about: free-but-unreserved pages sit in the
+            // pool doing nothing, and the kernel can't reclaim them for normal
+            // allocations. Call it out plainly when it's a real chunk.
+            if (m.huge_idle.value >= 512ull*1024*1024)
+                L.push_back(verdict("\xe2\x96\xb2 " + std::string(humanize_bytes(m.huge_idle)) +
+                    " (" + std::to_string(idle_pages) + " pages) reserved but idle \xe2\x80\x94 "
+                    "memory the kernel can't reclaim", pal::hot));
+            else if (idle_pages > 0)
+                L.push_back(verdict("\xe2\x97\x8f " + std::to_string(idle_pages) +
+                    " pages free in the pool, ready for a hugepage-aware app", pal::good));
+        }
+        if (m.numa_on) {
+            const double khz = m.numa_hint_faults_ps / 1000.0;
+            const maya::Color nc = m.numa_hint_faults_ps > 20000 ? pal::hot
+                                 : m.numa_hint_faults_ps > 2000 ? pal::teal : pal::good;
+            L.push_back(kv3(
+                "numa balancing", "on", pal::teal,
+                "hint faults", fmt::count(m.numa_hint_faults_ps) + "/s", nc,
+                "", "", pal::dim));
+            if (m.numa_hint_faults_ps > 20000)
+                L.push_back(verdict("\xe2\x96\xb2 " + fmt::count(khz*1000) +
+                    "/s NUMA hint-faults \xe2\x80\x94 the kernel is churning faults chasing "
+                    "locality; pin memory-heavy processes or disable numa_balancing", pal::hot));
+        }
+        L.push_back(gap_row());
+    }
+
+    // ── commit / composition detail ────────────────────────────
     // The exact byte figures behind the PHYSICAL bar, spelled out so the
     // pane fills a tall screen with real numbers instead of empty sky. Every
     // field here is a live counter (app/wired/compressed vs used, plus the

@@ -29,6 +29,12 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
         int n = 0;
         while (n < 16 && (ss >> f[static_cast<std::size_t>(n)])) ++n;
         std::uint64_t rx = f[0], tx = f[8];
+        // /proc/net/dev fields after the colon: rx = bytes,packets,errs,drop,
+        // fifo,frame,compressed,multicast; tx = bytes,packets,errs,drop,…
+        std::uint64_t rx_errs = f[2], rx_drop = f[3];
+        std::uint64_t tx_errs = f[10], tx_drop = f[11];
+        std::uint64_t errs = rx_errs + tx_errs;
+        std::uint64_t drop = rx_drop + tx_drop;
 
         NetIface& iface = net_hist_[name];
         iface.name = name;
@@ -48,6 +54,19 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
         iface.tx = first_ ? ByteRate{0} : rate(dtx, dt);
         iface.rx_total = Bytes{rx};
         iface.tx_total = Bytes{tx};
+        iface.rx_errs = rx_errs; iface.tx_errs = tx_errs; iface.drops = rx_drop;
+        // Error/drop RATE, not lifetime totals: a NIC that logged 50 CRC errors
+        // during a boot-time link flap must not alarm forever — only a RISING
+        // rate means a live cable/link/driver fault worth surfacing.
+        {
+            auto [pe, pd] = prev_net_errs_.count(name) ? prev_net_errs_[name]
+                                                        : std::pair{errs, drop};
+            std::uint64_t de = errs > pe ? errs - pe : 0;
+            std::uint64_t dd = drop > pd ? drop - pd : 0;
+            iface.err_ps  = (!first_ && dt > 0) ? static_cast<double>(de) / dt : 0;
+            iface.drop_ps = (!first_ && dt > 0) ? static_cast<double>(dd) / dt : 0;
+            prev_net_errs_[name] = {errs, drop};
+        }
 
         push_hist2(iface.rx_history, iface.tx_history, iface.hist_len,
                    static_cast<float>(iface.rx.per_sec),
@@ -67,6 +86,8 @@ void Sampler::sample_net(std::vector<NetIface>& nets, double dt) {
         it = seen.count(it->first) ? std::next(it) : prev_net_.erase(it);
     for (auto it = prev_net_pkts_.begin(); it != prev_net_pkts_.end(); )
         it = seen.count(it->first) ? std::next(it) : prev_net_pkts_.erase(it);
+    for (auto it = prev_net_errs_.begin(); it != prev_net_errs_.end(); )
+        it = seen.count(it->first) ? std::next(it) : prev_net_errs_.erase(it);
 
     // Surface only interfaces that have ever moved bytes, busiest first.
     // Loopback earns a row only while it's actually carrying traffic — a

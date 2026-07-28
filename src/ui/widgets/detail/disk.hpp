@@ -60,6 +60,16 @@ inline Element build_fs_line(std::string mount, maya::Color mount_c,
 inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     using namespace maya; using namespace maya::dsl;
 
+    // Compact latency formatter: sub-ms in µs, else ms with one decimal, so a
+    // healthy NVMe reads "120 µs" and a struggling disk reads "48.0 ms".
+    auto fmt_lat = [](double ms) -> std::string {
+        char b[24];
+        if (ms <= 0)        std::snprintf(b, sizeof b, "\xe2\x80\x94");        // em dash
+        else if (ms < 1.0)  std::snprintf(b, sizeof b, "%.0f \xc2\xb5" "s", ms * 1000.0);
+        else                std::snprintf(b, sizeof b, "%.1f ms", ms);
+        return b;
+    };
+
     // In ultrawide mode the pane splits into two side-by-side columns. `L`
     // collects the left (system I/O graph + I/O pressure), `R` the right
     // (per-filesystem list + busiest processes). In normal mode both point at
@@ -207,6 +217,59 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             f > 0.95 ? pal::crit : f > 0.85 ? pal::hot : pal::good));
     }
     R.push_back(gap_row());
+
+    // ── device health: per-drive latency + SSD write endurance ──────────────
+    // Latency is the best early warning of a failing or saturated drive, and
+    // endurance tells you how much life a flash device has left — both are
+    // per-DEVICE (a single bad disk is the whole point). Rendered only when
+    // there's something to show; the section stays silent otherwise.
+    if (!s.drives.empty() || !s.ssd_health.empty()) {
+        R.push_back(section("DEVICE HEALTH", pal::disk_ac));
+        // Latency: worst drives already sorted first by the collector. A drive
+        // is only interesting once it has measurable service time or is busy.
+        int shown = 0;
+        const int lat_cap = cx.tall ? 6 : 3;
+        for (const auto& d : s.drives) {
+            const double lat = d.worst_lat_ms();
+            if (lat < 0.1 && d.busy < 0.02) continue;   // idle/quiet drive
+            if (shown++ >= lat_cap) break;
+            // Latency color ramps green→hot→crit; the busy meter shows how hard
+            // the device is working, which contextualizes the latency.
+            const maya::Color lc = lat > 100 ? pal::crit : lat > 20 ? pal::hot : pal::good;
+            const maya::Color bc = load_color(d.busy);
+            R.push_back((h(
+                text(maya::truncate_end(d.name, 12)) | nowrap | Bold | fgc(pal::text) | width(13),
+                Element{Meter{d.busy}.fill().groove(false).color(bc)} | grow(1),
+                text(fmt::pct_pad(d.busy)) | nowrap | fgc(bc) | width(5) | justify(Justify::End),
+                text(fmt_lat(lat)) | nowrap | Bold | fgc(lc) | width(9) | justify(Justify::End)
+            ) | gap(1)).build());
+            if (cx.wide)
+                R.push_back((h(
+                    text("  \xe2\x94\x94 r " + fmt_lat(d.read_lat_ms)) | nowrap | fgc(pal::teal) | width(16),
+                    text("w " + fmt_lat(d.write_lat_ms)) | nowrap | fgc(pal::hot) | grow(1),
+                    text("\xe2\x96\xbc " + std::string(humanize_rate(d.read))) | nowrap | fgc(pal::teal) | width(12) | justify(Justify::End),
+                    text("\xe2\x96\xb2 " + std::string(humanize_rate(d.write))) | nowrap | fgc(pal::hot) | width(12) | justify(Justify::End)
+                ) | gap(1)).build());
+        }
+        // SSD write endurance: one wear meter per drive. Green when fresh,
+        // ramping to red as percentage_used approaches (and passes) 100.
+        for (const auto& hlt : s.ssd_health) {
+            const double wear = std::min(1.5, hlt.pct_used / 100.0);
+            const maya::Color wc = hlt.pct_used >= 100 ? pal::crit
+                                 : hlt.pct_used >= 80 ? pal::hot : pal::good;
+            const std::string tc = hlt.temp_c > 0
+                ? std::to_string(static_cast<int>(hlt.temp_c)) + " \xc2\xb0" "C" : std::string();
+            R.push_back((h(
+                text(maya::truncate_end(hlt.name, 12)) | nowrap | Bold | fgc(pal::text) | width(13),
+                Element{Meter{wear}.fill().groove(false).color(wc)} | grow(1),
+                text(std::to_string(hlt.pct_used) + "%") | nowrap | Bold | fgc(wc) | width(6) | justify(Justify::End),
+                text(tc) | nowrap | fgc(pal::dim) | width(7) | justify(Justify::End)
+            ) | gap(1)).build());
+            if (hlt.crit_warning || hlt.spare_pct <= hlt.spare_thresh)
+                R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " needs attention \xe2\x80\x94 back it up", pal::crit));
+        }
+        R.push_back(gap_row());
+    }
 
     // ── top I/O processes ────────────────────────────────────────────────────
     {
