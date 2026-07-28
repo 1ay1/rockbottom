@@ -553,19 +553,16 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── ASSEMBLY ───────────────────────────────────────────────────────
-    // Single-column: summary naturally follows the entire per-core table.
-    // Ultrawide: a 12+ row table makes a literal "below" summary unreachable
-    // until the bottom of the giant split element. Make it the PINNED summary
-    // companion at the top of the right column instead: the table remains the
-    // primary left rail, but RIGHT NOW / DISTRIBUTION are visible immediately
-    // instead of being hidden under every core. Consumers and sensors follow.
+    // On ultrawide screens, keep the live interpretation on the LEFT where
+    // the eye enters the pane; the dense per-core table becomes the supporting
+    // right rail. This keeps RIGHT NOW and DISTRIBUTION visible immediately.
     if (split) {
-        std::vector<Element> right;
-        right.insert(right.end(), std::make_move_iterator(below_core.begin()),
-                                  std::make_move_iterator(below_core.end()));
-        right.insert(right.end(), std::make_move_iterator(stat_col.begin()),
-                                  std::make_move_iterator(stat_col.end()));
-        return hero_split(std::move(hero), std::move(core_col), std::move(right));
+        std::vector<Element> left;
+        left.insert(left.end(), std::make_move_iterator(below_core.begin()),
+                                std::make_move_iterator(below_core.end()));
+        left.insert(left.end(), std::make_move_iterator(stat_col.begin()),
+                                std::make_move_iterator(stat_col.end()));
+        return hero_split(std::move(hero), std::move(left), std::move(core_col));
     }
     core_col.insert(core_col.end(),
                     std::make_move_iterator(below_core.begin()),

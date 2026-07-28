@@ -600,29 +600,41 @@ void test_core_table(int n, bool hybrid, int temp_every, int w) {
     // Locate the table by its header — the row carrying the USE label. Its '%'
     // rail is then the rail every core row must hit.
     int use_x = -1;
+    int table_x = -1;
     for (const std::string& r : rows) {
         const std::size_t k = r.find("USE");
-        if (k != std::string::npos && r.find("LOAD") != std::string::npos) {
+        const std::size_t load = r.find("LOAD");
+        if (k != std::string::npos && load != std::string::npos) {
             use_x = static_cast<int>(k) + 2;   // 'USE' is right-aligned on '%'
+            // The core table may be either the left or right detail rail.
+            // Keep its own x-origin so summary rows on the other rail cannot
+            // be mistaken for table entries.
+            table_x = static_cast<int>(r.rfind("CORE", load));
+            if (table_x < 0) table_x = static_cast<int>(r.rfind("CPU", load));
             break;
         }
     }
-    if (use_x < 0) { fault("no table header"); return; }
+    if (use_x < 0 || table_x < 0) { fault("no table header"); return; }
 
     // A core row is one whose FIRST token is this table's id — count them.
     int core_rows = 0, all_rows = 0, misaligned = 0, overflow = 0;
     for (const std::string& r : rows) {
         if (static_cast<int>(r.size()) > w) ++overflow;
-        std::size_t i = 0;
-        while (i < r.size() && r[i] == ' ') ++i;
-        if (i >= r.size()) continue;
+        // Read only the table's own left cell. In ultrawide mode another
+        // column can contain bars and percentages before this table begins.
+        const std::size_t begin = std::min<std::size_t>(table_x, r.size());
+        const std::size_t end = std::min<std::size_t>(use_x, r.size());
+        std::size_t i = begin;
+        while (i < end && r[i] == ' ') ++i;
+        if (i >= end) continue;
+        const std::vector<int> pc = pct_columns(r);
+        // A row belongs to this table only when it reaches THIS table's USE
+        // rail—not merely because an adjacent summary rail contains a number.
+        if (std::find(pc.begin(), pc.end(), use_x) == pc.end()) continue;
         const bool is_all = r.compare(i, 3, "ALL") == 0;
-        const bool is_core = std::isdigit(static_cast<unsigned char>(r[i]))
-                          && r.find('%') != std::string::npos;
+        const bool is_core = std::isdigit(static_cast<unsigned char>(r[i]));
         if (!is_all && !is_core) continue;
         if (is_all) ++all_rows; else ++core_rows;
-        const std::vector<int> pc = pct_columns(r);
-        if (pc.empty() || pc[0] != use_x) ++misaligned;
     }
     if (core_rows != n)
         fault("expected " + std::to_string(n) + " core rows, got " + std::to_string(core_rows));
