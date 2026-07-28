@@ -372,18 +372,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 idr.push_back((text("mtu ") | nowrap | fgc(pal::faint)).build());
                 idr.push_back((text(std::to_string(ni.mtu)) | nowrap | fgc(pal::label)).build());
             }
-            if (ni.rx_errs + ni.tx_errs > 0) {
-                idr.push_back((text("   ") | nowrap).build());
-                idr.push_back((text("errs ") | nowrap | fgc(pal::faint)).build());
-                idr.push_back((text(fmt::count(static_cast<double>(ni.rx_errs + ni.tx_errs)))
-                               | nowrap | Bold | fgc(pal::hot)).build());
-            }
-            if (ni.drops > 0) {
-                idr.push_back((text("   ") | nowrap).build());
-                idr.push_back((text("drop ") | nowrap | fgc(pal::faint)).build());
-                idr.push_back((text(fmt::count(static_cast<double>(ni.drops)))
-                               | nowrap | Bold | fgc(pal::hot)).build());
-            }
+            // (Errors/drops are shown as their own labelled row + live-rate
+            // warning below — not duplicated as raw lifetime chips here.)
             ifcol.push_back((h(std::move(idr))).build());
         }
         if (split) {

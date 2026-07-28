@@ -229,6 +229,17 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         // is only interesting once it has measurable service time or is busy.
         int shown = 0;
         const int lat_cap = cx.tall ? 6 : 3;
+        bool any_lat = false;
+        for (const auto& d : s.drives)
+            if (d.worst_lat_ms() >= 0.1 || d.busy >= 0.02) { any_lat = true; break; }
+        // A one-line column key so the two meters aren't ambiguous: the bar is
+        // how BUSY the drive is, the right figure is its service LATENCY.
+        if (any_lat)
+            R.push_back((h(
+                text("drive") | nowrap | fgc(pal::faint) | width(13),
+                text("busy") | nowrap | fgc(pal::faint) | grow(1),
+                text("latency") | nowrap | fgc(pal::faint) | width(14) | justify(Justify::End)
+            ) | gap(1)).build());
         for (const auto& d : s.drives) {
             const double lat = d.worst_lat_ms();
             if (lat < 0.1 && d.busy < 0.02) continue;   // idle/quiet drive
@@ -250,9 +261,25 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
                     text("\xe2\x96\xbc " + std::string(humanize_rate(d.read))) | nowrap | fgc(pal::teal) | width(12) | justify(Justify::End),
                     text("\xe2\x96\xb2 " + std::string(humanize_rate(d.write))) | nowrap | fgc(pal::hot) | width(12) | justify(Justify::End)
                 ) | gap(1)).build());
+            // A drive that's slow to respond OR pegged at 100% busy is the
+            // early warning this section exists for — call it out in words.
+            if (lat > 100)
+                R.push_back(verdict("\xe2\x96\xb2 " + d.name + " is failing or overwhelmed \xe2\x80\x94 " +
+                    fmt_lat(lat) + " service time", pal::crit));
+            else if (lat > 50 || d.busy > 0.97)
+                R.push_back(verdict("\xe2\x96\xb2 " + d.name + " is slow to respond \xe2\x80\x94 " +
+                    fmt_lat(lat) + " service time at " + fmt::pct_pad(d.busy) + " busy", pal::hot));
         }
         // SSD write endurance: one wear meter per drive. Green when fresh,
-        // ramping to red as percentage_used approaches (and passes) 100.
+        // ramping to red as percentage_used approaches (and passes) 100. The
+        // "worn" label makes clear this is CONSUMED life, not free capacity.
+        if (!s.ssd_health.empty()) {
+            R.push_back((h(
+                text("ssd") | nowrap | fgc(pal::faint) | width(13),
+                text("write endurance used") | nowrap | fgc(pal::faint) | grow(1),
+                text("temp") | nowrap | fgc(pal::faint) | width(7) | justify(Justify::End)
+            ) | gap(1)).build());
+        }
         for (const auto& hlt : s.ssd_health) {
             const double wear = std::min(1.5, hlt.pct_used / 100.0);
             const maya::Color wc = hlt.pct_used >= 100 ? pal::crit
@@ -262,11 +289,15 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             R.push_back((h(
                 text(maya::truncate_end(hlt.name, 12)) | nowrap | Bold | fgc(pal::text) | width(13),
                 Element{Meter{wear}.fill().groove(false).color(wc)} | grow(1),
-                text(std::to_string(hlt.pct_used) + "%") | nowrap | Bold | fgc(wc) | width(6) | justify(Justify::End),
+                text(std::to_string(hlt.pct_used) + "% worn") | nowrap | Bold | fgc(wc) | width(9) | justify(Justify::End),
                 text(tc) | nowrap | fgc(pal::dim) | width(7) | justify(Justify::End)
             ) | gap(1)).build());
             if (hlt.crit_warning || hlt.spare_pct <= hlt.spare_thresh)
-                R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " needs attention \xe2\x80\x94 back it up", pal::crit));
+                R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " needs attention \xe2\x80\x94 back it up now", pal::crit));
+            else if (hlt.pct_used >= 100)
+                R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " is past its rated write endurance", pal::crit));
+            else if (hlt.pct_used >= 85)
+                R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " is wearing out \xe2\x80\x94 plan a replacement", pal::hot));
         }
         R.push_back(gap_row());
     }
