@@ -426,8 +426,13 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             std::string live = "  \xe2\x96\xb2 ";
             if (ni.drop_ps >= 0.5) live += fmt::count(ni.drop_ps) + " drops/s";
             if (ni.err_ps >= 0.5) live += (ni.drop_ps >= 0.5 ? "  " : "") +
-                                          fmt::count(ni.err_ps) + " errors/s";
-            live += " \xe2\x80\x94 check cable / link / driver";
+                                          fmt::count(ni.err_ps) + " link errors/s";
+            // Drops alone are usually a host/queue/congestion problem. Only
+            // prescribe cable/link investigation when the NIC reports errors.
+            if (ni.err_ps >= 0.5)
+                live += " \xe2\x80\x94 check cable / optics / link / driver";
+            else
+                live += " \xe2\x80\x94 receiver or queue cannot keep up";
             ifcol.push_back((text(live) | nowrap | Bold | fgc(rc)).build());
         }
         ifcol.push_back(gap_row());

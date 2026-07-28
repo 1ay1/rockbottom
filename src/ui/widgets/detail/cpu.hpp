@@ -553,19 +553,19 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── ASSEMBLY ───────────────────────────────────────────────────────
-    // The per-core TABLE leads (it's what the eye lands on), and RIGHT NOW +
-    // DISTRIBUTION sit DIRECTLY BENEATH it — they read as the table's summary.
-    // Wide: hero across the top, [table + summary] as the left column, top
-    // consumers + sensors as the right. Narrow: one column in the same order.
+    // Single-column: summary naturally follows the entire per-core table.
+    // Ultrawide: a 12+ row table makes a literal "below" summary unreachable
+    // until the bottom of the giant split element. Make it the PINNED summary
+    // companion at the top of the right column instead: the table remains the
+    // primary left rail, but RIGHT NOW / DISTRIBUTION are visible immediately
+    // instead of being hidden under every core. Consumers and sensors follow.
     if (split) {
-        // In the two-column layout, placing the summary at the bottom of the
-        // (tall) left column hides it below ~12 core rows. Render it FULL-WIDTH
-        // beneath the split band instead, so it sits visibly under the table.
-        auto out = hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
-        out.push_back(gap_row());
-        out.insert(out.end(), std::make_move_iterator(below_core.begin()),
-                              std::make_move_iterator(below_core.end()));
-        return out;
+        std::vector<Element> right;
+        right.insert(right.end(), std::make_move_iterator(below_core.begin()),
+                                  std::make_move_iterator(below_core.end()));
+        right.insert(right.end(), std::make_move_iterator(stat_col.begin()),
+                                  std::make_move_iterator(stat_col.end()));
+        return hero_split(std::move(hero), std::move(core_col), std::move(right));
     }
     core_col.insert(core_col.end(),
                     std::make_move_iterator(below_core.begin()),

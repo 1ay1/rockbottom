@@ -239,20 +239,35 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
             std::to_string(s.zombies) + " zombies — a parent isn't reaping its children"});
     }
 
-    // ── 10. Disk latency: the best early warning of a failing/saturated drive.
-    // We alert on SERVICE TIME, not throughput — a drive can be slow while
-    // barely busy (dying) or fast while pegged. Name the specific device.
+    // ── 10. Disk latency: service time is the early warning, but distinguish
+    // an actually slow drive from a merely saturated one. Crucially, only stop
+    // after ADDING a finding — a mildly slow first device must not hide a much
+    // worse later device.
     for (const auto& d : s.drives) {
         const double lat = d.worst_lat_ms();
         if (lat < 20 && d.busy < 0.97) continue;
+
         const bool rd = d.read_lat_ms >= d.write_lat_ms;
-        std::string ev = fmt_1(lat) + " ms average " + (rd ? "read" : "write") +
-                         " latency, " + fmt_pct(d.busy * 100) + " busy";
-        if (lat > 100)
-            findings.push_back({66, "Disk " + d.name + " is failing or overwhelmed", std::move(ev)});
-        else if (lat > 50 || d.busy > 0.97)
-            findings.push_back({48, "Disk " + d.name + " is slow to respond", std::move(ev)});
-        break;   // one disk finding — the worst — is enough for the headline
+        const std::string direction = rd ? "read" : "write";
+        if (lat > 100) {
+            findings.push_back({66, "Disk " + d.name + " has extreme " + direction + " latency",
+                fmt_1(lat) + " ms per " + direction + ", " +
+                    fmt_pct(d.busy * 100) + " busy — a failing or overwhelmed drive"});
+            break;
+        }
+        if (lat > 50) {
+            findings.push_back({48, "Disk " + d.name + " is slow to respond",
+                fmt_1(lat) + " ms average " + direction + " latency, " +
+                    fmt_pct(d.busy * 100) + " busy"});
+            break;
+        }
+        // Busy with normal latency is saturation, not evidence of failure.
+        if (d.busy > 0.97) {
+            findings.push_back({48, "Disk " + d.name + " is saturated",
+                fmt_pct(d.busy * 100) + " busy" +
+                    (lat > 0 ? "; " + fmt_1(lat) + " ms average " + direction + " latency" : "")});
+            break;
+        }
     }
 
     // ── 11. SSD write endurance: alert as the drive burns through its rated
@@ -280,20 +295,28 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
         }
     }
 
-    // ── 12. NIC errors/drops: a live cable/link/driver fault. RATE-based, so
-    // old boot-time errors don't nag forever.
+    // ── 12. NIC errors/drops: both are rate-based, but they mean different
+    // things. Link errors point at cable/link/driver; drops alone usually mean
+    // the host or queue cannot keep up. Don't prescribe the wrong fix.
     for (const auto& nic : s.nets) {
         if (nic.name == "lo") continue;
-        const double bad = nic.err_ps + nic.drop_ps;
-        if (bad < 1.0) continue;
-        std::string ev;
-        if (nic.drop_ps >= 1) ev += fmt_1(nic.drop_ps) + " drops/s";
-        if (nic.err_ps >= 1) ev += (ev.empty() ? "" : ", ") + fmt_1(nic.err_ps) + " errors/s";
-        ev += " — check the cable, link speed, or NIC driver";
-        if (bad > 100)
-            findings.push_back({52, "NIC " + nic.name + " is dropping packets", std::move(ev)});
-        else
-            findings.push_back({30, "NIC " + nic.name + " has packet errors", std::move(ev)});
+        if (nic.err_ps < 1 && nic.drop_ps < 1) continue;
+
+        if (nic.err_ps >= 1) {
+            std::string ev = fmt_1(nic.err_ps) + " link errors/s";
+            if (nic.drop_ps >= 1) ev += ", " + fmt_1(nic.drop_ps) + " drops/s";
+            ev += " — check cable, optics, negotiated link speed, or NIC driver";
+            findings.push_back({nic.err_ps >= 10 ? 52 : 30,
+                "NIC " + nic.name + " reports link errors", std::move(ev)});
+            break;
+        }
+
+        // Drops with NO link errors are not a cable diagnosis. The receiver,
+        // queue/ring, IRQ/CPU path, or congestion is the likely bottleneck.
+        findings.push_back({nic.drop_ps >= 100 ? 52 : 30,
+            "NIC " + nic.name + " is dropping packets",
+            fmt_1(nic.drop_ps) + " drops/s with no link errors — receiver or queue "
+            "cannot keep up; check host CPU, IRQ affinity, ring sizes, or congestion"});
         break;
     }
 
