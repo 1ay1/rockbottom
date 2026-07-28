@@ -164,16 +164,17 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
 
     // READING ORDER. The per-core table is the thing you open this pane FOR,
     // so it gets the most visible real estate: the LEFT column when the screen
-    // is wide enough to split (eye lands there first, and it's the column that
-    // grows with core count), and the slot directly under the hero graph when
-    // it isn't. The interpretation — right-now stats, distribution, verdicts,
-    // top consumers, sensors — rides the right column / below.
+    // is wide enough to split, and the slot directly under the hero graph when
+    // it isn't. RIGHT NOW + DISTRIBUTION — the at-a-glance interpretation of
+    // that table — sit DIRECTLY BELOW it (they read as the table's summary, not
+    // a parallel column). Top consumers + sensors ride the stat column / below.
     //
-    // Three collectors, assembled at the bottom of the function, so the same
-    // section code serves both layouts and neither can drift from the other.
-    std::vector<Element> hero, core_col, stat_col;
+    // Four collectors, assembled at the bottom so the same section code serves
+    // both layouts and neither can drift from the other.
+    std::vector<Element> hero, core_col, below_core, stat_col;
     const bool split = cx.ultrawide;
-    std::vector<Element>& L = stat_col;   // stats, verdicts, consumers, sensors
+    std::vector<Element>& B = below_core; // right-now + distribution, under the table
+    std::vector<Element>& L = stat_col;   // top consumers, sensors
     std::vector<Element>& R = core_col;   // the per-core table
 
     // ── hero: BIG number + graph ───────────────────────────────
@@ -185,36 +186,67 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     H.push_back(section("LOAD OVER TIME", pal::cpu_ac));
     {
         const int gh = cx.graph_h;
+        // CPU load is the filled mountain; RAM usage rides ON TOP as a second
+        // line (same idiom the MEM/GPU heroes use for their overlay), so this
+        // one graph answers "is the box busy, and is it also full?" at a glance.
         H.push_back(hero_graph(c.total.v, load_color(c.total.v), "cpu load",
-                               c.total_history.data(), c.total_hist_len, gh));
+                               c.total_history.data(), c.total_hist_len, gh,
+                               std::nullopt,
+                               s.mem.usage_history.data(), s.mem.hist_len, pal::mem_ac));
+        // Tiny legend so the two traces are unambiguous: the fill is CPU, the
+        // line is RAM — with both live figures right there.
+        H.push_back((h(
+            text("\xe2\x96\x88 cpu ") | nowrap | fgc(load_color(c.total.v)),
+            text(fmt::pct(c.total.v)) | nowrap | Bold | fgc(load_color(c.total.v)),
+            text("    \xe2\x94\x80 ram ") | nowrap | fgc(pal::mem_ac),
+            text(fmt::pct(s.mem.usage().v)) | nowrap | Bold | fgc(pal::mem_ac),
+            Element{blank()} | grow(1),
+            text(std::string(humanize_bytes(s.mem.used)) + " / " +
+                 std::string(humanize_bytes(s.mem.total))) | nowrap | fgc(pal::dim)
+        ) | gap(0)).build());
     }
     if (!split) H.push_back(gap_row());
 
-    // ── right-now stat strip ────────────────────────────────────────
-    if (!split) L.push_back(gap_row());
-    L.push_back(section("RIGHT NOW", pal::cpu_ac));
-    L.push_back(bar("total", c.total.v, "busy across all cores", load_color(c.total.v), cx.wide ? 34 : 0));
+    // ── right-now stat strip (sits DIRECTLY UNDER the per-core table) ──────
+    B.push_back(gap_row());
+    B.push_back(section("RIGHT NOW", pal::cpu_ac));
+    B.push_back(bar("total", c.total.v, "busy across all cores", load_color(c.total.v), cx.wide ? 34 : 0));
     // User/system split — the first question about a busy CPU: is it MY code
     // or the kernel? Heavy system time usually means syscall/IO churn.
     if (c.user.v > 0 || c.system.v > 0) {
-        L.push_back(bar("user", c.user.v, "running app code", pal::cpu_ac, cx.wide ? 34 : 0));
-        L.push_back(bar("system", c.system.v, "in the kernel (syscalls)", pal::hot, cx.wide ? 34 : 0));
+        B.push_back(bar("user", c.user.v, "running app code", pal::cpu_ac, cx.wide ? 34 : 0));
+        B.push_back(bar("system", c.system.v, "in the kernel (syscalls)", pal::hot, cx.wide ? 34 : 0));
     }
     if (c.iowait.v > 0.005)
-        L.push_back(bar("iowait", c.iowait.v, "stalled waiting on disk", pal::hot, cx.wide ? 34 : 0));
+        B.push_back(bar("iowait", c.iowait.v, "stalled waiting on disk", pal::hot, cx.wide ? 34 : 0));
+
+    // Memory, right here beside the CPU load — the two numbers you check
+    // together ("is it CPU-bound or is it running out of RAM?"). Colored on
+    // its own ramp so a full box reads hot even while the CPU sits idle.
+    {
+        const double mu = s.mem.usage().v;
+        B.push_back(bar("memory", mu,
+            std::string(humanize_bytes(s.mem.used)) + " of " +
+                std::string(humanize_bytes(s.mem.total)) + " used",
+            load_color(mu), cx.wide ? 34 : 0));
+        if (s.mem.swap_total.value > 0 && s.mem.swap_usage().v > 0.01)
+            B.push_back(bar("swap", s.mem.swap_usage().v,
+                std::string(humanize_bytes(s.mem.swap_used)) + " swapped out",
+                s.mem.swap_usage().v > 0.5 ? pal::crit : pal::hot, cx.wide ? 34 : 0));
+    }
 
     // Load average, interpreted against the core count — the number htop shows
     // but never explains. >1.0 per core = the run queue is backing up.
     const int lc = std::max(1, c.logical);
     const double sat = c.loadavg[0] / lc;
     const char* verdict_txt =
-        sat < 0.7 ? "● plenty of headroom — nothing is queuing for a core"
-      : sat < 1.0 ? "● comfortably busy — cores keeping up with demand"
-      : sat < 2.0 ? "▲ oversubscribed — tasks are waiting for a free core"
-      :             "▲ heavily saturated — the run queue is deep, things will feel slow";
+        sat < 0.7 ? "\xe2\x97\x8f plenty of headroom \xe2\x80\x94 nothing is queuing for a core"
+      : sat < 1.0 ? "\xe2\x97\x8f comfortably busy \xe2\x80\x94 cores keeping up with demand"
+      : sat < 2.0 ? "\xe2\x96\xb2 oversubscribed \xe2\x80\x94 tasks are waiting for a free core"
+      :             "\xe2\x96\xb2 heavily saturated \xe2\x80\x94 the run queue is deep, things will feel slow";
     const maya::Color vc = sat < 0.7 ? pal::good : sat < 1.0 ? pal::teal
                          : sat < 2.0 ? pal::hot : pal::crit;
-    L.push_back(kv3(
+    B.push_back(kv3(
         "load 1m", fmt::fixed2(c.loadavg[0]), load_color(std::min(1.0, sat)),
         "5m", fmt::fixed2(c.loadavg[1]), pal::label,
         "15m", fmt::fixed2(c.loadavg[2]), pal::label));
@@ -222,13 +254,13 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     std::string topo = std::to_string(c.logical);
     if (c.hetero())
         topo += " (" + std::to_string(c.perf_cores) + "P + " + std::to_string(c.eff_cores) + "E)";
-    L.push_back(kv3(
+    B.push_back(kv3(
         "logical cpus", topo, pal::text,
         "load / core", fmt::fixed2(sat), vc,
-        c.temp_c > 1 ? "package" : "", c.temp_c > 1 ? std::to_string(static_cast<int>(c.temp_c)) + " °C" : "",
+        c.temp_c > 1 ? "package" : "", c.temp_c > 1 ? std::to_string(static_cast<int>(c.temp_c)) + " \xc2\xb0" "C" : "",
         load_color(std::clamp((c.temp_c - 40) / 50.0, 0.0, 1.0))));
-    L.push_back(verdict(verdict_txt, vc));
-    L.push_back(gap_row());
+    B.push_back(verdict(verdict_txt, vc));
+    B.push_back(gap_row());
 
     // ── distribution across cores ────────────────────────────────────────────
     if (!c.cores.empty()) {
@@ -242,18 +274,18 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         double sum = 0; int active = 0;
         for (double u : us) { sum += u; if (u > 0.05) ++active; }
         const double avg = sum / n;
-        L.push_back(section("DISTRIBUTION", pal::cpu_ac));
-        L.push_back(kv3(
+        B.push_back(section("DISTRIBUTION", pal::cpu_ac));
+        B.push_back(kv3(
             "busiest core", fmt::pct(hi), load_color(hi),
             "quietest", fmt::pct(lo), load_color(lo),
             "median", fmt::pct(med), load_color(med)));
-        L.push_back(kv3(
+        B.push_back(kv3(
             "average", fmt::pct(avg), load_color(avg),
             "spread", fmt::pct(hi - lo), hi - lo > 0.5 ? pal::hot : pal::dim,
             "active cores", std::to_string(active) + "/" + std::to_string(n),
             active > n / 2 ? pal::hot : pal::good));
         if (hi - lo > 0.6 && hi > 0.8)
-            L.push_back(verdict("▲ load is lopsided — one core is pinned while others idle "
+            B.push_back(verdict("\xe2\x96\xb2 load is lopsided \xe2\x80\x94 one core is pinned while others idle "
                                 "(a single-threaded hog?)", pal::hot));
         // On heterogeneous silicon the SINGLE most actionable number is where
         // the work landed: heavy load on the efficiency cluster while the
@@ -267,17 +299,17 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
                 else if (core.kind == CoreKind::Perf) { ps += core.usage.v; ++pn; }
             }
             const double pavg = pn ? ps / pn : 0, eavg = en ? es / en : 0;
-            L.push_back(kv3(
+            B.push_back(kv3(
                 "P cores", fmt::pct(pavg) + " avg", load_color(pavg),
                 "E cores", fmt::pct(eavg) + " avg", load_color(eavg),
                 "headroom", pn ? fmt::pct(1.0 - pavg) + " on P" : "",
                 1.0 - pavg > 0.5 ? pal::good : pal::hot));
             if (eavg > 0.7 && pavg < 0.3)
-                L.push_back(verdict("▲ the efficiency cores are doing the work while the "
-                                    "performance cores idle — pin the hot process to a P core",
+                B.push_back(verdict("\xe2\x96\xb2 the efficiency cores are doing the work while the "
+                                    "performance cores idle \xe2\x80\x94 pin the hot process to a P core",
                                     pal::hot));
         }
-        L.push_back(gap_row());
+        B.push_back(gap_row());
     }
 
     // ── PER-CORE TABLE ──────────────────────────────────────────────────
@@ -521,10 +553,13 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── ASSEMBLY ───────────────────────────────────────────────────────
-    // Wide: hero band across the top, then the per-core TABLE on the left and
-    // the interpretation on the right — the table is what the eye lands on.
-    // Narrow: one column, table FIRST (right under the hero) so it's visible
-    // without scrolling; the interpretation follows.
+    // The per-core TABLE leads (it's what the eye lands on), and RIGHT NOW +
+    // DISTRIBUTION sit DIRECTLY BENEATH it — they read as the table's summary.
+    // Wide: hero across the top, [table + summary] as the left column, top
+    // consumers + sensors as the right. Narrow: one column in the same order.
+    core_col.insert(core_col.end(),
+                    std::make_move_iterator(below_core.begin()),
+                    std::make_move_iterator(below_core.end()));
     if (split) return hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
     std::vector<Element> out = std::move(hero);
     out.insert(out.end(), std::make_move_iterator(core_col.begin()),
