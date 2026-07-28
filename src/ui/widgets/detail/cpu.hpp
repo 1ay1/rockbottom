@@ -553,15 +553,15 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── ASSEMBLY ───────────────────────────────────────────────────────
-    // On ultrawide screens, keep the live interpretation on the LEFT where
-    // the eye enters the pane; the dense per-core table becomes the supporting
-    // right rail. This keeps RIGHT NOW and DISTRIBUTION visible immediately.
+    // On ultrawide screens, put only the immediate interpretation on the
+    // LEFT. The per-core table remains the right rail, with consumers and
+    // sensors following it; do not move the whole supporting column.
     if (split) {
         std::vector<Element> left;
         left.insert(left.end(), std::make_move_iterator(below_core.begin()),
                                 std::make_move_iterator(below_core.end()));
-        left.insert(left.end(), std::make_move_iterator(stat_col.begin()),
-                                std::make_move_iterator(stat_col.end()));
+        core_col.insert(core_col.end(), std::make_move_iterator(stat_col.begin()),
+                        std::make_move_iterator(stat_col.end()));
         return hero_split(std::move(hero), std::move(left), std::move(core_col));
     }
     core_col.insert(core_col.end(),
