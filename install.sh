@@ -20,6 +20,51 @@ requirement. macOS uses only libraries supplied by macOS itself.
 EOF
 }
 
+# Quote a literal path for a shell startup file without evaluating it now.
+shell_quote() {
+    printf "'"
+    printf '%s' "$1" | sed "s/'/'\\\\''/g"
+    printf "'"
+}
+
+add_posix_path() {
+    file=$1
+    bin_dir=$2
+    marker="# rockbottom installer: add $bin_dir to PATH"
+    if [ -f "$file" ] && grep -F "$marker" "$file" >/dev/null 2>&1; then
+        return
+    fi
+    mkdir -p "$(dirname "$file")"
+    {
+        printf '\n%s\n' "$marker"
+        printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "$bin_dir")"
+    } >> "$file"
+}
+
+add_fish_path() {
+    file=$1
+    bin_dir=$2
+    marker="# rockbottom installer: add $bin_dir to PATH"
+    if [ -f "$file" ] && grep -F "$marker" "$file" >/dev/null 2>&1; then
+        return
+    fi
+    mkdir -p "$(dirname "$file")"
+    {
+        printf '\n%s\n' "$marker"
+        printf 'set -gx PATH %s $PATH\n' "$(shell_quote "$bin_dir")"
+    } >> "$file"
+}
+
+configure_path() {
+    bin_dir=$1
+    # `sh` cannot modify its parent shell's environment. Persist the entry in
+    # the startup files used by supported interactive shells instead.
+    add_posix_path "$HOME/.profile" "$bin_dir"
+    add_posix_path "$HOME/.bashrc" "$bin_dir"
+    add_posix_path "$HOME/.zshrc" "$bin_dir"
+    add_fish_path "$HOME/.config/fish/config.fish" "$bin_dir"
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --prefix)  prefix=${2:?--prefix needs a directory}; shift 2 ;;
@@ -85,9 +130,10 @@ fi
 
 mkdir -p "$prefix/bin"
 install -m 0755 "$tmp/$asset" "$prefix/bin/rb"
+configure_path "$prefix/bin"
 echo "Installed rb to $prefix/bin/rb"
 "$prefix/bin/rb" --version
 case ":${PATH}:" in
-    *":$prefix/bin:"*) ;;
-    *) echo "Add $prefix/bin to PATH, then run: rb" ;;
+    *":$prefix/bin:"*) echo "rb is ready: run rb" ;;
+    *) echo "Added $prefix/bin to PATH for future Bash, zsh, fish, and login sh sessions. Open a new terminal, then run: rb" ;;
 esac

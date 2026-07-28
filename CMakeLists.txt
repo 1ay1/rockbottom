@@ -18,7 +18,7 @@ endif()
 # The ONE place the version is written. `rb --version`, the generated
 # core/version.hpp, the release asset names and the git tag all derive from it;
 # nothing else hardcodes a version string.
-project(rockbottom VERSION 0.1.6 LANGUAGES CXX)
+project(rockbottom VERSION 0.1.7 LANGUAGES CXX)
 
 # rockbottom targets the same modern standard maya uses.
 set(CMAKE_CXX_STANDARD 26)
