@@ -36,7 +36,7 @@
 </p>
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh
 rb
 ```
 
