@@ -176,12 +176,11 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // row in symmetric grow-spacer margins when split has surplus; otherwise
     // it's a transparent pass-through (narrow / non-split panes unchanged).
     const bool split = net_is_split(s, cx);
-    constexpr int kBandDesign = 184;
-    const int ngap    = 2;
+    // The network hero is deliberately edge-to-edge: unlike the interface
+    // columns below, a time-series benefits from every horizontal cell.
     const int navail  = std::max(40, cx.w - 6);
-    const int ninner  = split ? std::min(navail, kBandDesign) : navail;
-    const int nside   = std::max(0, navail - ninner);
-    const bool ncenter = split && nside >= 16;
+    const int ninner  = navail;
+    const bool ncenter = false;
     auto center = [&](Element e) -> Element {
         using namespace maya::dsl;
         if (!ncenter) return e;

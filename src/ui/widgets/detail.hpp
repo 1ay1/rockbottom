@@ -85,7 +85,13 @@ public:
         // into two columns and get the full slot (cap_width=false); everything
         // else caps at the reading design width. Slot inner width = pane width
         // minus panel border(2) + padding(2) + scrollbar gutter(2).
-        const bool cap_width = !(cx.ultrawide && which_ != Detail::Proc);
+        // NET and PROC are intentionally full-width too: their hero graphs
+        // are the primary read, and a fixed reading-width cap leaves a visible
+        // dead strip on wide terminals. Other panes can still choose their own
+        // internal two-column reading measures.
+        const bool cap_width = which_ != Detail::Net
+                            && which_ != Detail::Proc
+                            && !cx.ultrawide;
         const int gutter_w = std::max(1, w_ - 2 - 2 - 2);
         constexpr int kDesign = 104;
         const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
@@ -124,7 +130,12 @@ public:
         // surplus is large) so its graph/meters don't smear. Every pane's
         // "fixed width, centered" behaviour lives in scroller()/two_col() so
         // the scroller keeps its baked-in grow(1) height-fill.
-        const bool split_body = cx.ultrawide && which_ != Detail::Proc;
+        // CPU/MEM/GPU/DISK get their full slot when they reflow into two
+        // columns. NET and PROC keep their established single-column flow,
+        // but their trend graphs must still span the complete pane.
+        const bool split_body = (cx.ultrawide && which_ != Detail::Proc)
+                             || which_ == Detail::Net
+                             || which_ == Detail::Proc;
         framed.push_back(detail::scroller(std::move(rows), cx.scroll,
                                           cx.body_h, ac, /*cap_width=*/!split_body));
         framed.push_back(pending_ ? confirm_strip() : hint());
