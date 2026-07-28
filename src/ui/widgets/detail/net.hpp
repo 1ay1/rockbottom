@@ -488,7 +488,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
     // The band shares the SAME centered inner width as the aggregate header
     // (ninner / center() computed up-front) so the whole pane reads as one
     // fixed-width, centered slab.
-    const int gap_w   = ngap;
+    const int gap_w   = 2;
     const int inner   = ninner;
     const int left_w  = std::clamp(52, 40, std::max(40, inner - gap_w - 40));
     const int right_w = inner - gap_w - left_w;

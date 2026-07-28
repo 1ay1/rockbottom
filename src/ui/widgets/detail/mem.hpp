@@ -31,9 +31,9 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     std::vector<Element>& H = split ? hero : single;
     H.push_back(section("USAGE TREND", pal::mem_ac));
     {
-        // Memory is a first-class hero: use the full responsive graph budget.
-        // (The old -1 made MEM visibly shorter than CPU/PROC at every height.)
-        const int gh = cx.graph_h;
+        // Keep the memory trend one row below the shared hero budget so the
+        // physical-memory summary remains visible with it.
+        const int gh = std::max(4, cx.graph_h - 1);
         H.push_back(hero_graph(m.usage().v, pal::mem_ac, "ram used",
                                m.usage_history.data(), m.hist_len, gh,
                                pal::mem_ac));
