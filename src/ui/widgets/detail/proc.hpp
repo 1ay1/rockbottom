@@ -65,9 +65,10 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
 
         b.push_back(section("CPU OVER TIME", pal::proc_ac,
                             "% of one core · peak " + fmt::fixed1(peak_pct) + "%"));
-        // Match the CPU pane's hero height exactly (full cx.graph_h) so the two
-        // panes' hero bands are the same size.
-        const int gh = cx.graph_h;
+        // A selected process has no competing hero band, so on a tall pane let
+        // its CPU history take the last small slice of spare vertical room too.
+        // Short panes stay exactly at the shared compact height.
+        const int gh = cx.graph_h + (cx.tall ? 2 : 0);
         const maya::Color gc = load_color(cpuf);
         // A SECOND owned buffer holding the ring as real cpu%-of-core fractions
         // (0..1, NOT axis-relative), so the stat card's avg / peak / trend
