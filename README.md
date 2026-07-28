@@ -43,8 +43,10 @@ rb
 <p align="center">
   The installer downloads the right release for Linux x86_64/arm64 or Apple
   Silicon, verifies its SHA-256 checksum, and installs <code>rb</code> to
-  <code>~/.local/bin</code>. Linux binaries are fully static: no glibc, loader,
-  or shared-library dependency. <a href="https://github.com/1ay1/rockbottom/releases/latest">Release files</a>
+  <code>~/.local/bin</code>. The command runs the POSIX installer via
+  <code>sh</code>, so paste it from Bash, zsh, fish, or another interactive shell.
+  Linux binaries are fully static: no glibc, loader, or shared-library dependency.
+  <a href="https://github.com/1ay1/rockbottom/releases/latest">Release files</a>
   also include the standalone binaries and checksums for manual installs.
 </p>
 

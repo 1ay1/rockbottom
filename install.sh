@@ -1,6 +1,9 @@
 #!/bin/sh
 # Install the latest rockbottom release without a compiler or package manager.
-# Usage: curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh
+# Usage from any interactive shell (bash, zsh, fish, etc.):
+# curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh
+# The installer itself is deliberately POSIX sh, so this works independently
+# of the shell the user has configured.
 set -eu
 
 repo="1ay1/rockbottom"

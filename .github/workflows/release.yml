@@ -67,6 +67,16 @@ jobs:
           ./build/rb --version
           cp build/rb "${{ matrix.asset }}"
 
+      # The bootstrapper is POSIX sh. Users commonly paste the command into
+      # Bash, so test both execution paths before publishing it as an asset.
+      - name: Installer must work in sh and Bash
+        shell: bash
+        run: |
+          sh -n install.sh
+          bash -n install.sh
+          sh install.sh --help
+          bash install.sh --help
+
       - name: Include installer
         if: matrix.asset == 'rb-linux-x86_64'
         run: cp install.sh install.sh.release
