@@ -165,9 +165,9 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // READING ORDER. The per-core table is the thing you open this pane FOR,
     // so it gets the most visible real estate: the LEFT column when the screen
     // is wide enough to split, and the slot directly under the hero graph when
-    // it isn't. RIGHT NOW + DISTRIBUTION — the at-a-glance interpretation of
-    // that table — sit DIRECTLY BELOW it (they read as the table's summary, not
-    // a parallel column). Top consumers + sensors ride the stat column / below.
+    // it isn't. RIGHT NOW + DISTRIBUTION follow it in that same left rail as
+    // the table's immediate summary. Top consumers + sensors remain in the
+    // separate right rail.
     //
     // Four collectors, assembled at the bottom so the same section code serves
     // both layouts and neither can drift from the other.
@@ -553,16 +553,13 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── ASSEMBLY ───────────────────────────────────────────────────────
-    // On ultrawide screens, put only the immediate interpretation on the
-    // LEFT. The per-core table remains the right rail, with consumers and
-    // sensors following it; do not move the whole supporting column.
+    // On ultrawide screens, the per-core table leads the LEFT rail and its
+    // immediate interpretation follows beneath it. Consumers and sensors stay
+    // in the separate RIGHT rail.
     if (split) {
-        std::vector<Element> left;
-        left.insert(left.end(), std::make_move_iterator(below_core.begin()),
-                                std::make_move_iterator(below_core.end()));
-        core_col.insert(core_col.end(), std::make_move_iterator(stat_col.begin()),
-                        std::make_move_iterator(stat_col.end()));
-        return hero_split(std::move(hero), std::move(left), std::move(core_col));
+        core_col.insert(core_col.end(), std::make_move_iterator(below_core.begin()),
+                        std::make_move_iterator(below_core.end()));
+        return hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
     }
     core_col.insert(core_col.end(),
                     std::make_move_iterator(below_core.begin()),

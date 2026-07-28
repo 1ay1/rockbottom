@@ -67,6 +67,10 @@ jobs:
           ./build/rb --version
           cp build/rb "${{ matrix.asset }}"
 
+      - name: Include installer
+        if: matrix.asset == 'rb-linux-x86_64'
+        run: cp install.sh install.sh.release
+
       # The version has exactly one source (the project() line in
       # CMakeLists.txt, via the generated core/version.hpp) — but the TAG is
       # typed by hand, so it's the one thing that can still disagree with it.
@@ -147,11 +151,18 @@ jobs:
               echo "$vers"; fail=1
             fi
 
-            # 4. It must actually START on a host that is not the builder.
-            #    Runs in a deliberately ANCIENT container: if the binary is
-            #    truly self-contained this works, and if we ever regress to
-            #    dynamic glibc this is where it gets caught with a real
-            #    "GLIBC_2.xx not found" instead of a passing grep.
+            # 4. It must actually START with literally nothing from the host
+            # filesystem available. Run this for EVERY Linux architecture,
+            # not merely x86_64: a static ELF that is the wrong architecture
+            # also fails here rather than becoming a broken release asset.
+            echo "== smoke test in an empty chroot"
+            jail=$(mktemp -d)
+            cp "$asset" "$jail/rb"
+            sudo chroot "$jail" /rb --version \
+              || { echo "::error::$asset is not self-contained"; fail=1; }
+
+            # An old userspace additionally catches accidental dynamic-glibc
+            # linkage on x86_64 with a real foreign loader.
             if [ "${{ matrix.asset }}" = "rb-linux-x86_64" ]; then
               echo "== smoke test under centos:7 (glibc 2.17)"
               docker run --rm --platform linux/amd64 \
@@ -167,7 +178,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
-          path: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            install.sh.release
           if-no-files-found: error
 
   publish:
@@ -186,7 +199,8 @@ jobs:
       - name: Checksums
         run: |
           cd staged
-          chmod +x rb-* || true
+          mv install.sh.release install.sh
+          chmod +x rb-* install.sh
           sha256sum rb-* | tee SHA256SUMS
 
       - name: Publish GitHub Release
@@ -195,5 +209,6 @@ jobs:
         with:
           files: |
             staged/rb-*
+            staged/install.sh
             staged/SHA256SUMS
           generate_release_notes: true

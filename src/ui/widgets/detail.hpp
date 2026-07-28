@@ -81,24 +81,22 @@ public:
         std::vector<Element> rows = body();
         if (rows.empty()) return 0;
 
-        // Mirror the scroller's width math: ultrawide non-proc panes reflow
-        // into two columns and get the full slot (cap_width=false); everything
-        // else caps at the reading design width. Slot inner width = pane width
-        // minus panel border(2) + padding(2) + scrollbar gutter(2).
-        // NET and PROC are intentionally full-width too: their hero graphs
-        // are the primary read, and a fixed reading-width cap leaves a visible
-        // dead strip on wide terminals. Other panes can still choose their own
-        // internal two-column reading measures.
+        // Mirror the scroller's width math. PROC keeps a compact reading body
+        // beneath its full-width two-row hero; ultrawide non-PROC panes may
+        // reflow into two columns and therefore receive the full slot.
         const bool cap_width = which_ != Detail::Net
-                            && which_ != Detail::Proc
-                            && !cx.ultrawide;
+                            && (!cx.ultrawide || which_ == Detail::Proc);
+        const int full_width_prefix = which_ == Detail::Proc ? 2 : 0;
         const int gutter_w = std::max(1, w_ - 2 - 2 - 2);
         constexpr int kDesign = 104;
         const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
 
         long long total_rows = 0;
-        for (const auto& e : rows)
-            total_rows += std::max(1, measure_element(e, inner_w).height.value);
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const int row_w = i < static_cast<std::size_t>(full_width_prefix)
+                ? gutter_w : inner_w;
+            total_rows += std::max(1, measure_element(rows[i], row_w).height.value);
+        }
 
         return std::max(0, static_cast<int>(total_rows) - std::max(1, cx.body_h));
     }
@@ -131,13 +129,14 @@ public:
         // "fixed width, centered" behaviour lives in scroller()/two_col() so
         // the scroller keeps its baked-in grow(1) height-fill.
         // CPU/MEM/GPU/DISK get their full slot when they reflow into two
-        // columns. NET and PROC keep their established single-column flow,
-        // but their trend graphs must still span the complete pane.
+        // columns. NET retains its existing full-width flow. PROC instead
+        // promotes only its title + graph hero, then centres the compact body.
         const bool split_body = (cx.ultrawide && which_ != Detail::Proc)
-                             || which_ == Detail::Net
-                             || which_ == Detail::Proc;
+                             || which_ == Detail::Net;
+        const int full_width_prefix = which_ == Detail::Proc ? 2 : 0;
         framed.push_back(detail::scroller(std::move(rows), cx.scroll,
-                                          cx.body_h, ac, /*cap_width=*/!split_body));
+                                          cx.body_h, ac, /*cap_width=*/!split_body,
+                                          /*design_w=*/104, full_width_prefix));
         framed.push_back(pending_ ? confirm_strip() : hint());
 
         Element card = Panel(glyph, title, ac).grow(1)(std::move(framed));

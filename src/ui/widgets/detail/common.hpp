@@ -729,12 +729,13 @@ inline std::vector<Element> hero_split(std::vector<Element> hero,
 // the right gutter. Heights come from measure_element at the SAME width we
 // paint at, so window math and paint can never disagree.
 inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
-                        maya::Color ac, bool cap_width = true, int design_w = 104) {
+                        maya::Color ac, bool cap_width = true, int design_w = 104,
+                        int full_width_prefix = 0) {
     using namespace maya; using namespace maya::dsl;
     auto shared = std::make_shared<const std::vector<Element>>(std::move(body));
     const int scroll_in = std::max(0, scroll);
     maya::ComponentElement ce{
-        .render = [shared, scroll_in, ac, cap_width, design_w](int slot_w, int slot_h) -> Element {
+        .render = [shared, scroll_in, ac, cap_width, design_w, full_width_prefix](int slot_w, int slot_h) -> Element {
             const auto& all = *shared;
             const int view_h = std::max(1, slot_h);
             const int gutter_w = std::max(1, slot_w - 2);  // minus " "+bar gutter
@@ -753,10 +754,18 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             const int kDesign = design_w > 0 ? design_w : kDesignDefault;
             const int inner_w = cap_width ? std::min(gutter_w, kDesign) : gutter_w;
 
-            // Total content height at the width we'll paint at.
+            // A compact pane can still promote its opening hero rows to the
+            // full slot. This keeps the graph expansive while every ordinary
+            // metric/table row retains the readable centred measure.
+            const int prefix = cap_width ? std::min<int>(
+                std::max(0, full_width_prefix), all.size()) : 0;
+
+            // Total content height at each row's actual paint width.
             long long total_rows = 0;
-            for (const auto& e : all)
-                total_rows += std::max(1, measure_element(e, inner_w).height.value);
+            for (std::size_t i = 0; i < all.size(); ++i) {
+                const int row_w = i < static_cast<std::size_t>(prefix) ? gutter_w : inner_w;
+                total_rows += std::max(1, measure_element(all[i], row_w).height.value);
+            }
 
             const int max_scroll = std::max(0, static_cast<int>(total_rows) - view_h);
             const int start = std::clamp(scroll_in, 0, max_scroll);
@@ -772,12 +781,34 @@ inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
             // (not the scroll() DSL pipe) so no ScrollState is needed — the
             // box comment sanctions setting scroll_y/overflow directly for a
             // custom scroll mechanism.
-            std::vector<Element> col(all.begin(), all.end());
-            Element column = (v(std::move(col)) | width(inner_w)).build();
+            // Hero rows use the full gutter width. The remaining rows are
+            // individually centred at the compact reading width, rather than
+            // constraining the whole column and accidentally narrowing heroes.
+            std::vector<Element> col;
+            col.reserve(all.size());
+            for (std::size_t i = 0; i < all.size(); ++i) {
+                if (i < static_cast<std::size_t>(prefix)) {
+                    col.push_back(all[i]);
+                } else if (pad_w > 0 && center) {
+                    col.push_back((h(
+                        Element{blank()} | grow(1),
+                        all[i] | width(inner_w),
+                        Element{blank()} | grow(1)
+                    )).build());
+                } else if (pad_w > 0) {
+                    col.push_back((h(
+                        all[i] | width(inner_w),
+                        Element{blank()} | grow(1)
+                    )).build());
+                } else {
+                    col.push_back(all[i]);
+                }
+            }
+            Element column = (v(std::move(col)) | width(prefix > 0 ? gutter_w : inner_w)).build();
             BoxElement vp;
             vp.overflow = Overflow::Scroll;
             vp.layout.height = Dimension::fixed(view_h);
-            vp.layout.width  = Dimension::fixed(inner_w);
+            vp.layout.width  = Dimension::fixed(prefix > 0 ? gutter_w : inner_w);
             vp.layout.scroll_y = start;
             vp.layout.align_self = Align::Start;  // don't let a Stretch parent
                                                   // squeeze the column's height

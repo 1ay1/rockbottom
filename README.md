@@ -32,10 +32,20 @@
 </p>
 
 <p align="center">
-  <b>Grab a standalone binary</b> — no build, no deps — from the
-  <a href="https://github.com/1ay1/rockbottom/releases/latest">latest release</a>:
-  <code>rb-linux-x86_64</code>, <code>rb-linux-arm64</code>,
-  <code>rb-macos-arm64</code>.
+  <b>Try it now — no build, no package manager, no shared-library roulette:</b>
+</p>
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/main/install.sh | sh
+rb
+```
+
+<p align="center">
+  The installer downloads the right release for Linux x86_64/arm64 or Apple
+  Silicon, verifies its SHA-256 checksum, and installs <code>rb</code> to
+  <code>~/.local/bin</code>. Linux binaries are fully static: no glibc, loader,
+  or shared-library dependency. <a href="https://github.com/1ay1/rockbottom/releases/latest">Release files</a>
+  also include the standalone binaries and checksums for manual installs.
 </p>
 
 ---
