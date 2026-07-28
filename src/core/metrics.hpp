@@ -200,7 +200,7 @@ struct DriveIO {
 
 // SSD/NVMe write-endurance + health, from the NVMe SMART log page (0x02) read
 // via ioctl. Root-only: on permission-denied or non-NVMe the vector stays
-// empty and the UI shows nothing (same discipline as PSI/sensors). pct_used
+// empty and the UI explicitly explains that SMART data is unavailable. pct_used
 // can legitimately exceed 100 — the drive is past its rated write budget.
 struct SsdHealth {
     std::string   name;               // "nvme0", …

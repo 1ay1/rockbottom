@@ -26,6 +26,9 @@
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
 #include "../src/ui/widgets/detail/cpu.hpp"
+#include "../src/ui/widgets/detail/mem.hpp"
+#include "../src/ui/widgets/detail/net.hpp"
+#include "../src/ui/widgets/detail/disk.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -189,7 +192,17 @@ void dump(const std::string& title, const std::vector<std::string>& rows) {
 std::vector<std::string> render_detail(const Snapshot& s, int w, int h) {
     ui::detail::Ctx cx = ui::detail::Ctx::make(w, 50, 0);
     std::vector<maya::Element> col = ui::detail::cpu_body(s, cx);
-    return render_rows(maya::dsl::v(std::move(col)).build(), w, h);
+    return render_rows((maya::dsl::v(std::move(col))).build(), w, h);
+}
+
+std::vector<std::string> render_body(std::vector<maya::Element> body, int w = 130, int h = 120) {
+    return render_rows((maya::dsl::v(std::move(body))).build(), w, h);
+}
+
+bool contains_text(const std::vector<std::string>& rows, const std::string& needle) {
+    for (const auto& row : rows)
+        if (row.find(needle) != std::string::npos) return true;
+    return false;
 }
 
 // ── topology fixtures ────────────────────────────────────────
@@ -655,7 +668,68 @@ int main() {
     test_version();
     test_core_temps();
 
-    // ── issue #2: sparse temps must not shift rows ──────────────────
+    // ── device-health visibility: issues #4–#8 ──────────────────────
+    // These probes must be visually verifiable on a healthy, ordinary host;
+    // hiding a clean/unsupported state made the delivered features look absent.
+    {
+        std::printf("\ndevice-health telemetry is visible at rest:\n");
+        Snapshot s = make_snapshot(make_cpu(4, false, 0));
+        s.mem.total = Bytes{16ull * 1024 * 1024 * 1024};
+        s.mem.available = Bytes{8ull * 1024 * 1024 * 1024};
+        s.nets.push_back(NetIface{.name = "eth0", .up = true});
+        const ui::detail::Ctx cx = ui::detail::Ctx::make(130, 70, 0);
+
+        const auto mem = render_body(ui::detail::mem_body(s, cx));
+        check(contains_text(mem, "HUGEPAGES & NUMA"),
+              "MEMORY always labels hugepage and NUMA telemetry");
+        check(contains_text(mem, "none configured") && contains_text(mem, "numa balancing"),
+              "MEMORY reports an explicit no-pool / NUMA-off baseline");
+
+        const auto net = render_body(ui::detail::net_body(s, cx));
+        check(contains_text(net, "rx errors") && contains_text(net, "tx errors") &&
+              contains_text(net, "dropped in"),
+              "NETWORK always labels clean interface error/drop counters");
+
+        const auto disk = render_body(ui::detail::disk_body(s, cx));
+        check(contains_text(disk, "DEVICE HEALTH"),
+              "DISK always labels latency and endurance telemetry");
+        check(contains_text(disk, "no block-device latency telemetry") &&
+              contains_text(disk, "NVMe SMART endurance unavailable"),
+              "DISK explains unavailable latency and NVMe SMART data");
+
+        // Populate every source's actionable state too: this verifies that
+        // the detailed readings and warnings survive the collector → snapshot
+        // → pane path, not merely the empty-state labels above.
+        Snapshot active = s;
+        active.mem.huge_total = 128;
+        active.mem.huge_free = 96;
+        active.mem.huge_rsvd = 8;
+        active.mem.huge_size = Bytes{2ull * 1024 * 1024};
+        active.mem.huge_idle = Bytes{176ull * 1024 * 1024};
+        active.mem.numa_on = true;
+        active.mem.numa_hint_faults_ps = 25'000;
+        active.nets[0].rx_errs = 3;
+        active.nets[0].tx_errs = 2;
+        active.nets[0].drops = 7;
+        active.nets[0].err_ps = 2;
+        active.nets[0].drop_ps = 5;
+        active.drives.push_back(DriveIO{.name = "nvme0n1", .read_lat_ms = 3.2,
+                                        .write_lat_ms = 88.0, .busy = 0.82});
+        active.ssd_health.push_back(SsdHealth{.name = "nvme0", .pct_used = 90,
+                                               .spare_pct = 8, .spare_thresh = 10});
+        const auto active_mem = render_body(ui::detail::mem_body(active, cx));
+        const auto active_net = render_body(ui::detail::net_body(active, cx));
+        const auto active_disk = render_body(ui::detail::disk_body(active, cx));
+        check(contains_text(active_mem, "pool in use") && contains_text(active_mem, "hint faults"),
+              "MEMORY renders hugepage use and NUMA fault evidence");
+        check(contains_text(active_net, "drops/s") && contains_text(active_net, "link errors/s"),
+              "NETWORK renders live error and drop-rate warnings");
+        check(contains_text(active_disk, "88.0 ms") && contains_text(active_disk, "90% worn") &&
+              contains_text(active_disk, "needs attention"),
+              "DISK renders latency, endurance, and SMART-spare warnings");
+    }
+
+    // ── issue #2: sparse temps must not shift rows ─────────────────-
     // 130 cols keeps the pane in SINGLE-column mode (ultrawide splits at 146),
     // so the per-core grid owns whole rows and every one of them is compared.
     {
