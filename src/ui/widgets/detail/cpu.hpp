@@ -557,10 +557,19 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
     // DISTRIBUTION sit DIRECTLY BENEATH it — they read as the table's summary.
     // Wide: hero across the top, [table + summary] as the left column, top
     // consumers + sensors as the right. Narrow: one column in the same order.
+    if (split) {
+        // In the two-column layout, placing the summary at the bottom of the
+        // (tall) left column hides it below ~12 core rows. Render it FULL-WIDTH
+        // beneath the split band instead, so it sits visibly under the table.
+        auto out = hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
+        out.push_back(gap_row());
+        out.insert(out.end(), std::make_move_iterator(below_core.begin()),
+                              std::make_move_iterator(below_core.end()));
+        return out;
+    }
     core_col.insert(core_col.end(),
                     std::make_move_iterator(below_core.begin()),
                     std::make_move_iterator(below_core.end()));
-    if (split) return hero_split(std::move(hero), std::move(core_col), std::move(stat_col));
     std::vector<Element> out = std::move(hero);
     out.insert(out.end(), std::make_move_iterator(core_col.begin()),
                           std::make_move_iterator(core_col.end()));
