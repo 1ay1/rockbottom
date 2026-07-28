@@ -73,21 +73,17 @@ struct Ctx {
         const int base = c.ultrawide ? std::clamp(h - 24, 5, 9)
                                      : std::clamp(h - 22, 5, 10);
         const int surplus = std::max(0, h - 30);
-        // Ceiling: on a genuinely TALL pane the old flat cap of 22 rows left a
-        // content-light pane (DISK/GPU with a few filesystems / engines)
-        // stranding 25-30 blank rows below the fold on a 74-row phone. The
-        // graph is the one element that reads BETTER filling that space, so
-        // let the ceiling track the body height: up to ~48% of the scrollable
-        // viewport, floored at the historic 22 so nothing REGRESSES on a
-        // shorter pane. The scroller still windows everything, so a content-
-        // heavy pane simply scrolls — the taller graph never hides sections.
-        const int cap = std::max(22, c.body_h * 48 / 100);
-        // Claim ~70% of the surplus above the baseline (was 50%): with the
-        // body-relative ceiling above, taking a bigger bite genuinely fills a
-        // tall phone instead of leaving the graph throttled mid-screen while
-        // rows below sit empty. On short/normal panes surplus is small, so
-        // this still resolves to the modest historic height.
-        c.graph_h = std::min(cap, base + surplus * 7 / 10);
+        // Ceiling: the hero graph is the pane's primary visual answer, so on a
+        // genuinely tall terminal it should grow into MOST of the available
+        // vertical room rather than stopping halfway and stranding empty sky
+        // below. Keep a moderate minimum for ordinary panes, but let tall
+        // panes reach ~60% of the scrollable viewport. Content-heavy panes
+        // remain fully reachable through the row-granular scroller below.
+        const int cap = std::max(24, c.body_h * 60 / 100);
+        // Claim most of the surplus above the baseline. At ordinary heights
+        // this stays close to the compact historic graph; above ~30 rows it
+        // grows decisively, so the chart is a real visual, not a thin strip.
+        c.graph_h = std::min(cap, base + surplus * 8 / 10);
         return c;
     }
 };
