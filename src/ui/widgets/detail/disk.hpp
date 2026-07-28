@@ -219,11 +219,10 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
     R.push_back(gap_row());
 
     // ── device health: per-drive latency + SSD write endurance ──────────────
-    // Latency is the best early warning of a failing or saturated drive, and
-    // endurance tells you how much life a flash device has left — both are
-    // per-DEVICE (a single bad disk is the whole point). Rendered only when
-    // there's something to show; the section stays silent otherwise.
-    if (!s.drives.empty() || !s.ssd_health.empty()) {
+    // Always show this block. A quiet/unavailable state is useful evidence:
+    // people can confirm the probes exist before a drive becomes busy or an
+    // NVMe SMART sample is available.
+    {
         R.push_back(section("DEVICE HEALTH", pal::disk_ac));
         // Latency: worst drives already sorted first by the collector. A drive
         // is only interesting once it has measurable service time or is busy.
@@ -270,6 +269,10 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
                 R.push_back(verdict("\xe2\x96\xb2 " + d.name + " is slow to respond \xe2\x80\x94 " +
                     fmt_lat(lat) + " service time at " + fmt::pct_pad(d.busy) + " busy", pal::hot));
         }
+        if (shown == 0)
+            R.push_back(verdict(s.drives.empty()
+                ? "no block-device latency telemetry available"
+                : "drives are idle — latency appears when they service I/O", pal::dim));
         // SSD write endurance: one wear meter per drive. Green when fresh,
         // ramping to red as percentage_used approaches (and passes) 100. The
         // "worn" label makes clear this is CONSUMED life, not free capacity.
@@ -299,6 +302,8 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             else if (hlt.pct_used >= 85)
                 R.push_back(verdict("\xe2\x96\xb2 " + hlt.name + " is wearing out \xe2\x80\x94 plan a replacement", pal::hot));
         }
+        if (s.ssd_health.empty())
+            R.push_back(verdict("NVMe SMART endurance unavailable — needs a supported NVMe drive and permission to read it", pal::dim));
         R.push_back(gap_row());
     }
 

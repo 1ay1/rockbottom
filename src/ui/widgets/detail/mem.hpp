@@ -132,10 +132,10 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
     }
 
     // ── hugepages + NUMA balancing ────────────────────────────────
-    // Only drawn when there's a hugepage pool or NUMA auto-balancing is on —
-    // both are absent on ordinary desktops, so the section stays silent there
-    // and only production/HPC boxes see it.
-    if (m.huge_total > 0 || m.numa_on) {
+    // Keep the section visible even on an ordinary desktop: a clear "none /
+    // off" state proves the probe is present, while production hosts still
+    // receive the detailed pool and fault-rate evidence below.
+    {
         L.push_back(section("HUGEPAGES & NUMA", pal::mem_ac));
         if (m.huge_total > 0) {
             const std::uint64_t used_pages = m.huge_total > m.huge_free
@@ -164,6 +164,8 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
             else if (idle_pages > 0)
                 L.push_back(verdict("\xe2\x97\x8f " + std::to_string(idle_pages) +
                     " pages free in the pool, ready for a hugepage-aware app", pal::good));
+        } else {
+            L.push_back(kv("hugepage pool", "none configured", pal::dim));
         }
         if (m.numa_on) {
             const double khz = m.numa_hint_faults_ps / 1000.0;
@@ -177,6 +179,11 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
                 L.push_back(verdict("\xe2\x96\xb2 " + fmt::count(khz*1000) +
                     "/s NUMA hint-faults \xe2\x80\x94 the kernel is churning faults chasing "
                     "locality; pin memory-heavy processes or disable numa_balancing", pal::hot));
+        } else {
+            L.push_back(kv3(
+                "numa balancing", "off", pal::dim,
+                "hint faults", "not sampling", pal::dim,
+                "", "", pal::dim));
         }
         L.push_back(gap_row());
     }

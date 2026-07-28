@@ -405,21 +405,17 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 "lifetime pkts", fmt::count(static_cast<double>(ni.rx_packets + ni.tx_packets)),
                 pal::label));
         }
-        // Errors / drops broken out where the link is actually seeing them —
-        // a healthy interface skips this row entirely, so it only appears as
-        // a warning when there's something to warn about. The live RATE (per
-        // second) is the actionable signal: a rising rate means a cable, link
-        // or driver fault happening NOW, not a stale boot-time counter.
+        // Errors / drops stay visible even when clean, so the interface's
+        // health telemetry is discoverable and a zero baseline is explicit.
+        // The live RATE below remains the actionable warning signal.
         const double bad_ps = ni.err_ps + ni.drop_ps;
-        if (ni.rx_errs || ni.tx_errs || ni.drops) {
-            ifcol.push_back(kv3(
-                "rx errors", fmt::count(static_cast<double>(ni.rx_errs)),
-                ni.rx_errs ? pal::hot : pal::dim,
-                "tx errors", fmt::count(static_cast<double>(ni.tx_errs)),
-                ni.tx_errs ? pal::hot : pal::dim,
-                "dropped in", fmt::count(static_cast<double>(ni.drops)),
-                ni.drops ? pal::crit : pal::dim));
-        }
+        ifcol.push_back(kv3(
+            "rx errors", fmt::count(static_cast<double>(ni.rx_errs)),
+            ni.rx_errs ? pal::hot : pal::good,
+            "tx errors", fmt::count(static_cast<double>(ni.tx_errs)),
+            ni.tx_errs ? pal::hot : pal::good,
+            "dropped in", fmt::count(static_cast<double>(ni.drops)),
+            ni.drops ? pal::crit : pal::good));
         if (bad_ps >= 0.5) {
             const maya::Color rc = bad_ps > 100 ? pal::crit : pal::hot;
             std::string live = "  \xe2\x96\xb2 ";
