@@ -60,7 +60,12 @@ jobs:
         shell: bash
         run: |
           export CC=gcc-14 CXX=g++-14
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          # -DRB_STANDALONE=ON is the default, but say it out loud: this is the
+          # release path and a portable binary is the whole point. Being
+          # explicit means a future flip of the default can never silently turn
+          # published assets dynamic. (CMake also runs its own post-build
+          # standalone assertion, so a bad link fails here, not on a user's box.)
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
           cmake --build build -j
           # CMake already strips the Release binary; verify + rename to the
           # platform-tagged asset name.
@@ -128,11 +133,35 @@ jobs:
             # Apple ships no libc.a, so a fully static mach-o isn't possible.
             # The achievable bar: nothing outside the OS's own directories.
             echo "== otool -L $asset"; otool -L "$asset"
+            # tail -n +2 drops the header (the binary's own path). @rpath /
+            # @loader_path / @executable_path references are ALSO leaks: they
+            # resolve to a dir that only exists on the builder, so reject any
+            # dylib not rooted in /usr/lib or /System/Library.
             bad=$(otool -L "$asset" | tail -n +2 | awk '{print $1}' \
                   | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)
             if [ -n "$bad" ]; then
               echo "::error::$asset links libraries that ship with no other Mac:"
               echo "$bad"; fail=1
+            fi
+
+            # DEPLOYMENT FLOOR. otool -L on the RUNNER can't catch this: a
+            # binary linked on macos-14 stamps a minimum-macOS load command of
+            # 14.0 and dyld then refuses it on macOS 12/13 ("built for newer
+            # version of macOS") before main() — the same shape of
+            # build-host-leak that killed v0.1.0, just via the SDK version
+            # instead of a dylib path. We build with
+            # CMAKE_OSX_DEPLOYMENT_TARGET=11.0, so assert the artifact agrees.
+            minos=$(otool -l "$asset" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+            echo "== minos $minos (must be <= 11.0)"
+            if [ -n "$minos" ]; then
+              # Sort the two versions; if 11.0 isn't the greater-or-equal one,
+              # the floor is too high.
+              lowest=$(printf '11.0\n%s\n' "$minos" | sort -V | head -1)
+              if [ "$lowest" != "$minos" ] && [ "$minos" != "11.0" ]; then
+                echo "::error::$asset requires macOS $minos — it will not launch"
+                echo "::error::on older Macs. Set CMAKE_OSX_DEPLOYMENT_TARGET."
+                fail=1
+              fi
             fi
           else
             # 1. Fully static — no interpreter, so no host loader involvement.

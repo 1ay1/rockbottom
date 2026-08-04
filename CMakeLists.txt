@@ -15,6 +15,20 @@ if(APPLE AND NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
     endif()
 endif()
 
+# macOS DEPLOYMENT FLOOR. A published `rb` must launch on the Macs people
+# actually run, not only the one it was linked on. Without this, the linker
+# stamps a minimum-macOS load command equal to the BUILDER's SDK (the CI runner
+# is macos-14), and dyld then refuses the binary on macOS 12/13 with
+# "built for newer version of macOS" — before main(), the exact class of
+# build-host-leak the standalone story exists to prevent. 11.0 (Big Sur) is the
+# oldest release still seen in the wild and the first Apple-Silicon macOS, so it
+# is the honest floor for a universal-enough arm64 build. Override with
+# -DCMAKE_OSX_DEPLOYMENT_TARGET=... for a narrower target.
+if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+        "Oldest macOS the published rb must run on" FORCE)
+endif()
+
 # The ONE place the version is written. `rb --version`, the generated
 # core/version.hpp, the release asset names and the git tag all derive from it;
 # nothing else hardcodes a version string.
@@ -166,6 +180,17 @@ if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     else()
         target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
     endif()
+elseif(RB_STANDALONE AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # RB_STANDALONE is ON but the compiler is not GCC, so NONE of the static
+    # link flags above were applied and the binary will silently depend on the
+    # build host's C++ runtime. That is the precise failure the standalone
+    # promise exists to prevent, so refuse to pretend — fail configure with a
+    # pointer to the fix rather than emit a non-portable "standalone" build.
+    message(FATAL_ERROR
+        "RB_STANDALONE=ON needs GCC (got ${CMAKE_CXX_COMPILER_ID}). "
+        "maya also requires it (Apple Clang's libc++ lacks std::move_only_function). "
+        "Install Homebrew gcc / g++-14 and pass -DCMAKE_CXX_COMPILER=g++-14, "
+        "or build a system-linked binary with -DRB_STANDALONE=OFF.")
 endif()
 
 # Strip the Release binary. Unstripped, `rb` is ~33MB (94% debug symbols); the
@@ -181,6 +206,36 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel"
         COMMAND "${CMAKE_STRIP}" "$<TARGET_FILE:rockbottom>"
         COMMENT "Stripping rb for a faster cold start"
         VERBATIM)
+endif()
+
+# POST-BUILD STANDALONE ASSERTION. The link flags above REQUEST a standalone
+# binary; this proves the linker actually produced one, at build time, so a
+# local `cmake --build` fails as loudly as CI would.
+#
+# Why it's needed: GNU ld treats a MISSING static library as a warning, not an
+# error, and silently falls back to the dynamic variant. So `-static` can
+# "succeed" and still emit a dynamic binary that runs on the build host and
+# nowhere older — the exact trap that shipped three broken releases. The check
+# runs on every RB_STANDALONE build (script lives in cmake/assert_standalone.*)
+# and is a no-op for -DRB_STANDALONE=OFF, where dynamic linkage is intended.
+if(RB_STANDALONE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_custom_command(TARGET rockbottom POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DRB_BIN=$<TARGET_FILE:rockbottom>"
+                    -DRB_OS=Linux
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/assert_standalone.cmake"
+            COMMENT "Verifying rb is fully static (standalone)"
+            VERBATIM)
+    elseif(APPLE)
+        add_custom_command(TARGET rockbottom POST_BUILD
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DRB_BIN=$<TARGET_FILE:rockbottom>"
+                    -DRB_OS=Darwin
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/assert_standalone.cmake"
+            COMMENT "Verifying rb links only OS libraries (standalone)"
+            VERBATIM)
+    endif()
 endif()
 
 install(TARGETS rockbottom RUNTIME DESTINATION bin)

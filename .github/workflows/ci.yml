@@ -61,7 +61,9 @@ jobs:
         shell: bash
         run: |
           export CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}"
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          # Default is ON; state it so CI exercises the exact standalone link
+          # the release uses (and CMake's post-build assert_standalone check).
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
 
       - name: Build
         run: cmake --build build -j
@@ -142,6 +144,37 @@ jobs:
 
           [ "$fail" -eq 0 ] || exit 1
           echo "ok: build/rb is self-contained"
+
+      # macOS portability, checked on every push instead of only at release.
+      # A fully static mach-o is impossible (Apple ships no libc.a), so the
+      # bar is: link nothing outside /usr/lib + /System/Library, and carry a
+      # deployment floor low enough to launch on older Macs. CMake's
+      # post-build assert_standalone already fails the Build step on a
+      # violation, but assert it here too so the intent is visible in CI logs.
+      - name: Binary must be portable (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -uo pipefail
+          fail=0
+          echo "== otool -L"; otool -L build/rb
+          bad=$(otool -L build/rb | tail -n +2 | awk '{print $1}' \
+                | grep -v '^/usr/lib/' | grep -v '^/System/Library/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::build/rb links libraries that ship with no other Mac:"
+            echo "$bad"; fail=1
+          fi
+          minos=$(otool -l build/rb | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+          echo "== minos $minos (must be <= 11.0)"
+          if [ -n "$minos" ]; then
+            lowest=$(printf '11.0\n%s\n' "$minos" | sort -V | head -1)
+            if [ "$lowest" != "$minos" ] && [ "$minos" != "11.0" ]; then
+              echo "::error::build/rb requires macOS $minos — too new for older Macs"
+              fail=1
+            fi
+          fi
+          [ "$fail" -eq 0 ] || exit 1
+          echo "ok: build/rb is standalone on macOS"
 
       # RB_STANDALONE=OFF is the distro-package path (link against the system
       # libstdc++ so the package manager owns the ABI). Nobody builds that way
