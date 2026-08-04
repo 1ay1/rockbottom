@@ -324,9 +324,17 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
     // exact leak the issue describes. Only worth a word once it's a real chunk.
     if (s.mem.huge_idle.value >= 512ull * 1024 * 1024) {
         const bool tight = avail_gb < 4.0;
+        // Page count for the message. Guard the subtraction: huge_free and
+        // huge_rsvd come from separate, non-atomic /proc/meminfo lines, so a
+        // reservation landing between the two reads can momentarily make
+        // rsvd > free and underflow this unsigned diff into ~1.8e19 pages in
+        // the headline. huge_idle itself is already computed with the same
+        // guard in mem.cpp; mirror it here.
+        const std::uint64_t idle_pages = s.mem.huge_free > s.mem.huge_rsvd
+                                       ? s.mem.huge_free - s.mem.huge_rsvd : 0;
         findings.push_back({tight ? 46 : 28, "Hugepages are reserved but idle",
             humanize_bytes(s.mem.huge_idle) + " in the hugepage pool is unused (" +
-                std::to_string(s.mem.huge_free - s.mem.huge_rsvd) + " of " +
+                std::to_string(idle_pages) + " of " +
                 std::to_string(s.mem.huge_total) + " pages) — the kernel can't reclaim it" +
                 (tight ? ", and RAM is tight" : "")});
     }

@@ -32,7 +32,14 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     // unbounded as processes come and go over a long session.
     std::unordered_set<int> cmd_seen;
     int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
-    double dt_ticks = dt * static_cast<double>(clk_tck_) * static_cast<double>(ncpu_);
+    // CPU ticks a single core accrues over this interval. cpu% below is
+    // reported as "% of one core" (100% = one full core saturated), matching
+    // the darwin backend's 100*ns/(dt*1e9). Deliberately NOT multiplied by
+    // ncpu_: a prior version scaled dt_ticks by ncpu_ here and then multiplied
+    // the quotient by ncpu_ again below, so the two factors cancelled to this
+    // exact value — a correct-looking no-op that a later "simplification" of
+    // either site would turn into an N-times error. One honest factor now.
+    double dt_ticks = dt * static_cast<double>(clk_tck_);
     // The pid whose expensive detail-only files (status, fd) we bother to read
     // this tick — the process the UI has open, or 0 for none. Loaded once.
     const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
@@ -136,7 +143,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         if (have_prev && dt_ticks > 0) {
             std::uint64_t d = cpu_ticks > prev_it->second.cpu_ticks
                                   ? cpu_ticks - prev_it->second.cpu_ticks : 0;
-            cpu_pct = 100.0 * static_cast<double>(d) / dt_ticks * static_cast<double>(ncpu_);
+            cpu_pct = 100.0 * static_cast<double>(d) / dt_ticks;
         }
         proc_cpu_sum += cpu_pct;
 

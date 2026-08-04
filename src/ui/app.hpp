@@ -650,6 +650,14 @@ struct App {
                 // the freshly-sampled list re-orders around it.
                 if (m.follow_pid) select_pid(m, m.follow_pid);
                 clamp_sel(m);
+                // Re-clamp the detail pane's scroll against the FRESH snapshot:
+                // the pinned process may have exited, or the pane's body may
+                // have shrunk (fewer connections, a collapsed section), leaving
+                // detail_scroll pointing past the new content. The scroller
+                // clamps at paint time too, so this only fixes a one-frame
+                // scrollbar snap — but it keeps the model self-consistent so
+                // detail_scroll_max()-driven drag math stays correct.
+                if (m.detail != ui::Detail::None) clamp_detail_scroll(m);
                 return {std::move(m), C{}};
             },
             [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },

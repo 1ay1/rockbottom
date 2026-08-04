@@ -36,6 +36,27 @@ int main(int argc, char** argv) {
         std::fputs(exit_msg.c_str(), exit_ok ? stdout : stderr);
         return exit_ok ? 0 : 2;
     }
+
+    // Validate the theme name HERE rather than in config.hpp: the palette deck
+    // lives in ui/theme.hpp (a UI-layer header config.hpp deliberately doesn't
+    // pull in). An unknown --theme=NAME is a user typo worth reporting on the
+    // spot — the same courtesy --sort= already gets — instead of silently
+    // falling back to native and, worse, PERSISTING the bad name on exit. A
+    // stale name coming only from the config file stays a soft fallback (init()
+    // handles that); we reject just an explicit, wrong CLI value.
+    {
+        bool theme_from_cli = false;
+        for (int i = 1; i < argc; ++i)
+            if (std::strncmp(argv[i], "--theme=", 8) == 0) theme_from_cli = true;
+        if (theme_from_cli && ui::theme_index_by_name(cfg.theme) < 0) {
+            std::string names;
+            for (std::size_t i = 0; i < ui::theme_count(); ++i)
+                names += (i ? ", " : "") + std::string(ui::theme_name(i));
+            std::fprintf(stderr, "unknown theme: %s\navailable: %s\n",
+                         cfg.theme.c_str(), names.c_str());
+            return 2;
+        }
+    }
     App::boot_config() = cfg;
 
     // --bench: time the SAMPLER alone, with no terminal and no rendering.
