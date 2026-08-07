@@ -213,7 +213,19 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.io_write = iow;
         p.cpu_history = cur[pid].cpu_hist;
         p.hist_len = cur[pid].cpu_hist_len;
-        p.user = sys::user_of(tai.pbsd.pbi_uid);
+        // Owner: map uid→name, CACHED. The uid is already in the task info
+        // (no stat needed, unlike Linux), but user_of() is an Open Directory
+        // lookup on macOS — doing it per process per tick is ~hundreds of
+        // directory round-trips a second and is the single biggest per-tick
+        // cost here. A uid maps to one name for the life of the run, so resolve
+        // each distinct uid exactly once and reuse it forever.
+        {
+            const unsigned uid = tai.pbsd.pbi_uid;
+            auto uit = uid_cache_.find(uid);
+            if (uit == uid_cache_.end())
+                uit = uid_cache_.emplace(uid, sys::user_of(static_cast<uid_t>(uid))).first;
+            p.user = uit->second;
+        }
 
         // Open-fd census — proc_pidinfo(LISTFDS) with a null buffer returns
         // the byte size needed; divide by the record size for the count.
