@@ -17,6 +17,9 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#ifndef _WIN32
+#include <pwd.h>      // getpwuid_r / struct passwd (macOS resolver)
+#endif
 
 namespace rockbottom::sys {
 
@@ -71,27 +74,44 @@ inline void push_hist2(std::array<float, N>& a, std::array<float, N>& b,
 
 // uid → login name.
 //
-// STATIC-LINKING HAZARD, and the reason this is not a one-line getpwuid call.
-// `rb` ships as a fully static binary so it runs on any Linux regardless of
-// the host's glibc version. But glibc resolves users through NSS, which
-// dlopen()s libnss_* at runtime — and a static binary has no dynamic loader,
-// so getpwuid() can only ever see /etc/passwd. On an LDAP/AD/SSSD host (where
-// every interactive account is a directory account and /etc/passwd holds only
-// system users) that means every process would display a bare numeric uid.
-// "1000" instead of "ayush" is a legibility regression, and a silent one.
+// The right resolver depends on how `rb` is linked, which depends on the OS.
 //
-// So: try getpwuid first — correct and complete on a normally-linked build,
-// and on a static build it still resolves every local/system account. Only if
-// that misses do we ask the SYSTEM's own dynamically-linked `getent`, which
-// loads the NSS stack we cannot, and therefore does see directory accounts.
-// The uid→name result is cached by the caller (Sampler::uid_cache_), so this
-// costs at most one fork per distinct uid per run, not one per sample tick.
+// macOS: getpwuid_r is the ONLY correct answer. The login user (uid 501+) is
+// a Directory Services account that never appears in /etc/passwd — and there
+// is no `getent`. rb is not statically linked here, so getpwuid_r safely goes
+// through Open Directory and resolves every real account. Parsing /etc/passwd
+// would miss the interactive user entirely and then fork a doomed shell per
+// uid; at bench cadence (dozens of uids per tick) that fork storm wedges the
+// process. So on Apple we call getpwuid_r and stop.
 //
-// Returns the uid as a decimal string if even getent can't name it — an
-// unresolvable uid is a real state (deleted account, unmapped container id),
-// not an error worth surfacing.
+// Linux STATIC-LINKING HAZARD, and the reason this is not a one-line getpwuid
+// call there. `rb` ships as a fully static binary so it runs on any Linux
+// regardless of the host's glibc version. But glibc resolves users through
+// NSS, which dlopen()s libnss_* at runtime — and a static binary has no
+// dynamic loader, so getpwuid() can only ever see /etc/passwd, and on some
+// glibc builds even *calling* it from a static binary segfaults. On an
+// LDAP/AD/SSSD host (where every interactive account is a directory account
+// and /etc/passwd holds only system users) a bare numeric uid is a silent
+// legibility regression. So on Linux we parse /etc/passwd directly (no NSS,
+// no dlopen, cannot segfault) and fall back to the system's own dynamically-
+// linked `getent`, which loads the NSS stack we cannot and sees directory
+// accounts. The uid→name result is cached by the caller (Sampler::uid_cache_),
+// so getent costs at most one fork per distinct uid per run.
+//
+// Returns the uid as a decimal string if nothing can name it — an unresolvable
+// uid is a real state (deleted account, unmapped container id), not an error.
 inline std::string user_of(uid_t uid) {
-#ifndef _WIN32
+#if defined(__APPLE__)
+    // Dynamically linked, Directory-Services-backed: getpwuid_r is safe and
+    // complete. _r variant so this stays reentrant across sampler threads.
+    struct passwd pw{};
+    struct passwd* result = nullptr;
+    char buf[1024];
+    if (::getpwuid_r(uid, &pw, buf, sizeof buf, &result) == 0 && result &&
+        pw.pw_name && pw.pw_name[0]) {
+        return std::string(pw.pw_name);
+    }
+#elif !defined(_WIN32)
     // 1) Parse /etc/passwd directly. No NSS, no dlopen, cannot segfault in a
     //    static binary. Line format: name:passwd:uid:gid:gecos:dir:shell
     if (std::FILE* pf = std::fopen("/etc/passwd", "r")) {
