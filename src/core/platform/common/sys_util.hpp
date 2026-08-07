@@ -16,7 +16,6 @@
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <pwd.h>
 #include <unistd.h>
 
 namespace rockbottom::sys {
@@ -92,12 +91,31 @@ inline void push_hist2(std::array<float, N>& a, std::array<float, N>& b,
 // unresolvable uid is a real state (deleted account, unmapped container id),
 // not an error worth surfacing.
 inline std::string user_of(uid_t uid) {
-    if (passwd* pw = ::getpwuid(uid)) return pw->pw_name;
-
 #ifndef _WIN32
-    // getent is in the base install of every distro we target (glibc's own
-    // package on Debian/Ubuntu/RHEL/SUSE, busybox on Alpine). Absent it, we
-    // fall through to the numeric form rather than failing.
+    // 1) Parse /etc/passwd directly. No NSS, no dlopen, cannot segfault in a
+    //    static binary. Line format: name:passwd:uid:gid:gecos:dir:shell
+    if (std::FILE* pf = std::fopen("/etc/passwd", "r")) {
+        char line[1024];
+        std::string name;
+        while (std::fgets(line, sizeof line, pf)) {
+            const char* c1 = std::strchr(line, ':');
+            if (!c1) continue;
+            const char* c2 = std::strchr(c1 + 1, ':');   // after passwd field
+            if (!c2) continue;
+            unsigned long row = std::strtoul(c2 + 1, nullptr, 10);
+            if (row == static_cast<unsigned long>(uid)) {
+                name.assign(line, static_cast<std::size_t>(c1 - line));
+                break;
+            }
+        }
+        std::fclose(pf);
+        if (!name.empty()) return name;
+    }
+
+    // 2) Directory accounts (LDAP/AD/SSSD) are not in /etc/passwd. Ask the
+    //    system's own dynamically-linked getent, which loads the NSS stack
+    //    safely in a normal process. Base install on every distro we target
+    //    (glibc on Debian/Ubuntu/RHEL/SUSE, busybox on Alpine).
     char cmd[64];
     std::snprintf(cmd, sizeof cmd, "getent passwd %lu 2>/dev/null",
                   static_cast<unsigned long>(uid));
