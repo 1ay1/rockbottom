@@ -266,7 +266,10 @@ install(TARGETS rockbottom RUNTIME DESTINATION bin)
 # Headless render assertions for the widgets whose bugs are invisible to a
 # compiler — column alignment, cluster labelling. They render the REAL widget
 # onto a real canvas and inspect the resulting cells, so a layout regression
-# fails the build instead of shipping. Not built by default; `make rb_tests`.
+# fails the build instead of shipping. Registered with CTest so `ctest` runs
+# them; gated on BUILD_TESTING (CMake's standard, default ON) so a distro
+# package can configure with -DBUILD_TESTING=OFF and skip building them.
+include(CTest)   # defines BUILD_TESTING (default ON) and calls enable_testing()
 add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
 target_link_libraries(rb_tests PRIVATE maya)
 target_include_directories(rb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
@@ -274,6 +277,18 @@ if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_tests PRIVATE cxx_std_26)
 else()
     target_compile_features(rb_tests PRIVATE cxx_std_23)
+endif()
+
+if(BUILD_TESTING)
+    # Build the test binary as part of the default `all` target when testing is
+    # enabled, so a plain `cmake --build . && ctest` works without a separate
+    # `make rb_tests` step. (EXCLUDE_FROM_ALL above keeps it out of `all` only
+    # when testing is off.)
+    set_target_properties(rb_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME rb_render_grid COMMAND rb_tests)
+    set_tests_properties(rb_render_grid PROPERTIES
+        LABELS "unit;render"
+        TIMEOUT 120)
 endif()
 
 # ── render bench ────────────────────────────────────────────

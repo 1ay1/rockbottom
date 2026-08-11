@@ -68,14 +68,13 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
-      # rb_tests is EXCLUDE_FROM_ALL (a normal build shouldn't pay for it), so
-      # it has to be asked for by name. It renders the real widgets onto an
-      # off-screen canvas and asserts the per-core grid columns line up at every
-      # width, plus drives the pure Linux topology classifier over fixtures.
-      - name: Build + run tests
-        run: |
-          cmake --build build --target rb_tests -j
-          ./build/rb_tests
+      # The render tests are wired into CTest (add_test in CMakeLists) and,
+      # with BUILD_TESTING on (default), built as part of the normal `all`
+      # target above. They render the real widgets onto an off-screen canvas
+      # and assert the per-core grid columns line up at every width, plus drive
+      # the pure Linux topology classifier over fixtures.
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
 
       - name: Smoke-run the binary
         shell: bash
