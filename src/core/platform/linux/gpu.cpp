@@ -450,6 +450,14 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
         std::map<int, FdinfoProc> acc;
         scan_drm_fdinfo(drv, acc);
         if (acc.empty() && g.vendor == "Intel") { scan_drm_fdinfo("xe", acc); }
+
+        // Turn the MONOTONIC per-pid engine-time counter (gfx_ns) into a live
+        // busy fraction: (Δengine_ns / Δwall_ns), clamped to 0..1. Without this
+        // every process reads 0% and the "busiest process first" sort below is
+        // dead. Diff against the previous per-process tick stored per pid.
+        const auto now = std::chrono::steady_clock::now();
+        std::unordered_map<int, std::pair<std::uint64_t,
+                                          std::chrono::steady_clock::time_point>> next_prev;
         for (auto& [pid, fp] : acc) {
             if (fp.vram == 0 && fp.gfx_ns == 0) continue;
             GpuProc gp;
@@ -457,8 +465,23 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
             gp.name = fp.name;
             gp.mem = Bytes{fp.vram};
             gp.type = 'G';
+            if (auto it = gpu_fdinfo_prev_.find(pid); it != gpu_fdinfo_prev_.end()) {
+                const std::uint64_t prev_ns = it->second.first;
+                const double wall_ns = std::chrono::duration<double, std::nano>(
+                                           now - it->second.second).count();
+                // Guard a counter reset (driver reload / pid reuse: new < old)
+                // and a zero/absent interval, either of which would spike or
+                // divide-by-zero. Only a forward delta over real time counts.
+                if (fp.gfx_ns >= prev_ns && wall_ns > 1e6) {
+                    const double busy = static_cast<double>(fp.gfx_ns - prev_ns) / wall_ns;
+                    gp.sm = Ratio{std::clamp(busy, 0.0, 1.0)};
+                    gp.has_util = true;
+                }
+            }
+            next_prev[pid] = {fp.gfx_ns, now};
             g.procs.push_back(std::move(gp));
         }
+        gpu_fdinfo_prev_ = std::move(next_prev);   // forget pids that vanished
         break;   // one integrated/discrete card owns the fdinfo attribution
     }
 

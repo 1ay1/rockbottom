@@ -217,6 +217,14 @@ private:
     std::unordered_map<std::string, NetIface> net_hist_;    // by iface name
     std::unordered_map<int, std::pair<std::array<float,96>,std::array<float,96>>> gpu_hist_;  // util,mem rings by gpu index
     std::unordered_map<int, int>              gpu_hist_len_; // valid samples by gpu index
+    // Per-process DRM fdinfo engine-time attribution (AMD/Intel). fdinfo hands
+    // us a MONOTONIC nanosecond counter of GPU engine time per pid; a busy
+    // fraction is its delta over the wall-clock delta between per-process
+    // ticks. Stash the last (gfx_ns, when) per pid so the next tick can
+    // difference it. Keyed by pid; entries for pids gone this tick are dropped.
+    std::unordered_map<int, std::pair<std::uint64_t,
+                                      std::chrono::steady_clock::time_point>>
+                                              gpu_fdinfo_prev_;
 };
 
 }  // namespace rockbottom
