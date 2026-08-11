@@ -72,6 +72,27 @@ set(MAYA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(MAYA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(MAYA_BUILD_FUZZERS  OFF CACHE BOOL "" FORCE)
 
+# PORTABILITY FLOOR (issue #9). maya defaults MAYA_NATIVE_TUNING=ON, which bakes
+# `-march=native -mtune=native` into the object files. That is correct for a
+# from-source local build, but FATAL for a published binary: the release CI
+# runner is a modern Xeon/EPYC with AVX2/AVX-512, so a native-tuned `rb` emits
+# instructions that #UD (illegal instruction) on any older CPU — e.g. the
+# reporter's Celeron J6413 (Tremont, no AVX). RB_STANDALONE already promises
+# "runs on any host of its OS"; static glibc linkage alone doesn't deliver that
+# if the ISA is baked to the builder's. So whenever we build the portable
+# binary, force maya onto its safe compiler-default baseline (-march=x86-64 /
+# armv8-a), which every x86-64 and every arm64 chip executes.
+#
+# We read the option's default here (RB_STANDALONE is declared further down, but
+# its ON default is the release default) — a from-source build that explicitly
+# passes -DRB_STANDALONE=OFF opts back into native tuning and full performance.
+option(RB_STANDALONE "Statically link so `rb` runs on any host of its OS" ON)
+if(RB_STANDALONE)
+    set(MAYA_NATIVE_TUNING OFF CACHE BOOL "" FORCE)
+    message(STATUS "rockbottom: portable build — maya native tuning disabled "
+                   "(-march baseline) so `rb` runs on older CPUs")
+endif()
+
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
     message(FATAL_ERROR
         "maya submodule missing — run: git submodule update --init --recursive")
@@ -173,7 +194,8 @@ set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 # Defaults ON so a plain `cmake -B build` yields a binary you can hand to
 # someone. Turn it OFF for a distro package, where linking against the system
 # libraries is the correct behaviour.
-option(RB_STANDALONE "Statically link so `rb` runs on any host of its OS" ON)
+# NOTE: the option() itself is declared earlier (next to the maya block, so the
+# portability-floor logic can read it); this is just where we act on it.
 if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_options(rockbottom PRIVATE -static)

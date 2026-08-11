@@ -228,6 +228,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full source tarball (below) needs maya's contents, and it must be a
+          # real repo so `git archive` works.
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Download all binaries
         uses: actions/download-artifact@v8
@@ -235,12 +240,38 @@ jobs:
           path: staged
           merge-multiple: true
 
+      - name: Bundle full source (superproject + submodules)
+        # GitHub's auto "Source code.tar.gz" omits submodules and isn't a git
+        # checkout, so users can't build or `git submodule update` (issue #10).
+        # We emit a self-contained tarball: `git archive` the superproject, then
+        # `git archive` every initialised submodule into its correct subdir, so
+        # the extracted tree builds offline with no network and no .git needed.
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF#refs/tags/}"
+          NAME="rockbottom-${REF}"
+          WORK="$(mktemp -d)"
+          DEST="$WORK/$NAME"
+          mkdir -p "$DEST"
+          # Superproject tree at this ref/commit.
+          git archive --format=tar HEAD | tar -x -C "$DEST"
+          # Each submodule, placed at its recorded path.
+          git submodule --quiet foreach --recursive '
+            mkdir -p "'"$DEST"'/$sm_path"
+            git archive --format=tar HEAD | tar -x -C "'"$DEST"'/$sm_path"
+          '
+          tar -C "$WORK" -czf "staged/${NAME}-full-source.tar.gz" "$NAME"
+          echo "built staged/${NAME}-full-source.tar.gz"
+          ( cd "$DEST" && test -f third_party/maya/CMakeLists.txt ) \
+            && echo "OK: maya bundled" \
+            || { echo "::error::maya missing from source bundle"; exit 1; }
+
       - name: Checksums
         run: |
           cd staged
           mv install.sh.release install.sh
           chmod +x rb-* install.sh
-          sha256sum rb-* | tee SHA256SUMS
+          sha256sum rb-* *-full-source.tar.gz | tee SHA256SUMS
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
@@ -249,5 +280,6 @@ jobs:
           files: |
             staged/rb-*
             staged/install.sh
+            staged/*-full-source.tar.gz
             staged/SHA256SUMS
           generate_release_notes: true
