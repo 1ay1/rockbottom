@@ -106,15 +106,25 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         ++total_procs;
         total_threads += std::max(1, threads);
 
+        // ONE hash lookup for the previous-tick record (used by the CPU, I/O,
+        // fault and history deltas below) and ONE insert for this tick's
+        // record. The prior code did prev_proc_.count()+operator[] three times
+        // and cur[pid] six times — ~13 hashes/pid where 2 do. At 800 procs
+        // that was ~9000 wasted hashes per tick on the sampler thread the UI
+        // blocks on. `pp` is null on the first sighting of a pid (or first_).
+        auto prev_it = prev_proc_.find(pid);
+        const ProcPrev* pp = (!first_ && prev_it != prev_proc_.end() && dt > 0)
+                                 ? &prev_it->second : nullptr;
+        ProcPrev& np = cur[pid];
+
         // Cumulative CPU time in mach ticks → nanoseconds via the timebase.
         std::uint64_t cpu_ns = static_cast<std::uint64_t>(
             static_cast<double>(tai.ptinfo.pti_total_user + tai.ptinfo.pti_total_system) *
             mach_ns_per_tick());
-        cur[pid].cpu_ticks = cpu_ns;
+        np.cpu_ticks = cpu_ns;
         double cpu_pct = 0;
-        if (!first_ && prev_proc_.count(pid) && dt > 0) {
-            std::uint64_t d = cpu_ns > prev_proc_[pid].cpu_ticks
-                                  ? cpu_ns - prev_proc_[pid].cpu_ticks : 0;
+        if (pp) {
+            std::uint64_t d = cpu_ns > pp->cpu_ticks ? cpu_ns - pp->cpu_ticks : 0;
             // ns busy / ns elapsed → fraction of one core, ×100 for percent
             // (matches Linux's per-core convention: can exceed 100 across cores).
             cpu_pct = 100.0 * static_cast<double>(d) / (dt * 1e9);
@@ -152,37 +162,35 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
             pageins = ru.ri_pageins;
         }
         ByteRate ior{}, iow{};
-        if (!first_ && prev_proc_.count(pid) && dt > 0) {
-            const auto& pp = prev_proc_[pid];
-            if (io_r >= pp.io_read)  ior.per_sec = static_cast<double>(io_r - pp.io_read)  / dt;
-            if (io_w >= pp.io_write) iow.per_sec = static_cast<double>(io_w - pp.io_write) / dt;
+        if (pp) {
+            if (io_r >= pp->io_read)  ior.per_sec = static_cast<double>(io_r - pp->io_read)  / dt;
+            if (io_w >= pp->io_write) iow.per_sec = static_cast<double>(io_w - pp->io_write) / dt;
         }
-        cur[pid].io_read = io_r;
-        cur[pid].io_write = io_w;
+        np.io_read = io_r;
+        np.io_write = io_w;
 
         // Page-fault + context-switch RATES from the cumulative counters in
         // the task info — same delta discipline as CPU time.
         const std::uint64_t faults = tai.ptinfo.pti_faults;
         const std::uint64_t csw    = tai.ptinfo.pti_csw;
         double faults_ps = 0, csw_ps = 0;
-        if (!first_ && prev_proc_.count(pid) && dt > 0) {
-            const auto& pp = prev_proc_[pid];
-            if (faults >= pp.faults) faults_ps = static_cast<double>(faults - pp.faults) / dt;
-            if (csw >= pp.csw)       csw_ps    = static_cast<double>(csw - pp.csw) / dt;
+        if (pp) {
+            if (faults >= pp->faults) faults_ps = static_cast<double>(faults - pp->faults) / dt;
+            if (csw >= pp->csw)       csw_ps    = static_cast<double>(csw - pp->csw) / dt;
         }
-        cur[pid].faults = faults;
-        cur[pid].csw = csw;
+        np.faults = faults;
+        np.csw = csw;
 
         // Rolling per-process cpu% ring — carry the prior history forward,
         // push this interval's sample (normalized to a single core, clamped),
         // so the detail pane can graph the selected process like htop's meter.
-        if (auto pit = prev_proc_.find(pid); pit != prev_proc_.end()) {
-            cur[pid].cpu_hist = pit->second.cpu_hist;
-            cur[pid].cpu_hist_len = pit->second.cpu_hist_len;
+        if (prev_it != prev_proc_.end()) {
+            np.cpu_hist = prev_it->second.cpu_hist;
+            np.cpu_hist_len = prev_it->second.cpu_hist_len;
         }
         {
-            auto& ring = cur[pid].cpu_hist;
-            int& rl = cur[pid].cpu_hist_len;
+            auto& ring = np.cpu_hist;
+            int& rl = np.cpu_hist_len;
             const float sample = static_cast<float>(std::clamp(cpu_pct / 100.0, 0.0, 1.0));
             if (rl < static_cast<int>(ring.size())) {
                 ring[static_cast<std::size_t>(rl++)] = sample;
@@ -211,8 +219,17 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.pageins = pageins;
         p.io_read = ior;
         p.io_write = iow;
-        p.cpu_history = cur[pid].cpu_hist;
-        p.hist_len = cur[pid].cpu_hist_len;
+        // The 48-float per-process history ring is read by ONE consumer: the
+        // process detail pane, for the single selected pid. Copying it into
+        // every ProcInfo meant ~192 bytes × hundreds of procs (~150 KB) of
+        // memcpy per tick for data thrown away for all but one row. The ring
+        // itself still lives in prev_proc_ (np.cpu_hist) for every pid so it's
+        // populated the instant a process is selected; we just don't ship it
+        // out unless this IS that row.
+        if (want_detail) {
+            p.cpu_history = np.cpu_hist;
+            p.hist_len = np.cpu_hist_len;
+        }
         // Owner: map uid→name, CACHED. The uid is already in the task info
         // (no stat needed, unlike Linux), but user_of() is an Open Directory
         // lookup on macOS — doing it per process per tick is ~hundreds of

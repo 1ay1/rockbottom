@@ -52,6 +52,25 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         boot_epoch_ = static_cast<std::uint64_t>(std::time(nullptr)) - uptime_sec();
     const std::uint64_t boot_epoch = boot_epoch_;
 
+    // Reusable scratch reused across EVERY pid this tick, so the per-process
+    // reads don't churn the allocator. `path` is rebuilt in place (assign, no
+    // fresh alloc after the first pid grows it); `fbuf` receives each /proc
+    // file's bytes via slurp_into, which keeps the buffer's capacity. At 400
+    // pids × 4 files/pid this replaces ~1600 string+stream allocations/tick
+    // with none in steady state.
+    std::string path;
+    path.reserve(64);
+    std::string fbuf;
+    fbuf.reserve(4096);
+    // Build "/proc/<pid>/<leaf>" into `path` without allocating; returns the
+    // c_str for slurp_into / opendir.
+    auto proc_path = [&](const char* pid_name, const char* leaf) -> const char* {
+        path.assign("/proc/");
+        path += pid_name;
+        path += leaf;
+        return path.c_str();
+    };
+
     dirent* e;
     while ((e = ::readdir(proc)) != nullptr) {
         if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
@@ -61,9 +80,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         long pidl = std::strtol(e->d_name, &pend, 10);
         if (pend == e->d_name || *pend != '\0' || pidl <= 0 || pidl > INT_MAX) continue;
         int pid = static_cast<int>(pidl);
-        std::string base = "/proc/" + std::string(e->d_name);
 
-        std::string stat = slurp(base + "/stat");
+        if (!sys::slurp_into(proc_path(e->d_name, "/stat"), fbuf)) continue;
+        const std::string& stat = fbuf;
         if (stat.empty()) continue;
 
         // comm sits in parens and may itself contain spaces/parens.
@@ -150,7 +169,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // statm: total + resident pages (first two whitespace-separated ints).
         std::uint64_t rss_pages = 0, total_pages = 0;
         {
-            std::string sm = slurp(base + "/statm");
+            // Reuse a SEPARATE small buffer: `stat` (== fbuf) is still needed
+            // below for comm, so statm can't stomp it. statm is tiny.
+            std::string sm = slurp(proc_path(e->d_name, "/statm"));
             const char* p = sm.c_str();
             char* end = nullptr;
             total_pages = std::strtoull(p, &end, 10);
@@ -164,7 +185,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // processes unless privileged; unreadable rows just stay at 0.
         std::uint64_t io_r = 0, io_w = 0;
         {
-            std::string io = slurp(base + "/io");
+            // stat/comm are fully parsed above, so fbuf is free to reuse here.
+            sys::slurp_into(proc_path(e->d_name, "/io"), fbuf);
+            const std::string& io = fbuf;
             // Scan lines for "read_bytes:" / "write_bytes:" without allocating
             // a stream: find the key, jump past the colon, parse the number.
             if (auto pos = io.find("read_bytes:"); pos != std::string::npos)
@@ -190,7 +213,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         std::uint64_t csw_total = 0;
         const bool want_detail = (pid == want_detail_pid);
         if (want_detail) {
-            std::string st = slurp(base + "/status");
+            std::string st = slurp(proc_path(e->d_name, "/status"));
             if (auto pos = st.find("voluntary_ctxt_switches:"); pos != std::string::npos)
                 csw_total += std::strtoull(st.c_str() + pos + 24, nullptr, 10);
             if (auto pos = st.find("nonvoluntary_ctxt_switches:"); pos != std::string::npos)
@@ -253,8 +276,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         p.faults_ps = faults_ps;
         p.csw_ps = csw_ps;
         p.pageins = majflt;   // lifetime major faults = blocking disk pageins
-        p.cpu_history = np.cpu_hist;
-        p.hist_len = np.cpu_hist_len;
+        // The 48-float per-process history ring feeds ONE consumer: the detail
+        // pane, for the selected pid. Copying it into every ProcInfo was
+        // ~192 bytes × hundreds of procs of memcpy per tick, all discarded for
+        // non-selected rows. The ring stays maintained in prev_proc_
+        // (np.cpu_hist) for every pid, so selecting a process shows its full
+        // history immediately; we just don't ship it out unless this is it.
+        if (want_detail) {
+            p.cpu_history = np.cpu_hist;
+            p.hist_len = np.cpu_hist_len;
+        }
 
         // Full command line from /proc/pid/cmdline: NUL-separated argv. argv
         // is IMMUTABLE after exec, so cache it and never re-read /proc for a
@@ -267,7 +298,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
             if (cit != cmd_cache_.end() && cit->second.first == starttime) {
                 p.cmd = cit->second.second;
             } else {
-                std::string raw = slurp(base + "/cmdline");
+                std::string raw = slurp(proc_path(e->d_name, "/cmdline"));
                 if (!raw.empty()) {
                     for (char& ch : raw) if (ch == '\0') ch = ' ';
                     while (!raw.empty() && raw.back() == ' ') raw.pop_back();
@@ -285,7 +316,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // pane, so run it just for the inspected pid; other rows keep fds=-1
         // ("n/a"), which the pane already renders gracefully.
         if (want_detail) {
-            if (DIR* fdd = ::opendir((base + "/fd").c_str())) {
+            if (DIR* fdd = ::opendir(proc_path(e->d_name, "/fd"))) {
                 int nfd = 0;
                 for (dirent* fe; (fe = ::readdir(fdd)) != nullptr; )
                     if (fe->d_name[0] != '.') ++nfd;
@@ -305,7 +336,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
                 uid = pit->second.second;
             } else {
                 struct ::stat stbuf{};
-                uid = (::stat(base.c_str(), &stbuf) == 0)
+                uid = (::stat(proc_path(e->d_name, ""), &stbuf) == 0)
                           ? static_cast<unsigned>(stbuf.st_uid) : 0;
                 puid_cache_[pid] = {starttime, uid};
             }
