@@ -46,17 +46,52 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-14 cmake ninja-build
-
       - name: Install toolchain (macOS)
         if: runner.os == 'macOS'
         run: brew install gcc@14 cmake ninja || true
 
-      - name: Build (Release, stripped)
+      # ── Linux: build against MUSL, not glibc ────────────────────────────
+      # The Linux release is compiled inside Alpine so it links musl's libc.a
+      # instead of glibc. Why musl for a "standalone" binary:
+      #   * glibc actively fights static linking. `gcc -static` with glibc
+      #     STILL imports versioned GLIBC_2.xx symbols (three shipped-broken
+      #     releases came through exactly that gap — see the gate below), and
+      #     GNU ld silently downgrades a missing static lib to the dynamic one,
+      #     so `-static` can quietly emit a dependent ELF.
+      #   * musl is designed to link statically. The result is a single ELF
+      #     with NO interpreter, NO versioned-symbol imports, and no glibc
+      #     version floor — it runs on any Linux kernel of its arch, from an
+      #     ancient enterprise host to a distroless container.
+      #   * It also removes the static-glibc NSS caveat cleanly: musl can't
+      #     dlopen glibc NSS modules either, but user_of() already handles that
+      #     (parse /etc/passwd, then busybox `getent` for directory accounts).
+      # Alpine edge ships gcc 14+ with musl and the *-static runtime archives,
+      # which is the C++26 toolchain maya needs (std::move_only_function).
+      - name: Build (Release, stripped) — Linux, musl/Alpine
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            apk add --no-cache \
+              build-base g++ gcc musl-dev cmake ninja \
+              libstdc++-static libgcc
+            export CC=gcc CXX=g++
+            # -DRB_STANDALONE=ON asks for a static link; on the musl toolchain
+            # that actually delivers one. State it explicitly so a future flip
+            # of the default can never silently publish a dynamic asset. CMake
+            # also runs assert_standalone.cmake post-build, so a bad link fails
+            # here, not on a users box.
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
+            cmake --build build -j
+            ./build/rb --version
+            # Docker writes as root; hand the build tree back to the runner
+            # user so the native gate steps below can read/replace it freely.
+            chown -R "$(stat -c %u .)":"$(stat -c %g .)" build
+          '
+          cp build/rb "${{ matrix.asset }}"
+
+      - name: Build (Release, stripped) — macOS
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           export CC=gcc-14 CXX=g++-14

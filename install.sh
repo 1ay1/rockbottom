@@ -15,8 +15,9 @@ usage() {
 Usage: install.sh [--prefix DIR] [--version VERSION]
 
 Installs rb into DIR/bin (default: ~/.local/bin).
-The Linux release binary is fully static: it has no shared-library or glibc
-requirement. macOS uses only libraries supplied by macOS itself.
+The Linux release binary is fully static (built against musl): it has no
+shared-library, loader, or glibc version requirement. macOS uses only
+libraries supplied by macOS itself.
 EOF
 }
 

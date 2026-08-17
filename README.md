@@ -47,7 +47,9 @@ rb
   Bash, zsh, fish, and login <code>sh</code> sessions. Open a new terminal and
   run <code>rb</code>. The command runs the POSIX installer via <code>sh</code>,
   so paste it from Bash, zsh, fish, or another interactive shell. Linux binaries
-  are fully static: no glibc, loader, or shared-library dependency.
+  are fully static: built against musl (not glibc), so there is no loader, no
+  shared-library dependency, and no glibc version floor — one ELF that runs on
+  any Linux kernel of its architecture.
   <a href="https://github.com/1ay1/rockbottom/releases/latest">Release files</a>
   also include the standalone binaries and checksums for manual installs.
 </p>

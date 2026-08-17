@@ -186,3 +186,67 @@ jobs:
           cmake -B build-shared -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=OFF
           cmake --build build-shared -j
           ./build-shared/rb --version
+
+  # The Linux RELEASE binaries are built against musl (Alpine), not glibc — it
+  # is what makes them genuinely static with no glibc version floor. That
+  # toolchain is different enough from the glibc build above (different libc,
+  # different libstdc++ headers) that it has to be exercised on every push, or
+  # a musl-only compile break is discovered only at tag time. This job builds
+  # exactly the way release.yml does and runs the full standalone proof:
+  # static ELF, no versioned imports, and starts in an empty chroot.
+  musl:
+    name: musl static (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build + prove standalone (Alpine/musl)
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            apk add --no-cache \
+              build-base g++ gcc musl-dev cmake ninja \
+              libstdc++-static libgcc binutils file
+            export CC=gcc CXX=g++
+            cmake -B build-musl -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
+            cmake --build build-musl -j
+            ./build-musl/rb --version
+            ./build-musl/rb --help
+
+            # rb_tests is EXCLUDE_FROM_ALL; build + run it under musl too.
+            cmake --build build-musl --target rb_tests -j
+            ./build-musl/rb_tests
+
+            fail=0
+            file build-musl/rb
+            file build-musl/rb | grep -q "statically linked" || {
+              echo "::error::musl build is not statically linked"; fail=1; }
+
+            # A static ELF has no UND imports at all — any versioned symbol
+            # (GLIBC_* or otherwise) means the link leaked a shared dep.
+            vers=$(objdump -T build-musl/rb 2>/dev/null | grep -o "GLIBC_[0-9.]*" | sort -uV || true)
+            [ -z "$vers" ] || { echo "::error::musl build imports versioned glibc symbols: $vers"; fail=1; }
+
+            # No dynamic-loader INTERP segment.
+            readelf -l build-musl/rb | grep -qi "program interpreter" \
+              && { echo "::error::musl build has a dynamic interpreter"; fail=1; } || true
+
+            # Empty-chroot smoke test: start with NOTHING but the binary.
+            jail=$(mktemp -d); cp build-musl/rb "$jail/rb"
+            chroot "$jail" /rb --version \
+              || { echo "::error::musl build is not self-contained"; fail=1; }
+
+            [ "$fail" -eq 0 ] || exit 1
+            echo "ok: musl build is fully static and self-contained"
+          '
