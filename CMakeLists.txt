@@ -217,7 +217,14 @@ set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 # portability-floor logic can read it); this is just where we act on it.
 if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_options(rockbottom PRIVATE -static)
+        # -no-pie is load-bearing, not cosmetic. Modern GCC (Alpine edge's
+        # gcc 15, recent Debian/Ubuntu) defaults to -fPIE -pie, so a bare
+        # `-static` yields a *static-PIE* ELF: it still carries a PT_DYNAMIC
+        # segment for self-relocation, which `file` reports as
+        # "dynamically linked" and assert_standalone.cmake rejects. Forcing
+        # -no-pie produces a classic, non-relocatable static ELF with no
+        # dynamic segment and no interpreter — unambiguously standalone.
+        target_link_options(rockbottom PRIVATE -static -no-pie)
     else()
         target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
     endif()
