@@ -231,7 +231,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
         for (const auto& q : s.procs)
             if (q.ppid == p.pid && q.pid != p.pid) kids.push_back(&q);
         std::stable_sort(kids.begin(), kids.end(),
-                         [](const ProcInfo* a, const ProcInfo* b) { return a->cpu > b->cpu; });
+                         [](const ProcInfo* lhs, const ProcInfo* rhs) { return lhs->cpu > rhs->cpu; });
 
         // Subtree rollup: BFS down from this node summing cpu/mem/count.
         std::unordered_map<int, std::vector<const ProcInfo*>> kids_of;

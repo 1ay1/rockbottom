@@ -1567,8 +1567,6 @@ struct App {
             graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
         }
         const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
-        const int top_h  = narrow ? cpu_h + mem_h + net_h + disk_h
-                                  : std::max(cpu_h, right_stack_h);
 
         // Classic-path top band height, in REAL rows. The band self-fills to
         // this exact height and its panels (CPU/MEM/NET all in fill mode) grow
@@ -1597,7 +1595,7 @@ struct App {
                          right_stack_h, std::max(right_stack_h, band_content - 8));
 
         // ── Classic right column: 40 / 60 split, self-filling panels ──
-        // The CPU column establishes the band height (rc_target). The right
+        // The CPU column establishes the band height. The right
         // column fills exactly that height; its panels use maya's fill()
         // primitive so each panel's mountain graph expands to consume the
         // real height its flex slot receives. NO hand-computed graph_h is
@@ -1605,7 +1603,6 @@ struct App {
         // layout engine actually allocates (the whole "still space" class).
         //   TOP  (grow 40) = MEMORY
         //   BOT  (grow 60) = NETWORK (fills) + DISK (natural mount rows)
-        const int rc_target = std::max(cpu_h, right_stack_h);  // band height
 
         // ── Wide 2-column body ──
         // On a big screen the whole thing flips: col 1 stacks EVERY stat panel
