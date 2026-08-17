@@ -92,6 +92,13 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
     std::vector<ProcInfo> out;
     std::unordered_map<int, ProcPrev> cur;
+    // We know the pid count up front. Reserve so the push_back/insert loop
+    // over hundreds of processes doesn't repeatedly grow-and-rehash on the
+    // sampler thread (each ProcInfo carries strings + a 48-float ring, so a
+    // vector regrow is a chunky move). npids is a ceiling (some pids vanish
+    // between listing and probe); a slight over-reserve is free.
+    out.reserve(static_cast<std::size_t>(npids));
+    cur.reserve(static_cast<std::size_t>(npids));
     int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
 
     for (int i = 0; i < npids; ++i) {

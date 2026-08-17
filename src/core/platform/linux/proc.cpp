@@ -24,6 +24,14 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
 
     std::vector<ProcInfo> out;
     std::unordered_map<int, ProcPrev> cur;
+    // The process count barely changes tick to tick, so size this tick's
+    // containers from last tick's total (+headroom). Avoids the repeated
+    // grow-and-rehash of push_back/insert over hundreds of pids on the
+    // sampler thread the UI waits on. First tick prev_proc_ is empty — fall
+    // back to a sane default so even the cold sample doesn't thrash.
+    const std::size_t est = prev_proc_.empty() ? 512 : prev_proc_.size() + 32;
+    out.reserve(est);
+    cur.reserve(est);
     // Sum of every visible process's CPU% this tick. On Android/Termux, where
     // /proc/stat is sandbox-blocked, this is the ONLY way to know aggregate
     // load — we can still read our own uid's /proc/<pid>/stat.
@@ -31,6 +39,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
     // pids seen this tick, used to prune the cmdline cache so it can't grow
     // unbounded as processes come and go over a long session.
     std::unordered_set<int> cmd_seen;
+    cmd_seen.reserve(est);
     int total_procs = 0, total_threads = 0, running = 0, zombies = 0, dstate = 0;
     // CPU ticks a single core accrues over this interval. cpu% below is
     // reported as "% of one core" (100% = one full core saturated), matching
