@@ -96,11 +96,14 @@ inline std::string trim(std::string s) {
 // CVEs). Impact ranges from garbling the display and moving the cursor to,
 // on terminals honoring OSC, tampering with the window title or clipboard.
 //
-// The renderer (maya) drops C0 controls (0x00-0x1f, incl. ESC 0x1b) but
-// PASSES THROUGH 0x7f (DEL) and the C1 range U+0080-U+009F — which includes
-// the 8-bit introducers CSI (0x9b), OSC (0x9d), DCS (0x90) and ST (0x9c) that
-// many terminals act on, in both their raw-byte and UTF-8-encoded forms. So
-// we neutralize every dangerous codepoint at the source.
+// The renderer (maya) now drops these too — maya::unicode::is_control() strips
+// C0, DEL and the C1 block U+0080-U+009F (CSI 0x9b / OSC 0x9d / DCS / ST) in
+// Canvas::write_text. We STILL sanitize here on purpose, as defense in depth:
+// (1) we don't want to depend on a pinned submodule staying patched; (2) the
+// cleaned string is what flows through rockbottom's OWN filtering, sorting,
+// caching and clipping long before it reaches the renderer, so it must be safe
+// at the data boundary, not just at the final draw. (Historically maya passed
+// 0x7f + C1 through, which is how this was found.)
 //
 // This is UTF-8 STRUCTURAL, not a byte scan: a naive "replace bytes in
 // 0x80-0x9f" corrupts legitimate multi-byte characters (e.g. the emoji U+1F680
