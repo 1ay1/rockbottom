@@ -142,11 +142,28 @@ public:
         };
 
         auto sample = [&](int gx) -> double {     // value at dot-column gx
-            if (len_ - start <= 0) return 0.0;
+            const int n = len_ - start;
+            if (n <= 0) return 0.0;
+            // How many source samples does one dot-column span? When the
+            // window holds more samples than dot-columns we're DOWNSAMPLING:
+            // interpolation would average a one-tick spike away, so reduce
+            // the column's source range with max() (peak-hold envelope). When
+            // upsampling (more columns than samples) fall back to linear
+            // interpolation for a smooth curve.
+            if (n > gw) {
+                double a = static_cast<double>(gx)     / gw * n;
+                double b = static_cast<double>(gx + 1) / gw * n;
+                int s0 = std::clamp(static_cast<int>(a), 0, n - 1);
+                int s1 = std::clamp(static_cast<int>(std::ceil(b)), s0 + 1, n);
+                double best = 0.0;
+                for (int s = s0; s < s1; ++s)
+                    best = std::max(best, static_cast<double>(data_[start + s]));
+                return std::clamp(best, 0.0, 1.0);
+            }
             double t = static_cast<double>(gx) / std::max(1, gw - 1);
-            double fi = t * (len_ - start - 1);
+            double fi = t * (n - 1);
             int lo = static_cast<int>(fi);
-            int hi = std::min(lo + 1, len_ - start - 1);
+            int hi = std::min(lo + 1, n - 1);
             double fr = fi - lo;
             double a = data_[start + lo], b = data_[start + hi];
             return std::clamp(a * (1 - fr) + b * fr, 0.0, 1.0);
@@ -195,11 +212,22 @@ public:
         if (has_overlay) {
             const int ostart = overlay_len_ > cells_ * 2 ? overlay_len_ - cells_ * 2 : 0;
             auto osample = [&](int gx) -> double {
-                if (overlay_len_ - ostart <= 0) return 0.0;
+                const int n = overlay_len_ - ostart;
+                if (n <= 0) return 0.0;
+                if (n > gw) {   // downsample: peak-hold, same as the main trace
+                    double a = static_cast<double>(gx)     / gw * n;
+                    double b = static_cast<double>(gx + 1) / gw * n;
+                    int s0 = std::clamp(static_cast<int>(a), 0, n - 1);
+                    int s1 = std::clamp(static_cast<int>(std::ceil(b)), s0 + 1, n);
+                    double best = 0.0;
+                    for (int s = s0; s < s1; ++s)
+                        best = std::max(best, static_cast<double>(overlay_[ostart + s]));
+                    return std::clamp(best, 0.0, 1.0);
+                }
                 double t = static_cast<double>(gx) / std::max(1, gw - 1);
-                double fi = t * (overlay_len_ - ostart - 1);
+                double fi = t * (n - 1);
                 int lo = static_cast<int>(fi);
-                int hi = std::min(lo + 1, overlay_len_ - ostart - 1);
+                int hi = std::min(lo + 1, n - 1);
                 double fr = fi - lo;
                 double a = overlay_[ostart + lo], b = overlay_[ostart + hi];
                 return std::clamp(a * (1 - fr) + b * fr, 0.0, 1.0);

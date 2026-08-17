@@ -97,15 +97,40 @@ public:
             runs.push_back({off, 1, maya::Style{}});
         };
 
-        const int start = len_ > cells_ ? len_ - cells_ : 0;
-        const int shown = len_ - start;
+        // Map the full history onto cells_ columns. Two regimes, both
+        // lossless of PEAKS:
+        //   • len_ > cells_: each column covers a RANGE of samples — reduce
+        //     it with max() so a one-tick spike anywhere in the window still
+        //     inks a tall bar instead of being dropped (the old code showed
+        //     only the most recent cells_ samples and discarded the rest of
+        //     the history entirely).
+        //   • cells_ >= len_: stretch — each column maps to one sample, and
+        //     leading columns beyond the data are blank padding.
+        // col_val(c) returns the (already clamped) column value, or -1 for a
+        // blank/pad column.
+        const int pad = std::max(0, cells_ - len_);   // blank left columns when data is short
+        auto col_val = [&](int c) -> float {
+            if (len_ <= 0) return -1.0f;
+            if (cells_ >= len_) {
+                const int s = c - pad;                // one sample per column
+                if (s < 0) return -1.0f;              // leading blank pad
+                return std::clamp(data_[static_cast<std::size_t>(s)], 0.0f, 1.0f);
+            }
+            // Downsample: column c covers samples [s0, s1); take the peak.
+            int s0 = static_cast<int>(static_cast<double>(c)     / cells_ * len_);
+            int s1 = static_cast<int>(static_cast<double>(c + 1) / cells_ * len_);
+            s0 = std::clamp(s0, 0, len_ - 1);
+            s1 = std::clamp(s1, s0 + 1, len_);
+            float best = 0.0f;
+            for (int s = s0; s < s1; ++s)
+                best = std::max(best, std::clamp(data_[static_cast<std::size_t>(s)], 0.0f, 1.0f));
+            return best;
+        };
 
-        // Left-pad with true blanks until history fills the window.
-        for (int i = shown; i < cells_; ++i) push_blank();
-
-        for (int i = start; i < len_; ++i) {
-            float v = std::clamp(data_[i], 0.0f, 1.0f);
-            // Silence rule: a near-zero sample is a SPACE — unless the panel
+        for (int c = 0; c < cells_; ++c) {
+            float v = col_val(c);
+            if (v < 0.0f) { push_blank(); continue; }   // pad column
+            // Silence rule: a near-zero column is a SPACE — unless the panel
             // asked for a persistent baseline, then it's a faint floor tick.
             if (dim_low_ && v < 0.03f) {
                 if (baseline_) {
@@ -117,8 +142,8 @@ public:
                 continue;
             }
             int idx = std::clamp(static_cast<int>(v * 7.0f + 0.5f), 0, 7);
-            maya::Color c = color_ ? *color_ : load_color(v);
-            push(kBars[idx], c);
+            maya::Color c2 = color_ ? *color_ : load_color(v);
+            push(kBars[idx], c2);
         }
 
         return maya::Element{maya::TextElement{
