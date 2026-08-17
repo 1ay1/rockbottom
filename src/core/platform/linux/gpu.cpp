@@ -160,12 +160,12 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
             if (it != procs.end()) {
                 it->mem = Bytes{it->mem.value + mem};
                 if (it->type != type) it->type = 'B';
-                if (it->name.empty() && !n.empty()) it->name = n;
+                if (it->name.empty() && !n.empty()) it->name = sanitize_display(n);
             } else {
                 GpuProc gp;
                 gp.pid = pid;
                 gp.mem = Bytes{mem};
-                gp.name = n;
+                gp.name = sanitize_display(n);   // process-supplied name — untrusted
                 gp.type = type;
                 procs.push_back(std::move(gp));
             }
@@ -225,7 +225,7 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
             if (it == procs.end()) {
                 GpuProc gp;
                 gp.pid = pid;
-                gp.name = cmd;
+                gp.name = sanitize_display(cmd);   // process-supplied — untrusted
                 gp.type = ptype == 'C' || ptype == 'G' ? ptype : '?';
                 procs.push_back(std::move(gp));
                 it = std::prev(procs.end());
@@ -236,7 +236,7 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
             it->has_util = true;
             if (it->mem.value == 0 && fb_mb)
                 it->mem = Bytes{fb_mb * 1024 * 1024};
-            if (it->name.empty()) it->name = cmd;
+            if (it->name.empty()) it->name = sanitize_display(cmd);
             if (it->type == '?' && (ptype == 'C' || ptype == 'G')) it->type = ptype;
         }
     }
@@ -398,7 +398,7 @@ void scan_drm_fdinfo(const std::string& driver_match,
         }
         if (!matched) continue;
         if (found.name.empty())
-            found.name = trim(first_line(slurp(pe.path().string() + "/comm")));
+            found.name = sanitize_display(trim(first_line(slurp(pe.path().string() + "/comm"))));
         acc[pid] = found;
     }
 }

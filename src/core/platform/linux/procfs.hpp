@@ -16,6 +16,7 @@ using rockbottom::sys::push_hist;
 using rockbottom::sys::push_hist2;
 using rockbottom::sys::slurp;
 using rockbottom::sys::slurp_into;
+using rockbottom::sys::sanitize_display;
 using rockbottom::sys::trim;
 using rockbottom::sys::user_of;
 

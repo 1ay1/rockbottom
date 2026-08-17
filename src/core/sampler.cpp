@@ -18,6 +18,11 @@ namespace rockbottom {
 // signal_process is pure POSIX (kill(2)) — identical on Linux and macOS — so it
 // lives in the OS-agnostic orchestrator rather than a per-platform backend.
 std::string signal_process(int pid, int sig) {
+    // Reject non-positive pids: kill(0,...) hits our OWN process group,
+    // kill(-1,...) every process we may signal, kill(-pgid,...) a whole
+    // group. A corrupted selection must never fan a signal out that way —
+    // this UI only ever targets one real, listed process.
+    if (pid <= 0) return "invalid process id";
     if (::kill(pid, sig) == 0) return {};
     switch (errno) {
         case EPERM: return "permission denied — not your process";
@@ -30,6 +35,7 @@ std::string signal_process(int pid, int sig) {
 // (raising priority) requires privilege; raising it (yielding CPU) is always
 // allowed for your own processes.
 std::string renice_process(int pid, int nice) {
+    if (pid <= 0) return "invalid process id";
     if (nice < -20) nice = -20;
     if (nice > 19)  nice = 19;
     errno = 0;

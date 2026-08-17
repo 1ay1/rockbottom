@@ -34,7 +34,9 @@ void Sampler::sample_wireless(Wireless& w) {
                                ssid != "null";
         if (connected) {
             w.wifi_present = true;
-            w.ssid      = ssid;
+            // SSID is broadcast by the access point — externally controlled and
+            // free-form; strip terminal-control bytes before it's drawn.
+            w.ssid      = sys::sanitize_display(ssid);
             w.wifi_rssi = static_cast<int>(termux::json_number(j, "rssi"));
             w.link_mbps = static_cast<int>(termux::json_number(j, "link_speed_mbps"));
             if (w.link_mbps == 0)  // key name varies across API versions
@@ -42,7 +44,7 @@ void Sampler::sample_wireless(Wireless& w) {
             w.wifi_freq = static_cast<int>(termux::json_number(j, "frequency_mhz"));
             if (w.wifi_freq == 0)
                 w.wifi_freq = static_cast<int>(termux::json_number(j, "frequency"));
-            w.ip = termux::json_value(j, "ip");
+            w.ip = sys::sanitize_display(termux::json_value(j, "ip"));
         }
     }
 
@@ -53,8 +55,9 @@ void Sampler::sample_wireless(Wireless& w) {
         std::string state = termux::json_value(j, "data_state");
         if (!op.empty() || !type.empty()) {
             w.cell_present   = true;
-            w.operator_name  = op;
-            w.net_type       = type;
+            // Operator name comes from the carrier network — untrusted.
+            w.operator_name  = sys::sanitize_display(op);
+            w.net_type       = sys::sanitize_display(type);
             w.data_state     = state;
         }
     }

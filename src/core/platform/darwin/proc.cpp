@@ -209,7 +209,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         ProcInfo p;
         p.pid = pid;
         p.ppid = static_cast<int>(tai.pbsd.pbi_ppid);
-        p.name = tai.pbsd.pbi_name[0] ? tai.pbsd.pbi_name : tai.pbsd.pbi_comm;
+        // pbi_name/pbi_comm are influenced by the process — strip terminal
+        // control bytes so a hostile name can't inject an escape sequence.
+        p.name = sys::sanitize_display(
+            tai.pbsd.pbi_name[0] ? tai.pbsd.pbi_name : tai.pbsd.pbi_comm);
         p.state = state;
         p.threads = std::max(1, threads);
         p.prio = tai.ptinfo.pti_priority;
@@ -284,6 +287,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
                 char pathbuf[PROC_PIDPATHINFO_MAXSIZE] = {};
                 if (::proc_pidpath(pid, pathbuf, sizeof pathbuf) > 0) argv = pathbuf;
             }
+            // argv comes from the process's own memory (KERN_PROCARGS2) —
+            // fully attacker-controlled. Sanitize before caching + drawing.
+            argv = sys::sanitize_display(std::move(argv));
             cmd_cache_[pid] = {starttime, argv};
             p.cmd = std::move(argv);
         }

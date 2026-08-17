@@ -87,6 +87,74 @@ inline std::string trim(std::string s) {
     return a == std::string::npos ? std::string{} : s.substr(a, b - a + 1);
 }
 
+// Make an UNTRUSTED string safe to draw to a terminal. Process names
+// (/proc/<pid>/comm, settable via prctl(PR_SET_NAME)) and command lines
+// (/proc/<pid>/cmdline) are fully attacker-controlled: a hostile or
+// compromised process can put raw terminal-control bytes in them, and when a
+// monitor renders those bytes the terminal EMULATOR interprets them — the
+// classic "process-name escape injection" (cf. historical htop/top/less
+// CVEs). Impact ranges from garbling the display and moving the cursor to,
+// on terminals honoring OSC, tampering with the window title or clipboard.
+//
+// The renderer (maya) drops C0 controls (0x00-0x1f, incl. ESC 0x1b) but
+// PASSES THROUGH 0x7f (DEL) and the C1 range U+0080-U+009F — which includes
+// the 8-bit introducers CSI (0x9b), OSC (0x9d), DCS (0x90) and ST (0x9c) that
+// many terminals act on, in both their raw-byte and UTF-8-encoded forms. So
+// we neutralize every dangerous codepoint at the source.
+//
+// This is UTF-8 STRUCTURAL, not a byte scan: a naive "replace bytes in
+// 0x80-0x9f" corrupts legitimate multi-byte characters (e.g. the emoji U+1F680
+// is F0 9F 9A 80 — three of its continuation bytes fall in that range). We
+// decode codepoint by codepoint and replace only: C0 controls, DEL, the C1
+// block U+0080-U+009F, and any byte that is not part of a well-formed UTF-8
+// sequence (a lone continuation byte or a truncated/overlong lead is itself a
+// way to smuggle a control byte past a lazy filter). Valid printable UTF-8 —
+// accents, CJK, emoji — is preserved verbatim.
+inline std::string sanitize_display(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    const std::size_t n = in.size();
+    std::size_t i = 0;
+    auto cont = [&](std::size_t k) {
+        return k < n && (static_cast<unsigned char>(in[k]) & 0xC0) == 0x80;
+    };
+    while (i < n) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        char32_t cp;
+        std::size_t len;
+        if (c < 0x80) { cp = c; len = 1; }
+        else if ((c & 0xE0) == 0xC0 && cont(i + 1)) {
+            cp = (static_cast<char32_t>(c & 0x1F) << 6)
+               |  (static_cast<char32_t>(in[i + 1]) & 0x3F);
+            len = 2;
+            if (cp < 0x80) { out += '?'; i += 2; continue; }   // overlong → reject
+        }
+        else if ((c & 0xF0) == 0xE0 && cont(i + 1) && cont(i + 2)) {
+            cp = (static_cast<char32_t>(c & 0x0F) << 12)
+               | ((static_cast<char32_t>(in[i + 1]) & 0x3F) << 6)
+               |  (static_cast<char32_t>(in[i + 2]) & 0x3F);
+            len = 3;
+        }
+        else if ((c & 0xF8) == 0xF0 && cont(i + 1) && cont(i + 2) && cont(i + 3)) {
+            cp = (static_cast<char32_t>(c & 0x07) << 18)
+               | ((static_cast<char32_t>(in[i + 1]) & 0x3F) << 12)
+               | ((static_cast<char32_t>(in[i + 2]) & 0x3F) << 6)
+               |  (static_cast<char32_t>(in[i + 3]) & 0x3F);
+            len = 4;
+        }
+        else { out += '?'; ++i; continue; }   // lone continuation / malformed lead
+
+        // Reject control codepoints: C0, DEL, and the C1 block.
+        if (cp < 0x20 || cp == 0x7f || (cp >= 0x80 && cp <= 0x9f)) {
+            out += '?';
+        } else {
+            out.append(in, i, len);   // copy the original valid bytes verbatim
+        }
+        i += len;
+    }
+    return out;
+}
+
 // Push a sample onto a fixed ring buffer, keeping the newest values
 // left-packed (index 0 = oldest kept). `len` grows until it saturates at N.
 template <std::size_t N>

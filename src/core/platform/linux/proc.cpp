@@ -97,7 +97,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // comm sits in parens and may itself contain spaces/parens.
         auto lp = stat.find('('), rp = stat.rfind(')');
         if (lp == std::string::npos || rp == std::string::npos || rp < lp) continue;
-        std::string comm = stat.substr(lp + 1, rp - lp - 1);
+        // comm is settable by the process (prctl(PR_SET_NAME)) — untrusted.
+        // Strip terminal-control bytes now so neither p.name nor the [comm]
+        // kernel-thread fallback can inject an escape sequence when drawn.
+        std::string comm = sys::sanitize_display(stat.substr(lp + 1, rp - lp - 1));
 
         // Pointer-walk the numeric tail (fields 3..22) instead of building an
         // istringstream: allocation-free, no locale/sentry overhead. `cur`
@@ -311,9 +314,11 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
                 if (!raw.empty()) {
                     for (char& ch : raw) if (ch == '\0') ch = ' ';
                     while (!raw.empty() && raw.back() == ' ') raw.pop_back();
-                    p.cmd = std::move(raw);
+                    // cmdline is fully attacker-controlled — strip terminal
+                    // control bytes before it can be drawn.
+                    p.cmd = sys::sanitize_display(std::move(raw));
                 } else {
-                    p.cmd = "[" + comm + "]";   // kernel thread
+                    p.cmd = "[" + comm + "]";   // kernel thread (comm already clean)
                 }
                 cmd_cache_[pid] = {starttime, p.cmd};
             }
