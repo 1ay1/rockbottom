@@ -36,6 +36,7 @@ class BarChart {
     int rows_ = 4;
     std::optional<maya::Color> color_;   // nullopt → per-value load gradient
     float gamma_ = 1.0f;                 // perceptual curve for bursty rates
+    std::vector<maya::Color> col_colors_; // optional per-sample color (index-aligned to data_)
 
 public:
     BarChart(const float* data, int len) : len_(std::max(0, len)) {
@@ -45,6 +46,13 @@ public:
     BarChart& cells(int n)         { cells_ = n; return *this; }   // <=0 → fill
     BarChart& rows(int n)          { rows_ = std::max(1, n); return *this; }
     BarChart& color(maya::Color c) { color_ = c; return *this; }
+    // Per-sample colors, index-aligned to the data passed in. Overrides color()
+    // per column when present (falls back to color()/gradient for any column
+    // beyond the array). Lets one histogram tint each bar by which series
+    // dominated that sample (e.g. read vs write).
+    BarChart& colors(const maya::Color* c, int n) {
+        col_colors_.assign(c, c + std::max(0, n)); return *this;
+    }
     BarChart& fill()               { cells_ = 0; return *this; }
     BarChart& gamma(float g)       { gamma_ = std::max(0.05f, g); return *this; }
 
@@ -114,7 +122,18 @@ public:
                 std::size_t off = content.size();
                 content += kBar[cell_eighths];
                 if (cell_eighths > 0) {
-                    const Color cc = color_ ? *color_ : load_color(v);
+                    // Per-sample color wins when supplied; else fixed color;
+                    // else the per-value load gradient. Map this cell back to
+                    // its window sample index (same start+si as `vals`).
+                    Color cc;
+                    const int si = c - pad;
+                    const int sample = start + si;
+                    if (!col_colors_.empty() && si >= 0 &&
+                        sample >= 0 && sample < static_cast<int>(col_colors_.size())) {
+                        cc = col_colors_[static_cast<std::size_t>(sample)];
+                    } else {
+                        cc = color_ ? *color_ : load_color(v);
+                    }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 }
             }

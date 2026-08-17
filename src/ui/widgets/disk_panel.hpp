@@ -75,7 +75,7 @@ public:
                     Element{blank()} | grow(1),
                     text("\xe2\x94\x80\xe2\x94\x80 read ") | nowrap | Bold | fgc(pal::disk_ac),
                     text(rd) | nowrap | fgc(pal::text),
-                    text("  write ") | nowrap | fgc(pal::dim),
+                    text("  \xe2\x94\x80\xe2\x94\x80 write ") | nowrap | Bold | fgc(pal::pink),
                     text(wr) | nowrap | fgc(pal::text)
                 ) | gap(1)).build());
             }
@@ -84,19 +84,31 @@ public:
                 using namespace maya::dsl;
                 if (ah < 2) return blank().build();
                 static thread_local std::array<float, 48> tot{};
-                for (int i = 0; i < hl && i < 48; ++i)
-                    tot[static_cast<std::size_t>(i)] =
-                        (rh[static_cast<std::size_t>(i)] + wh[static_cast<std::size_t>(i)]) / peak;
+                static thread_local std::array<Color, 48> col{};
+                for (int i = 0; i < hl && i < 48; ++i) {
+                    const float rv = rh[static_cast<std::size_t>(i)];
+                    const float wv = wh[static_cast<std::size_t>(i)];
+                    tot[static_cast<std::size_t>(i)] = (rv + wv) / peak;
+                    // Tint each bar by the series that dominated that sample so
+                    // the single combined histogram still reads read-vs-write:
+                    // teal when reads led, pink when writes led.
+                    col[static_cast<std::size_t>(i)] =
+                        wv > rv ? pal::pink : pal::disk_ac;
+                }
                 std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
                 std::vector<Element> axis;
                 for (int r = 0; r < ah; ++r) {
                     std::string lbl = r == 0 ? peak_lbl : r == ah - 1 ? "0" : "";
                     axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
-                                    | w_<6> | justify(Justify::End)).build());
+                                    | w_<8> | justify(Justify::End)).build());
                 }
                 BarChart g{tot.data(), hl};
-                g.cells(std::max(1, w - 6 - 1)).rows(ah).color(pal::disk_ac).gamma(0.5f);
-                return (h(v(std::move(axis)) | w_<6>, Element{g.build_fixed()})
+                // Bars begin one cell past the 8-wide axis gutter (matching the
+                // gap(1) below), so the histogram, the rate row and the mount
+                // meters all hang on the SAME left rail (column 9).
+                g.cells(std::max(1, w - 8 - 1)).rows(ah)
+                    .colors(col.data(), std::min(hl, 48)).gamma(0.5f);
+                return (h(v(std::move(axis)) | w_<8>, Element{g.build_fixed()})
                         | gap(1)).build();
             }, 0, 2));
         }
@@ -110,29 +122,33 @@ public:
                                 io_.read_history[static_cast<std::size_t>(i)] +
                                 io_.write_history[static_cast<std::size_t>(i)]);
             static thread_local std::array<float, 48> tot{};
-            for (int i = 0; i < io_.hist_len; ++i)
-                tot[static_cast<std::size_t>(i)] =
-                    (io_.read_history[static_cast<std::size_t>(i)] +
-                     io_.write_history[static_cast<std::size_t>(i)]) / peak;
+            static thread_local std::array<Color, 48> col{};
+            for (int i = 0; i < io_.hist_len; ++i) {
+                const float rv = io_.read_history[static_cast<std::size_t>(i)];
+                const float wv = io_.write_history[static_cast<std::size_t>(i)];
+                tot[static_cast<std::size_t>(i)] = (rv + wv) / peak;
+                col[static_cast<std::size_t>(i)] = wv > rv ? pal::pink : pal::disk_ac;
+            }
             std::string peak_lbl = std::string(humanize_rate(ByteRate{peak}));
             std::vector<Element> axis;
             for (int r = 0; r < graph_h_; ++r) {
                 std::string lbl = r == 0 ? peak_lbl : r == graph_h_ - 1 ? "0" : "";
                 axis.push_back((text(lbl) | nowrap | fgc(pal::faint)
-                                | w_<6> | justify(Justify::End)).build());
+                                | w_<8> | justify(Justify::End)).build());
             }
             BarChart g{tot.data(), io_.hist_len};
-            g.fill().rows(graph_h_).color(pal::disk_ac).gamma(0.5f);
+            g.fill().rows(graph_h_)
+                .colors(col.data(), std::min(io_.hist_len, 48)).gamma(0.5f);
             rows.push_back((h(
                 text("I/O") | nowrap | Bold | fgc(pal::disk_ac) | w_<8>,
                 Element{blank()} | grow(1),
                 text("\xe2\x94\x80\xe2\x94\x80 read ") | nowrap | Bold | fgc(pal::disk_ac),
                 text(std::string(humanize_rate(io_.read))) | nowrap | fgc(pal::text),
-                text("  write ") | nowrap | fgc(pal::dim),
+                text("  \xe2\x94\x80\xe2\x94\x80 write ") | nowrap | Bold | fgc(pal::pink),
                 text(std::string(humanize_rate(io_.write))) | nowrap | fgc(pal::text)
             ) | gap(1)).build());
             rows.push_back((h(
-                v(std::move(axis)) | w_<6>,
+                v(std::move(axis)) | w_<8>,
                 Element{g} | grow(1)
             ) | gap(1) | height(graph_h_)).build());
         }
