@@ -9,7 +9,10 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <optional>
 #include <string>
+#include <thread>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -142,15 +145,34 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // does. Two cadences: the always-visible gauges (util/temp/vram/clocks)
     // refresh every ~1s, but the per-process app table — which needs TWO more
     // forks (`--query-compute-apps` + `pmon -c 1`) or an O(all-pids) fdinfo
-    // walk — refreshes every ~3s and is carried over in between. On the fast
-    // startup prime we skip GPU entirely so the first paint never blocks on a
-    // subprocess; it populates on the first real background tick.
+    // walk — refreshes every ~3s and is carried over in between. The fast
+    // startup prime skips GPU entirely, so the first paint never blocks.
+    //
+    // GPU is independent of every other collector and NVIDIA's subprocess can
+    // take 25-150ms. Run it concurrently so process, port, sensor, disk and PSI
+    // work is hidden under that latency instead of added to it. There is never
+    // more than one sample in flight for a Sampler; the worker owns a private
+    // output snapshot and its GPU-specific delta cache until we join below.
+    // Build into a private snapshot and publish only after a successful join,
+    // so an exception cannot leave the visible cache half-cleared. Declare all
+    // captured state before the worker: reverse destruction then joins the
+    // jthread before destroying its references if another collector throws.
+    std::vector<GpuInfo> gpu_next;
+    std::exception_ptr gpu_error;
+    std::optional<std::jthread> gpu_worker;
+    std::chrono::steady_clock::time_point gpu_started{};
     if (!fast && due(gpus_at_, ms(1000))) {
         const bool with_procs = due(gpu_procs_at_, ms(3000));
-        sample_gpu(gpus_cache_, with_procs);
+        gpu_started = pnow();
+        gpu_next = gpus_cache_;  // carries the slower per-process table forward
+        gpu_worker.emplace([this, with_procs, &gpu_next, &gpu_error] {
+            try {
+                sample_gpu(gpu_next, with_procs);
+            } catch (...) {
+                gpu_error = std::current_exception();
+            }
+        });
     }
-    s.gpus = gpus_cache_;
-    phase("gpu");
 
     // Disk CAPACITY (statvfs per mount) barely moves — refresh ~every 5s.
     if (due(disks_at_, ms(5000))) { disks_cache_.clear(); sample_disks(disks_cache_); }
@@ -212,6 +234,18 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // no-op, so this costs nothing there. Also skipped on a fast prime.
     if (!fast && due(wireless_at_, ms(10000))) { wireless_cache_ = Wireless{}; sample_wireless(wireless_cache_); }
     s.wireless = wireless_cache_;
+
+    // Publish GPU data only after the worker has stopped mutating its cache.
+    // Joining this late maximizes overlap with all independent collectors.
+    if (gpu_worker) {
+        gpu_worker->join();
+        if (kPhase)
+            std::fprintf(stderr, "  %-12s %8.3f ms (overlapped)\n",
+                         "gpu", pms(gpu_started, pnow()));
+        if (gpu_error) std::rethrow_exception(gpu_error);
+        gpus_cache_ = std::move(gpu_next);
+    }
+    s.gpus = gpus_cache_;
 
     s.verdict = judge(s, dt);
 

@@ -30,6 +30,7 @@
 #include "../src/ui/widgets/detail/mem.hpp"
 #include "../src/ui/widgets/detail/net.hpp"
 #include "../src/ui/widgets/detail/disk.hpp"
+#include "../src/ui/proc_order.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -714,6 +715,66 @@ void test_sanitize() {
           "plain names and empty strings are unchanged");
 }
 
+void test_proc_order_strictness() {
+    std::printf("\nprocess sorting is a strict weak ordering:\n");
+
+    ProcInfo a{}, b{};
+    a.pid = 20;
+    b.pid = 10;
+    a.name = b.name = "same";
+    a.cpu = b.cpu = 42.0;
+    a.rss = b.rss = Bytes{4096};
+    a.io_read.per_sec = b.io_read.per_sec = 128.0;
+
+    constexpr SortKey keys[] = {SortKey::Cpu, SortKey::Mem, SortKey::Io,
+                                SortKey::Pid, SortKey::Name, SortKey::Port};
+    bool irreflexive = true, antisymmetric = true;
+    for (SortKey key : keys) {
+        for (bool desc : {false, true}) {
+            irreflexive &= !ui::proc_less(a, a, key, desc) &&
+                           !ui::proc_less(b, b, key, desc);
+            antisymmetric &= !(ui::proc_less(a, b, key, desc) &&
+                               ui::proc_less(b, a, key, desc));
+        }
+    }
+    check(irreflexive, "no process compares less than itself in either direction");
+    check(antisymmetric, "equal primary keys use a one-way pid tiebreak");
+
+    // Distinct values pin the direction contract too: magnitude columns are
+    // naturally largest-first, while pid/name are naturally ascending.
+    a.cpu = 90.0; b.cpu = 10.0;
+    a.rss = Bytes{9000}; b.rss = Bytes{1000};
+    a.io_read.per_sec = 900.0; b.io_read.per_sec = 100.0;
+    a.name = "zeta"; b.name = "alpha";
+    a.ports = {8080}; b.ports.clear();
+    check(ui::proc_less(a, b, SortKey::Cpu, true) &&
+          ui::proc_less(b, a, SortKey::Cpu, false),
+          "cpu direction toggles largest-first / smallest-first");
+    check(ui::proc_less(a, b, SortKey::Mem, true) &&
+          ui::proc_less(b, a, SortKey::Mem, false),
+          "memory direction toggles largest-first / smallest-first");
+    check(ui::proc_less(a, b, SortKey::Io, true) &&
+          ui::proc_less(b, a, SortKey::Io, false),
+          "I/O direction toggles largest-first / smallest-first");
+    check(ui::proc_less(b, a, SortKey::Pid, false) &&
+          ui::proc_less(a, b, SortKey::Pid, true),
+          "pid direction toggles ascending / descending");
+    check(ui::proc_less(b, a, SortKey::Name, false) &&
+          ui::proc_less(a, b, SortKey::Name, true),
+          "name direction toggles A-first / Z-first");
+    check(ui::proc_less(a, b, SortKey::Port, true) &&
+          ui::proc_less(b, a, SortKey::Port, false),
+          "port direction toggles bound-first / unbound-first");
+
+    // Restore equal values for the deterministic tiebreak assertion.
+    a.cpu = b.cpu = 42.0;
+    std::vector<const ProcInfo*> rows{&a, &b};
+    const auto ordered = ui::order_flat(rows, SortKey::Cpu, false);
+    check(ordered.procs.size() == 2 && ordered.procs[0]->pid == 10 &&
+          ordered.procs[1]->pid == 20,
+          "equal-value rows have deterministic pid order");
+}
+
 int main() {
     std::printf("\n\x1b[1mper-core grid tests\x1b[0m\n\n");
 
@@ -723,6 +784,7 @@ int main() {
     test_version();
     test_core_temps();
     test_sanitize();
+    test_proc_order_strictness();
 
     // ── device-health visibility: issues #4–#8 ──────────────────────
     // These probes must be visually verifiable on a healthy, ordinary host;

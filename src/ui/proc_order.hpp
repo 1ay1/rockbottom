@@ -67,34 +67,37 @@ struct OrderedProcs {
 // but the caller still controls direction so ▲/▼ works on every column.
 [[nodiscard]] inline bool proc_less(const ProcInfo& a, const ProcInfo& b,
                                     SortKey key, bool desc) {
-    auto cmp = [&]() -> bool {
+    auto baseline_less = [&](const ProcInfo& lhs, const ProcInfo& rhs) -> bool {
         switch (key) {
-            case SortKey::Cpu:  return a.cpu > b.cpu;
-            case SortKey::Mem:  return a.rss.value > b.rss.value;
-            case SortKey::Io:   return (a.io_read.per_sec + a.io_write.per_sec)
-                                     > (b.io_read.per_sec + b.io_write.per_sec);
-            case SortKey::Pid:  return a.pid < b.pid;
-            case SortKey::Name: return a.name < b.name;
+            case SortKey::Cpu:  return lhs.cpu > rhs.cpu;
+            case SortKey::Mem:  return lhs.rss.value > rhs.rss.value;
+            case SortKey::Io:   return (lhs.io_read.per_sec + lhs.io_write.per_sec)
+                                     > (rhs.io_read.per_sec + rhs.io_write.per_sec);
+            case SortKey::Pid:  return lhs.pid < rhs.pid;
+            case SortKey::Name: return lhs.name < rhs.name;
             case SortKey::Port: {
-                const bool ha = !a.ports.empty(), hb = !b.ports.empty();
-                if (ha != hb) return ha;
-                if (ha && a.ports.front() != b.ports.front())
-                    return a.ports.front() < b.ports.front();
-                return a.cpu > b.cpu;
+                const bool hl = !lhs.ports.empty(), hr = !rhs.ports.empty();
+                if (hl != hr) return hl;
+                if (hl && lhs.ports.front() != rhs.ports.front())
+                    return lhs.ports.front() < rhs.ports.front();
+                return lhs.cpu > rhs.cpu;
             }
         }
-        return a.cpu > b.cpu;
+        return lhs.cpu > rhs.cpu;
     };
-    // cmp() encodes the DESCENDING intent for magnitude keys and ASCENDING for
-    // pid/name. `desc` toggles that baseline.
-    const bool base = cmp();
+
+    const bool ab = baseline_less(a, b);
+    const bool ba = baseline_less(b, a);
+    // Equal primary keys must compare false in both directions. The old
+    // `!base` reversal returned true for equality, violating std::sort's
+    // strict-weak-ordering contract (even proc_less(p, p) was true). A stable
+    // pid tiebreak also prevents equal-value rows from flickering per tick.
+    if (ab == ba) return a.pid < b.pid;
+
     const bool magnitude = key == SortKey::Cpu || key == SortKey::Mem ||
                            key == SortKey::Io || key == SortKey::Port;
-    // For magnitude keys base==true means a>b (already "desc"); for pid/name
-    // base==true means a<b ("asc"). Normalize so `desc` means the intuitive
-    // "biggest / Z-last first", then flip when the user asked for the reverse.
-    const bool desc_order = magnitude ? base : !base;
-    return desc ? desc_order : !desc_order;
+    const bool baseline = magnitude ? desc : !desc;
+    return baseline ? ab : ba;
 }
 
 // A node's OWN magnitude on the active sort key (self value, not subtree).

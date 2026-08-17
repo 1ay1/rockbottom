@@ -348,8 +348,24 @@ void collect_intel(std::vector<GpuInfo>& out) {
 struct FdinfoProc {
     std::uint64_t vram = 0;
     std::uint64_t gfx_ns = 0;   // summed engine-time across classes
-    std::string   name;
+    std::uint64_t starttime = 0; // /proc/pid/stat field 22; guards pid reuse
+    std::string name;
 };
+
+std::uint64_t proc_starttime(const std::filesystem::path& proc_dir) {
+    const std::string stat = slurp((proc_dir / "stat").string());
+    const std::size_t rp = stat.rfind(')');
+    if (rp == std::string::npos || rp + 2 >= stat.size()) return 0;
+
+    // The stream begins at field 3 (state); starttime is field 22.
+    std::istringstream fields(stat.substr(rp + 2));
+    std::string token;
+    for (int field = 3; field <= 22; ++field)
+        if (!(fields >> token)) return 0;
+    char* end = nullptr;
+    const auto value = std::strtoull(token.c_str(), &end, 10);
+    return end != token.c_str() && *end == '\0' ? value : 0;
+}
 
 void scan_drm_fdinfo(const std::string& driver_match,
                      std::map<int, FdinfoProc>& acc) {
@@ -360,6 +376,8 @@ void scan_drm_fdinfo(const std::string& driver_match,
         if (base.empty() || !std::isdigit((unsigned char)base[0])) continue;
         const int pid = std::atoi(base.c_str());
         if (pid <= 0) continue;
+        const std::uint64_t starttime = proc_starttime(pe.path());
+        if (starttime == 0) continue;
         const std::string fddir = pe.path().string() + "/fdinfo";
         std::error_code ec2;
         auto dir = fs::directory_iterator(fddir, fs::directory_options::skip_permission_denied, ec2);
@@ -399,7 +417,11 @@ void scan_drm_fdinfo(const std::string& driver_match,
         if (!matched) continue;
         if (found.name.empty())
             found.name = sanitize_display(trim(first_line(slurp(pe.path().string() + "/comm"))));
-        acc[pid] = found;
+        found.starttime = proc_starttime(pe.path());
+        // Re-read the identity after the fd walk. If the process vanished or
+        // the kernel recycled its pid meanwhile, `found` may contain fdinfo
+        // from the old process and must not be attributed to the new one.
+        if (found.starttime == starttime) acc[pid] = found;
     }
 }
 
@@ -456,8 +478,7 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
         // every process reads 0% and the "busiest process first" sort below is
         // dead. Diff against the previous per-process tick stored per pid.
         const auto now = std::chrono::steady_clock::now();
-        std::unordered_map<int, std::pair<std::uint64_t,
-                                          std::chrono::steady_clock::time_point>> next_prev;
+        std::unordered_map<int, GpuFdinfoPrev> next_prev;
         for (auto& [pid, fp] : acc) {
             if (fp.vram == 0 && fp.gfx_ns == 0) continue;
             GpuProc gp;
@@ -465,20 +486,22 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
             gp.name = fp.name;
             gp.mem = Bytes{fp.vram};
             gp.type = 'G';
-            if (auto it = gpu_fdinfo_prev_.find(pid); it != gpu_fdinfo_prev_.end()) {
-                const std::uint64_t prev_ns = it->second.first;
+            if (auto it = gpu_fdinfo_prev_.find(pid);
+                it != gpu_fdinfo_prev_.end() &&
+                it->second.starttime == fp.starttime) {
+                const std::uint64_t prev_ns = it->second.gfx_ns;
                 const double wall_ns = std::chrono::duration<double, std::nano>(
-                                           now - it->second.second).count();
-                // Guard a counter reset (driver reload / pid reuse: new < old)
-                // and a zero/absent interval, either of which would spike or
-                // divide-by-zero. Only a forward delta over real time counts.
+                                           now - it->second.sampled_at).count();
+                // Guard a counter reset (driver reload / context recreation)
+                // and a zero/absent interval. Process identity is checked above
+                // so a recycled pid cannot inherit the old process's baseline.
                 if (fp.gfx_ns >= prev_ns && wall_ns > 1e6) {
                     const double busy = static_cast<double>(fp.gfx_ns - prev_ns) / wall_ns;
                     gp.sm = Ratio{std::clamp(busy, 0.0, 1.0)};
                     gp.has_util = true;
                 }
             }
-            next_prev[pid] = {fp.gfx_ns, now};
+            next_prev[pid] = GpuFdinfoPrev{fp.starttime, fp.gfx_ns, now};
             g.procs.push_back(std::move(gp));
         }
         gpu_fdinfo_prev_ = std::move(next_prev);   // forget pids that vanished

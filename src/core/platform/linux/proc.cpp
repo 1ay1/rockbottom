@@ -1,4 +1,4 @@
-// collectors/proc.cpp — walk /proc/<pid>/{stat,statm}, compute per-proc CPU%.
+// collectors/proc.cpp — walk /proc/<pid>/{stat,io}, compute per-proc CPU%.
 
 #include "../../sampler.hpp"
 #include "procfs.hpp"
@@ -144,6 +144,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         int threads = static_cast<int>(next_i64());             // 20
         skip_field();                                           // 21 itrealvalue
         std::uint64_t starttime = next_u64();                   // 22 starttime
+        std::uint64_t virt_bytes = next_u64();                  // 23 vsize
+        std::int64_t rss_pages_raw = next_i64();                // 24 rss
 
         // A truncated stat (process exited between readdir and read) fails the
         // running parse — drop the row rather than emit a corrupt sample.
@@ -178,17 +180,12 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         }
         proc_cpu_sum += cpu_pct;
 
-        // statm: total + resident pages (first two whitespace-separated ints).
-        std::uint64_t rss_pages = 0, total_pages = 0;
-        {
-            // Reuse a SEPARATE small buffer: `stat` (== fbuf) is still needed
-            // below for comm, so statm can't stomp it. statm is tiny.
-            std::string sm = slurp(proc_path(e->d_name, "/statm"));
-            const char* p = sm.c_str();
-            char* end = nullptr;
-            total_pages = std::strtoull(p, &end, 10);
-            if (end != p) rss_pages = std::strtoull(end, nullptr, 10);
-        }
+        // vsize and resident pages are fields 23/24 of the stat record we
+        // already parsed. Reading /proc/<pid>/statm separately cost one extra
+        // open/read/close for every process on every tick (~400 syscalls sets
+        // on a typical workstation) while returning the same kernel counters.
+        const std::uint64_t rss_pages = rss_pages_raw > 0
+            ? static_cast<std::uint64_t>(rss_pages_raw) : 0;
         Bytes rss{rss_pages * static_cast<std::uint64_t>(page_size_)};
 
         // Per-process block-device I/O from /proc/<pid>/io. read_bytes /
@@ -226,12 +223,33 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         const bool want_detail = (pid == want_detail_pid);
         if (want_detail) {
             std::string st = slurp(proc_path(e->d_name, "/status"));
-            if (auto pos = st.find("voluntary_ctxt_switches:"); pos != std::string::npos)
-                csw_total += std::strtoull(st.c_str() + pos + 24, nullptr, 10);
-            if (auto pos = st.find("nonvoluntary_ctxt_switches:"); pos != std::string::npos)
-                csw_total += std::strtoull(st.c_str() + pos + 27, nullptr, 10);
+            auto status_value = [&](std::string_view key,
+                                    std::uint64_t& out) -> bool {
+                std::size_t line = 0;
+                while (line < st.size()) {
+                    if (st.compare(line, key.size(), key) == 0) {
+                        const char* value = st.c_str() + line + key.size();
+                        char* end = nullptr;
+                        out = std::strtoull(value, &end, 10);
+                        return end != value;
+                    }
+                    const std::size_t nl = st.find('\n', line);
+                    if (nl == std::string::npos) break;
+                    line = nl + 1;
+                }
+                return false;
+            };
+            std::uint64_t voluntary = 0, involuntary = 0;
+            if (status_value("voluntary_ctxt_switches:", voluntary) &&
+                status_value("nonvoluntary_ctxt_switches:", involuntary)) {
+                csw_total = voluntary + involuntary;
+                np.csw_valid = true;
+            }
         } else if (have_prev) {
-            csw_total = prev_it->second.csw;   // carry forward so the rate stays 0, not a spike
+            csw_total = prev_it->second.csw;
+            // No fresh /proc/status read happened, so this carried value must
+            // not become the baseline when the detail pane later opens.
+            np.csw_valid = false;
         }
 
         // Page-fault + context-switch RATES: cumulative counters (majflt is
@@ -243,7 +261,10 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
             const ProcPrev& pp = prev_it->second;
             if (faults_total >= pp.faults)
                 faults_ps = static_cast<double>(faults_total - pp.faults) / dt;
-            if (csw_total >= pp.csw)
+            // /proc/status is sampled only for the detail pid. Its first detail
+            // tick establishes a baseline instead of reporting the process's
+            // lifetime context-switch count as a one-tick rate.
+            if (want_detail && pp.csw_valid && csw_total >= pp.csw)
                 csw_ps = static_cast<double>(csw_total - pp.csw) / dt;
         }
         np.faults = faults_total;
@@ -281,7 +302,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         if (starttime > 0)
             p.start_sec = boot_epoch + starttime / static_cast<std::uint64_t>(clk_tck_);
         p.rss = rss;
-        p.virt = Bytes{total_pages * static_cast<std::uint64_t>(page_size_)};
+        p.virt = Bytes{virt_bytes};
         p.mem_share = Ratio::of(rss, ram_total_);
         p.io_read = ior;
         p.io_write = iow;

@@ -66,6 +66,7 @@ private:
         std::uint64_t cpu_ticks = 0;
         std::uint64_t io_read = 0, io_write = 0;
         std::uint64_t faults = 0, csw = 0;
+        bool csw_valid = false;              // /proc/status is sampled only for detail pid
         std::array<float, 48> cpu_hist{};   // rolling cpu% (0..1) so the detail pane can graph it
         int cpu_hist_len = 0;
     };
@@ -220,11 +221,15 @@ private:
     // Per-process DRM fdinfo engine-time attribution (AMD/Intel). fdinfo hands
     // us a MONOTONIC nanosecond counter of GPU engine time per pid; a busy
     // fraction is its delta over the wall-clock delta between per-process
-    // ticks. Stash the last (gfx_ns, when) per pid so the next tick can
-    // difference it. Keyed by pid; entries for pids gone this tick are dropped.
-    std::unordered_map<int, std::pair<std::uint64_t,
-                                      std::chrono::steady_clock::time_point>>
-                                              gpu_fdinfo_prev_;
+    // ticks. Stash identity + the last (gfx_ns, when) per pid so a recycled
+    // pid cannot inherit the dead process's counter baseline. Entries for pids
+    // gone this tick are dropped.
+    struct GpuFdinfoPrev {
+        std::uint64_t starttime = 0;
+        std::uint64_t gfx_ns = 0;
+        std::chrono::steady_clock::time_point sampled_at{};
+    };
+    std::unordered_map<int, GpuFdinfoPrev> gpu_fdinfo_prev_;
 };
 
 }  // namespace rockbottom
