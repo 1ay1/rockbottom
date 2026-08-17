@@ -136,6 +136,16 @@ add_executable(rockbottom
 )
 target_link_libraries(rockbottom PRIVATE maya)
 target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
+# rockbottom uses zero C++ modules (no `import`, no module units), but CMake >=
+# 3.28 turns ON `import std`-style module dependency SCANNING by default for any
+# C++20+ target under Ninja. That scan runs each TU through GCC's -fmodules-ts /
+# -fdeps-format=p1689r5 preprocessor, and on GCC 15 + the macOS 15/26 SDK that
+# path fails to compile <cstring> (`rsize_t`/`memset_s` in _string.h are gated
+# behind __STDC_WANT_LIB_EXT1__ the module scanner doesn't set) — a spurious
+# build break for a project with no modules at all. Turn scanning off; it is
+# pure overhead here and the source of the failure. Same for the other targets.
+set_target_properties(rockbottom PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 # Request cxx_std_26 only when CMake actually advertises it (CMake >= 3.30 with a
 # C++26-capable compiler). On older CMake the CMAKE_CXX_STANDARD set above still
 # applies the right -std flag; asking for the unknown feature here is what broke
@@ -185,11 +195,20 @@ set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 # linking is unsupported (no crt0.o, Apple ships no libc.a), so there we do the
 # most that platform allows: static libstdc++/libgcc, with libSystem dynamic.
 #
-# ONE BEHAVIOURAL CONSEQUENCE, handled in sys_util.hpp: static glibc cannot
-# dlopen NSS modules, so getpwuid() sees only /etc/passwd and directory
-# (LDAP/AD/SSSD) accounts would render as bare numeric uids. user_of() falls
-# back to the system's own `getent` for exactly that case — see the comment
-# there before touching either half of this.
+# The published Linux release goes one step further and links musl instead of
+# glibc (built in Alpine — see .github/workflows). glibc actively resists
+# static linking: `-static` still stamps in versioned GLIBC_2.xx imports and
+# GNU ld silently downgrades a missing static lib to the dynamic one, which is
+# exactly how (3) shipped. musl is built to link statically, so the release
+# ELF has no interpreter, no versioned imports, and no glibc version floor.
+# This CMake path is libc-agnostic: it produces a correct static binary under
+# either libc, and the musl choice lives entirely in the release workflow.
+#
+# ONE BEHAVIOURAL CONSEQUENCE, handled in sys_util.hpp: a static libc (glibc
+# OR musl) cannot dlopen glibc NSS modules, so getpwuid() sees only
+# /etc/passwd and directory (LDAP/AD/SSSD) accounts would render as bare
+# numeric uids. user_of() falls back to the system's own `getent` for exactly
+# that case — see the comment there before touching either half of this.
 #
 # Defaults ON so a plain `cmake -B build` yields a binary you can hand to
 # someone. Turn it OFF for a distro package, where linking against the system
@@ -273,6 +292,7 @@ include(CTest)   # defines BUILD_TESTING (default ON) and calls enable_testing()
 add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
 target_link_libraries(rb_tests PRIVATE maya)
 target_include_directories(rb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(rb_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_tests PRIVATE cxx_std_26)
 else()
@@ -304,6 +324,7 @@ add_executable(rb_render_bench EXCLUDE_FROM_ALL
 )
 target_link_libraries(rb_render_bench PRIVATE maya)
 target_include_directories(rb_render_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(rb_render_bench PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_render_bench PRIVATE cxx_std_26)
 else()
