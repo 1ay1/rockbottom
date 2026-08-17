@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <unistd.h>   // getpid (selfcheck)
 
 int main(int argc, char** argv) {
     using namespace rockbottom;
@@ -22,10 +23,12 @@ int main(int argc, char** argv) {
     bool no_config = false;
     bool topology  = false;
     bool bench     = false;
+    bool selfcheck = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-config") == 0) no_config = true;
         if (std::strcmp(argv[i], "--topology") == 0) topology = true;
         if (std::strcmp(argv[i], "--bench") == 0) bench = true;
+        if (std::strcmp(argv[i], "--selfcheck") == 0) selfcheck = true;
     }
 
     // Precedence: defaults < config file < CLI flags.
@@ -100,6 +103,62 @@ int main(int argc, char** argv) {
         std::printf("steady-state CPU at 1s refresh ≈ %.2f%% of one core\n",
                     (sorted[kIters / 2] / 1000.0) * 100.0);
         return 0;
+    }
+
+    // --selfcheck: run the REAL sampler headlessly and assert the collected
+    // data is sane. --version/--help exit before any sampling and the chroot
+    // smoke test only proves the binary launches, so the process/cpu/mem
+    // collectors — the hottest, most platform-specific, most recently churned
+    // code — had ZERO runtime coverage. This gives CI a portable way to catch
+    // a collector that crashes, hangs, or (worse) silently returns garbage on
+    // a platform we can't run locally. Two samples so delta-based fields
+    // (cpu%, rates) are actually computed, not left at their first-tick zero.
+    if (selfcheck) {
+        Sampler sampler;
+        (void)sampler.sample(cfg.sort, 0, /*fast=*/false);   // prime deltas
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const Snapshot s = sampler.sample(cfg.sort, 0, /*fast=*/false);
+
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
+            if (!ok) ++failures;
+        };
+
+        // The process walk is the code most recently rewritten (slurp_into /
+        // reusable buffers / history gating). If the fbuf reuse or the raw
+        // read loop were broken, this is where it shows: an empty list, a
+        // process with no name, or a self-pid that can't find itself.
+        check(!s.procs.empty(), "process list is non-empty");
+        const int me = static_cast<int>(::getpid());
+        bool found_self = false, all_named = true, pids_valid = true;
+        double cpu_sum = 0;
+        for (const ProcInfo& p : s.procs) {
+            if (p.pid == me) found_self = true;
+            if (p.pid <= 0) pids_valid = false;
+            if (p.name.empty()) all_named = false;
+            cpu_sum += p.cpu;
+        }
+        check(found_self, "our own pid appears in the process list");
+        check(pids_valid, "every process has a positive pid");
+        check(all_named, "every process has a non-empty name");
+        check(cpu_sum >= 0.0 && cpu_sum < 100.0 * 4096, "aggregate process cpu% is in a sane range");
+
+        // CPU: at least one core, total busy a valid fraction.
+        check(!s.cpu.cores.empty(), "cpu reports at least one core");
+        check(s.cpu.total.v >= 0.0 && s.cpu.total.v <= 1.0, "cpu total busy is a 0..1 fraction");
+
+        // Memory: total must be real; used cannot exceed it.
+        check(s.mem.total.value > 0, "memory total is non-zero");
+        check(s.mem.used.value <= s.mem.total.value, "memory used does not exceed total");
+
+        if (failures == 0) {
+            std::printf("selfcheck OK: sampler produced sane data across %zu processes, %zu cores\n",
+                        s.procs.size(), s.cpu.cores.size());
+            return 0;
+        }
+        std::fprintf(stderr, "selfcheck FAILED: %d invariant(s) violated\n", failures);
+        return 1;
     }
 
     // --topology: dump what the probe actually decided, as plain text, and

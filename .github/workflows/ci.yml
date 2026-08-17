@@ -81,6 +81,12 @@ jobs:
         run: |
           ./build/rb --version
           ./build/rb --help
+          # Run the REAL collectors on the runner's hardware and assert the
+          # data is sane (non-empty proc list, our pid present, cpu 0..1, mem
+          # used <= total). This is the only CI step that exercises the
+          # per-platform sampler at all — --version/--help exit before it and
+          # rb_tests only covers the UI grid + topology classifier.
+          ./build/rb --selfcheck
 
       # Exercise the topology probe against the runner's REAL hardware — the
       # only place the Linux sysfs classifier runs on Linux, since the unit
@@ -223,6 +229,10 @@ jobs:
             cmake --build build-musl -j
             ./build-musl/rb --version
             ./build-musl/rb --help
+            # Run the real collectors under musl and assert sane data — catches
+            # a libc-specific difference in /proc parsing that a static-ELF
+            # check never would.
+            ./build-musl/rb --selfcheck
 
             # rb_tests is EXCLUDE_FROM_ALL; build + run it under musl too.
             cmake --build build-musl --target rb_tests -j
@@ -250,3 +260,42 @@ jobs:
             [ "$fail" -eq 0 ] || exit 1
             echo "ok: musl build is fully static and self-contained"
           '
+
+  # AddressSanitizer + UndefinedBehaviorSanitizer over the real sampler. The
+  # /proc collector was rewritten to read files via raw open()/read() into a
+  # reused buffer (slurp_into) with in-place pointer parsing — exactly the code
+  # where a one-byte overread or a use-after-overwrite hides behind
+  # plausible-looking output. --selfcheck drives every collector, so ASan sees
+  # the actual /proc parsing on the runner's processes. Built non-static
+  # (RB_STANDALONE=OFF) because -static and the sanitizer runtimes don't mix.
+  sanitizers:
+    name: asan+ubsan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build
+      - name: Build with sanitizers
+        shell: bash
+        run: |
+          export CC=gcc-14 CXX=g++-14
+          cmake -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DRB_STANDALONE=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+          cmake --build build-san -j
+          cmake --build build-san --target rb_tests -j
+      - name: Run under ASan/UBSan
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          # The headless UI grid + topology suite …
+          ./build-san/rb_tests
+          # … then the real collectors, the code most likely to trip ASan.
+          ./build-san/rb --selfcheck
+          ./build-san/rb --topology >/dev/null
