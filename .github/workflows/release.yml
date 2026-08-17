@@ -334,9 +334,81 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             staged/rb-*
             staged/install.sh
             staged/*-full-source.tar.gz
             staged/SHA256SUMS
+          # Release workflows are routinely re-run for the same tag. Make the
+          # replacement contract explicit instead of relying on the action's
+          # default: every same-named binary must be overwritten, and a typo or
+          # missing build artifact must fail rather than publish a partial set.
+          overwrite_files: true
+          fail_on_unmatched_files: true
           generate_release_notes: true
+
+      - name: Published assets must exactly match this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          published="$(mktemp -d)"
+          expected=(
+            rb-linux-x86_64
+            rb-linux-arm64
+            rb-macos-arm64
+            install.sh
+            "rockbottom-${version}-full-source.tar.gz"
+            SHA256SUMS
+          )
+
+          # Download each asset by its exact name and compare bytes, not merely
+          # names or sizes. This catches a failed/partial overwrite where an old
+          # binary remains attached to a re-run release.
+          for asset in "${expected[@]}"; do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" --dir "$published"
+            cmp "staged/$asset" "$published/$asset" || {
+              echo "::error::published $asset does not match this workflow run"
+              exit 1
+            }
+          done
+
+          # Remove retired architecture binaries from an older run. Leaving one
+          # attached would make it look supported even though this workflow did
+          # not build or checksum it.
+          expected_rb=(rb-linux-arm64 rb-linux-x86_64 rb-macos-arm64)
+          mapfile -t expected_rb < <(printf '%s\n' "${expected_rb[@]}" | sort)
+          mapfile -t actual_rb < <(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+              --jq '.assets[].name | select(startswith("rb-"))' | sort
+          )
+          for asset in "${actual_rb[@]}"; do
+            keep=false
+            for wanted in "${expected_rb[@]}"; do
+              [ "$asset" = "$wanted" ] && keep=true && break
+            done
+            if [ "$keep" = false ]; then
+              echo "removing stale release binary: $asset"
+              gh release delete-asset "$tag" "$asset" \
+                --repo "$GITHUB_REPOSITORY" --yes
+            fi
+          done
+
+          mapfile -t actual_rb < <(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+              --jq '.assets[].name | select(startswith("rb-"))' | sort
+          )
+          if [ "${actual_rb[*]}" != "${expected_rb[*]}" ]; then
+            echo "::error::release contains stale or missing rb binaries"
+            printf 'expected: %s\nactual:   %s\n' \
+              "${expected_rb[*]}" "${actual_rb[*]}"
+            exit 1
+          fi
+
+          (cd "$published" && sha256sum -c SHA256SUMS)
+          echo "ok: release $tag contains the exact binaries from this run"
