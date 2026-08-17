@@ -86,35 +86,49 @@ public:
         static constexpr const char* kBar[9] =
             {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
 
-        // Map each of the cells_ display columns to a source sample. Two
-        // regimes:
-        //   • more samples than cells (len_ > cells_): show the most RECENT
-        //     `cells_` samples, one per column (a scrolling window).
-        //   • more cells than samples (cells_ >= len_): STRETCH the len_
-        //     samples across the full width so the history fills the panel
-        //     instead of packing into the right edge and leaving a blank
-        //     left gutter. sample_of(c) returns the source index (or -1 for
-        //     a leading blank column when there is no data at all).
-        const bool scroll = len_ > cells_;
-        const int  start  = scroll ? len_ - cells_ : 0;   // window origin (scroll mode)
-        auto sample_of = [&](int c) -> int {
-            if (len_ <= 0) return -1;
-            if (scroll) return start + c;                 // one column per sample
-            if (cells_ <= 1) return len_ - 1;
-            // Stretch: column c (0..cells_-1) maps across samples 0..len_-1.
-            const double t = static_cast<double>(c) / static_cast<double>(cells_ - 1);
-            int s = static_cast<int>(std::lround(t * (len_ - 1)));
-            return std::clamp(s, 0, len_ - 1);
+        // Map each of the cells_ display columns to a RANGE of source samples
+        // [s0, s1) and reduce it peak-preserving (take the tallest sample in
+        // the range). This keeps the graph honest under downsampling: a brief
+        // burst that falls between two columns is never dropped the way a
+        // single nearest-sample pick would drop it. Two regimes:
+        //   • more samples than cells (len_ > cells_): each column spans
+        //     several samples — max over them (a scrolling, peak-preserving
+        //     window of the most recent cells_ worth of history).
+        //   • more cells than samples (cells_ >= len_): each column maps to
+        //     one sample (ranges are width ≤ 1), stretching the history to
+        //     fill the panel instead of packing on the right.
+        // range_of(c) returns [s0, s1); s0>=s1 (empty) marks a blank column
+        // when there is no data at all.
+        auto range_of = [&](int c) -> std::pair<int,int> {
+            if (len_ <= 0 || cells_ <= 0) return {0, 0};
+            // Column c covers the normalized span [c/cells_, (c+1)/cells_) of
+            // the timeline, mapped onto sample indices [0, len_).
+            double a = static_cast<double>(c)     / cells_ * len_;
+            double b = static_cast<double>(c + 1) / cells_ * len_;
+            int s0 = static_cast<int>(std::floor(a));
+            int s1 = static_cast<int>(std::ceil(b));
+            s0 = std::clamp(s0, 0, len_ - 1);
+            s1 = std::clamp(s1, s0 + 1, len_);   // always cover >=1 sample
+            return {s0, s1};
         };
 
-        // Precompute, per column, the value fraction (curved).
+        // Precompute, per column, the value fraction (curved) and the source
+        // sample that supplied the peak (for the per-column color).
         std::vector<double> vals(static_cast<std::size_t>(cells_), 0.0);
+        std::vector<int>    peak_sample(static_cast<std::size_t>(cells_), -1);
         for (int c = 0; c < cells_; ++c) {
-            const int s = sample_of(c);
-            if (s < 0) { vals[static_cast<std::size_t>(c)] = -1.0; continue; }  // blank
-            double v = std::clamp<double>(data_[static_cast<std::size_t>(s)], 0.0, 1.0);
+            auto [s0, s1] = range_of(c);
+            if (s0 >= s1) { vals[static_cast<std::size_t>(c)] = -1.0; continue; }  // blank
+            double best = 0.0;
+            int    best_s = s0;
+            for (int s = s0; s < s1; ++s) {
+                double raw = std::clamp<double>(data_[static_cast<std::size_t>(s)], 0.0, 1.0);
+                if (raw >= best) { best = raw; best_s = s; }
+            }
+            double v = best;
             if (gamma_ != 1.0f) v = std::pow(v, static_cast<double>(gamma_));
             vals[static_cast<std::size_t>(c)] = v;
+            peak_sample[static_cast<std::size_t>(c)] = best_s;
         }
 
         // Total inked height is rows_*8 eighths. Row 0 = top, rows_-1 = floor.
@@ -140,10 +154,11 @@ public:
                 content += kBar[cell_eighths];
                 if (cell_eighths > 0) {
                     // Per-sample color wins when supplied; else fixed color;
-                    // else the per-value load gradient. Map this cell back to
-                    // its source sample (same mapping as `vals`).
+                    // else the per-value load gradient. Tint by the sample
+                    // that supplied this column's peak, so the color reflects
+                    // the burst you actually see.
                     Color cc;
-                    const int s = sample_of(c);
+                    const int s = peak_sample[static_cast<std::size_t>(c)];
                     if (!col_colors_.empty() && s >= 0 &&
                         s < static_cast<int>(col_colors_.size())) {
                         cc = col_colors_[static_cast<std::size_t>(s)];
