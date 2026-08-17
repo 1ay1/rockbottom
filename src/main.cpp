@@ -70,14 +70,19 @@ int main(int argc, char** argv) {
     if (bench) {
         using clock = std::chrono::steady_clock;
         Sampler sampler;
-        (void)sampler.sample(cfg.sort, 40, /*fast=*/true);   // prime: cold caches
+        // Match the app's real call (app.hpp kTopN == 0 = keep every process,
+        // because the UI scrolls/tree-views the full list). Passing a small
+        // top_n here would under-measure the sort + ProcInfo build the running
+        // program actually pays each tick.
+        constexpr int kBenchTopN = 0;
+        (void)sampler.sample(cfg.sort, kBenchTopN, /*fast=*/true);   // prime: cold caches
 
         constexpr int kIters = 40;
         std::vector<double> ms;
         ms.reserve(kIters);
         for (int i = 0; i < kIters; ++i) {
             const auto t0 = clock::now();
-            const Snapshot s = sampler.sample(cfg.sort, 40, /*fast=*/false);
+            const Snapshot s = sampler.sample(cfg.sort, kBenchTopN, /*fast=*/false);
             ms.push_back(std::chrono::duration<double, std::milli>(clock::now() - t0).count());
             // Sleep between samples so throttled collectors reach their due
             // time at a realistic cadence rather than being starved or spun.
