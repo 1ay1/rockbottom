@@ -86,16 +86,33 @@ public:
         static constexpr const char* kBar[9] =
             {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
 
-        const int start = len_ > cells_ ? len_ - cells_ : 0;
-        const int shown = len_ - start;
-        const int pad   = std::max(0, cells_ - shown);
+        // Map each of the cells_ display columns to a source sample. Two
+        // regimes:
+        //   • more samples than cells (len_ > cells_): show the most RECENT
+        //     `cells_` samples, one per column (a scrolling window).
+        //   • more cells than samples (cells_ >= len_): STRETCH the len_
+        //     samples across the full width so the history fills the panel
+        //     instead of packing into the right edge and leaving a blank
+        //     left gutter. sample_of(c) returns the source index (or -1 for
+        //     a leading blank column when there is no data at all).
+        const bool scroll = len_ > cells_;
+        const int  start  = scroll ? len_ - cells_ : 0;   // window origin (scroll mode)
+        auto sample_of = [&](int c) -> int {
+            if (len_ <= 0) return -1;
+            if (scroll) return start + c;                 // one column per sample
+            if (cells_ <= 1) return len_ - 1;
+            // Stretch: column c (0..cells_-1) maps across samples 0..len_-1.
+            const double t = static_cast<double>(c) / static_cast<double>(cells_ - 1);
+            int s = static_cast<int>(std::lround(t * (len_ - 1)));
+            return std::clamp(s, 0, len_ - 1);
+        };
 
-        // Precompute, per column, the value fraction (curved) and its color.
+        // Precompute, per column, the value fraction (curved).
         std::vector<double> vals(static_cast<std::size_t>(cells_), 0.0);
         for (int c = 0; c < cells_; ++c) {
-            const int si = c - pad;                 // sample index within window
-            if (si < 0) { vals[static_cast<std::size_t>(c)] = -1.0; continue; }  // blank pad
-            double v = std::clamp<double>(data_[static_cast<std::size_t>(start + si)], 0.0, 1.0);
+            const int s = sample_of(c);
+            if (s < 0) { vals[static_cast<std::size_t>(c)] = -1.0; continue; }  // blank
+            double v = std::clamp<double>(data_[static_cast<std::size_t>(s)], 0.0, 1.0);
             if (gamma_ != 1.0f) v = std::pow(v, static_cast<double>(gamma_));
             vals[static_cast<std::size_t>(c)] = v;
         }
@@ -124,13 +141,12 @@ public:
                 if (cell_eighths > 0) {
                     // Per-sample color wins when supplied; else fixed color;
                     // else the per-value load gradient. Map this cell back to
-                    // its window sample index (same start+si as `vals`).
+                    // its source sample (same mapping as `vals`).
                     Color cc;
-                    const int si = c - pad;
-                    const int sample = start + si;
-                    if (!col_colors_.empty() && si >= 0 &&
-                        sample >= 0 && sample < static_cast<int>(col_colors_.size())) {
-                        cc = col_colors_[static_cast<std::size_t>(sample)];
+                    const int s = sample_of(c);
+                    if (!col_colors_.empty() && s >= 0 &&
+                        s < static_cast<int>(col_colors_.size())) {
+                        cc = col_colors_[static_cast<std::size_t>(s)];
                     } else {
                         cc = color_ ? *color_ : load_color(v);
                     }
