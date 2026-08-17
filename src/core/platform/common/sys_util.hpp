@@ -9,13 +9,13 @@
 #pragma once
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <sstream>
 #include <string>
+#include <fcntl.h>
 #include <unistd.h>
 #ifndef _WIN32
 #include <pwd.h>      // getpwuid_r / struct passwd (macOS resolver)
@@ -23,13 +23,41 @@
 
 namespace rockbottom::sys {
 
-// Read an entire (small, virtual) file into a string. Empty on failure.
+// Read an entire (small, virtual) file into `out`, REUSING its capacity. This
+// is the hot path: sample_procs() reads /proc/<pid>/{stat,statm,io,cmdline}
+// for hundreds of pids every tick, and the old std::ifstream + std::stringstream
+// slurp allocated a stream buffer + a result string PER read (~2000 heap
+// allocations/tick at 400 pids) and dragged in locale/sentry machinery for
+// what is a raw byte copy. Here: one open()/read() loop straight into the
+// caller's buffer, which after the first pid is already big enough for every
+// /proc node, so steady-state allocations are ZERO. Returns false + clears
+// `out` on failure (file gone / permission). procfs files report size 0 via
+// stat, so we can't pre-size from st_size — read in chunks until EOF.
+inline bool slurp_into(const char* path, std::string& out) {
+    out.clear();
+    int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    char buf[4096];
+    for (;;) {
+        ssize_t n = ::read(fd, buf, sizeof buf);
+        if (n > 0) { out.append(buf, static_cast<std::size_t>(n)); continue; }
+        if (n == 0) break;                       // EOF
+        if (errno == EINTR) continue;            // retry a signal-interrupted read
+        ::close(fd);
+        out.clear();
+        return false;
+    }
+    ::close(fd);
+    return true;
+}
+
+// Read an entire (small, virtual) file into a fresh string. Empty on failure.
+// Convenience wrapper over slurp_into for cold callers that don't keep a
+// reusable buffer; the hot per-process loop should call slurp_into directly.
 inline std::string slurp(const char* path) {
-    std::ifstream f(path);
-    if (!f) return {};
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
+    std::string s;
+    slurp_into(path, s);
+    return s;
 }
 inline std::string slurp(const std::string& path) { return slurp(path.c_str()); }
 
