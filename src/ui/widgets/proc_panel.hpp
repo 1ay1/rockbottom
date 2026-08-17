@@ -429,6 +429,16 @@ private:
             row.edge = "◉";
             row.edge_color = pal::proc_ac;
         }
+
+        // Hover strip: a full-row background behind the process under the
+        // mouse pointer. The Table merges row.style into every cell (base =
+        // row_style.merge(row.style)), so this paints a real band — the
+        // foreground-only lift alone was too subtle to notice. Kept dimmer
+        // than the cursor's selected_bg so the two never look identical: this
+        // is a "you could click here", the cursor bar is "you are here".
+        if (hovered && !selected)
+            row.style = maya::Style{}.with_bg(mix(pal::bg_panel, pal::proc_ac, 0.22));
+
         return row;
     }
 
