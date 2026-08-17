@@ -221,9 +221,12 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            # NB: alpine:edge folded the static libstdc++.a into the g++
+            # package — the standalone `libstdc++-static` apk was removed, so
+            # requesting it now aborts with "no such package".
             apk add --no-cache \
               build-base g++ gcc musl-dev cmake ninja \
-              libstdc++-static libgcc binutils file
+              libgcc binutils file
             export CC=gcc CXX=g++
             cmake -B build-musl -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
             cmake --build build-musl -j

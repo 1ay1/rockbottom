@@ -72,9 +72,11 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            # alpine:edge folded static libstdc++.a into the g++ package;
+            # the standalone libstdc++-static apk no longer exists.
             apk add --no-cache \
               build-base g++ gcc musl-dev cmake ninja \
-              libstdc++-static libgcc
+              libgcc
             export CC=gcc CXX=g++
             # -DRB_STANDALONE=ON asks for a static link; on the musl toolchain
             # that actually delivers one. State it explicitly so a future flip
