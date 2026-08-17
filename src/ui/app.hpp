@@ -972,10 +972,19 @@ struct App {
         // Selection.
         if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
         if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::Home)) { m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::End))  { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::PageDown)) { m.sel += 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= 10; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        // Top / bottom. `g`/`G` mirror the vim idiom used by every other
+        // scrollable view in the app (menus, help, detail pane); the main
+        // table only had Home/End, an inconsistency for the primary view.
+        if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        // Page by the ACTUAL visible body height, not a hardcoded 10, so one
+        // press moves exactly one screenful and the cursor keeps its place on
+        // the new page. Fall back to a sane step on a degenerate viewport.
+        {
+            const int page = std::max(1, compute_layout(m).body_rows - 1);
+            if (key(ev, maya::SpecialKey::PageDown)) { m.sel += page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        }
 
         // Kill.
         if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
