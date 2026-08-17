@@ -262,6 +262,13 @@ jobs:
   publish:
     name: publish release
     needs: build
+    # Only assemble + publish on an actual version TAG. A workflow_dispatch
+    # from a branch (master) still runs `build` — useful as a dry-run of the
+    # standalone-binary gate — but has no tag to release, and its branch ref
+    # (refs/heads/master) previously leaked into the source-bundle filename
+    # and broke tar. Skipping the whole job here is cleaner than guarding
+    # each step, and the download-artifact + Publish steps assume a release.
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -285,11 +292,24 @@ jobs:
         # the extracted tree builds offline with no network and no .git needed.
         run: |
           set -euo pipefail
-          REF="${GITHUB_REF#refs/tags/}"
+          # GITHUB_REF_NAME is the BARE ref ("v0.1.9" on a tag, "master" on a
+          # branch / workflow_dispatch) — unlike GITHUB_REF it has no
+          # refs/tags/ or refs/heads/ prefix. The old ${GITHUB_REF#refs/tags/}
+          # only stripped the TAG prefix, so a manual run on a branch left
+          # NAME="rockbottom-refs/heads/master" and tar tried to write into a
+          # staged/rockbottom-refs/heads/ dir that never existed ("Cannot
+          # open ... No such file or directory"). Strip a leading "v" for
+          # tags and replace any stray path separator so NAME is always a
+          # single safe filename component.
+          REF="${GITHUB_REF_NAME#v}"
+          REF="${REF//\//-}"
           NAME="rockbottom-${REF}"
           WORK="$(mktemp -d)"
           DEST="$WORK/$NAME"
           mkdir -p "$DEST"
+          # `staged/` is created by the artifact-download step above, but on a
+          # manual dispatch that skips it the dir may be absent — ensure it.
+          mkdir -p staged
           # Superproject tree at this ref/commit.
           git archive --format=tar HEAD | tar -x -C "$DEST"
           # Each submodule, placed at its recorded path.
