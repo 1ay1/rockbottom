@@ -80,6 +80,7 @@ struct ProcView {
     SortKey sort = SortKey::Cpu;
     bool sort_desc = true;                // ▼ high-to-low (default) vs ▲ low-to-high
     int selected = 0;
+    int hover = -1;                       // row under the mouse cursor, -1 = none
     int scroll = 0;                       // first visible row (sticky window top)
     int max_rows = 10;
     int width = 120;                      // panel inner width, for column tiers

@@ -82,6 +82,7 @@ struct App {
 
         // Process interaction state.
         int         sel = 0;             // index into the *filtered* view
+        int         hover_row = -1;      // row under the mouse (bare Move), -1 = none
         int         scroll_top = 0;      // first visible row of the proc table
                                          // (sticky: moves only when the cursor
                                          //  would cross the scroll margin)
@@ -400,6 +401,20 @@ struct App {
             }
         }
 
+        // Hover: on a bare Move (no button held), highlight the process row
+        // under the pointer so the table tracks the cursor before you click.
+        // Only a proc row lights up; moving off the list clears it. Buttoned
+        // moves are drags (handled above) and must not repaint a hover.
+        if (me.kind == MouseEventKind::Move && me.button == MouseButton::None) {
+            int hv = -1;
+            if (hit && maya::hit_kind(*hit) == ui::HK_ProcRow) {
+                const int idx = static_cast<int>(maya::hit_index(*hit));
+                if (idx >= 0 && idx < n) hv = idx;
+            }
+            if (hv != m.hover_row) { m.hover_row = hv; return {std::move(m), C{}}; }
+            return {std::move(m), C{}};
+        }
+
         // Only act on button presses for the rest (ignore Move/Release so we
         // don't double-fire; drags fall through harmlessly).
         if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
@@ -638,6 +653,19 @@ struct App {
                 // was wedged): its delta state is from a dead world — drop it,
                 // and don't touch `sampling` (a new run may be in flight).
                 if (sm.epoch != m.sampler_epoch) return {std::move(m), C{}};
+                // Anchor the cursor to the PROCESS it sits on, not the row
+                // index, BEFORE the new snapshot re-sorts the list under it.
+                // Without this the list resorts every sample (cpu% shuffles
+                // rows) while m.sel stays put, so the highlight silently slides
+                // onto whatever process happens to land on that row — the
+                // "it jumped while I was looking at it" bug.
+                //
+                // Only anchor once the user has MOVED the cursor (sel>0): at
+                // the top row the table intentionally floats so the #1 slot
+                // always shows the current hottest process (htop's default).
+                // Pinning there would instead glue the cursor to last tick's
+                // leader. follow_pid (explicit pin) always wins below.
+                const int anchor_pid = m.sel > 0 ? selected_pid(m) : 0;
                 // Pure fold: the effect already did the I/O off-thread.
                 const Health prev = m.last_health;
                 m.snap = std::move(sm.snap);
@@ -646,10 +674,13 @@ struct App {
                 if (static_cast<int>(m.last_health) > static_cast<int>(prev))
                     m.verdict_pulse = 3;   // degrade → flare for 3 ticks
                 m.sampling = false;
-                // Follow mode: keep the cursor pinned to the locked process as
-                // the freshly-sampled list re-orders around it.
-                if (m.follow_pid) select_pid(m, m.follow_pid);
-                clamp_sel(m);
+                // Follow mode pins to its locked pid; otherwise re-resolve the
+                // cursor to the same process in the freshly-sorted view so the
+                // highlight tracks the process, not the row. select_pid falls
+                // back to clamp when the process exited (cursor holds its row).
+                if (m.follow_pid)       select_pid(m, m.follow_pid);
+                else if (anchor_pid > 0) select_pid(m, anchor_pid);
+                else                     clamp_sel(m);
                 // Re-clamp the detail pane's scroll against the FRESH snapshot:
                 // the pinned process may have exited, or the pane's body may
                 // have shrunk (fewer connections, a collapsed section), leaving
@@ -910,6 +941,10 @@ struct App {
         }
 
         // 4. Normal mode.
+        // A keystroke means the user switched to keyboard nav — drop any mouse
+        // hover highlight so it doesn't linger on a stale row under a cursor
+        // that's no longer the focus.
+        m.hover_row = -1;
         if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
             if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
             save_config(m);
@@ -984,6 +1019,14 @@ struct App {
             const int page = std::max(1, compute_layout(m).body_rows - 1);
             if (key(ev, maya::SpecialKey::PageDown)) { m.sel += page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
             if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            // H / M / L — cursor to the top / middle / bottom of the VISIBLE
+            // window without scrolling (vim's screen-relative motions). The
+            // window is [scroll_top, scroll_top+body); clamp_sel keeps it in
+            // range when the list is shorter than a screenful.
+            const int body = std::max(1, compute_layout(m).body_rows);
+            if (key(ev, 'H')) { m.sel = m.scroll_top;                    clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            if (key(ev, 'M')) { m.sel = m.scroll_top + body / 2;         clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            if (key(ev, 'L')) { m.sel = m.scroll_top + body - 1;         clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
         }
 
         // Kill.
@@ -1425,6 +1468,7 @@ struct App {
         fold(static_cast<std::uint64_t>(m.follow_pid));
         for (int pid : m.collapsed) fold(static_cast<std::uint64_t>(pid));
         fold(static_cast<std::uint64_t>(m.sel));
+        fold(static_cast<std::uint64_t>(m.hover_row));
         fold(static_cast<std::uint64_t>(m.scroll_top));
         fold(m.paused ? 1 : 0);
         fold(static_cast<std::uint64_t>(m.refresh_ms));
@@ -1648,6 +1692,7 @@ struct App {
             .sort         = m.sort,
             .sort_desc    = m.sort_desc,
             .selected     = m.sel,
+            .hover        = m.hover_row,
             .scroll       = m.scroll_top,
             .max_rows     = proc_rows,
             .width        = proc_inner_w,

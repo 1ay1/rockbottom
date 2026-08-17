@@ -100,7 +100,8 @@ public:
             if (i >= win_lo && i < win_hi)
                 rows.push_back(proc_row(*procs[static_cast<std::size_t>(i)],
                                         i == view_.selected,
-                                        loud && i == hi, i));
+                                        loud && i == hi, i,
+                                        i == view_.hover && i != view_.selected));
             else
                 rows.emplace_back();   // off-screen: never rendered, only counted
         }
@@ -294,7 +295,8 @@ private:
     }
 
     [[nodiscard]] maya::TableRow proc_row(const ProcInfo& p, bool selected,
-                                          bool culprit, int idx) const {
+                                          bool culprit, int idx,
+                                          bool hovered = false) const {
         using namespace maya;
 
         // Tree rollup / context lookups (index-aligned to the ordered view).
@@ -322,10 +324,14 @@ private:
         // modern list-selection idiom). Ink lifts to the BRIGHT ANSI slot so
         // hues stay meaningful but brighter; bold is reserved for the name
         // and PID (the row's identity) — the strip already does the shouting.
-        auto lift = [&](Color c) { return selected ? brighten(c) : c; };
+        // A HOVERED (but not selected) row gets the same brightening — a
+        // lightweight "pre-selection" so the row under the mouse stands out
+        // before you click, without stealing the cursor's bg strip.
+        const bool lit = selected || hovered;
+        auto lift = [&](Color c) { return lit ? brighten(c) : c; };
         auto cell_st = [&](Color c) { return Style{}.with_fg(lift(c)); };
-        const Color quiet  = selected ? pal::text  : pal::dim;    // dim ink, lifted
-        const Color hushed = selected ? pal::label : pal::faint;  // faint ink, lifted
+        const Color quiet  = lit ? pal::text  : pal::dim;    // dim ink, lifted
+        const Color hushed = lit ? pal::label : pal::faint;  // faint ink, lifted
 
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();

@@ -35,6 +35,9 @@ public:
         static const std::vector<Group> g = {
             {"PROCESSES", {
                 {"↑↓ j k", "select process"},
+                {"g / G", "jump to top / bottom of the list"},
+                {"PgUp PgDn", "page up / down by one screenful"},
+                {"H / M / L", "cursor to top / middle / bottom of the screen"},
                 {"/", "filter: name/pid, or user: state: port: cpu: mem: !neg"},
                 {"t", "toggle FLOW tree ↔ flat list"},
                 {"← →", "collapse / expand subtree (flow)"},
@@ -72,6 +75,7 @@ public:
                 {"q / Esc", "quit"},
             }},
             {"MOUSE", {
+                {"hover row", "highlight the process under the pointer"},
                 {"click row", "pin + select it · header sorts · footer acts"},
                 {"double-click", "open the process detail pane"},
                 {"right-click", "end process (SIGTERM)"},
