@@ -254,6 +254,11 @@ int main(int argc, char** argv) {
         // times a second.
         .fps   = 0,
         .mouse = true,
+        // Report bare (no-button) motion so the process table can highlight
+        // the row under the pointer. maya gates this behind mode 1003; the
+        // move flood is cheap here because hover_row folds into visual_hash,
+        // so a move WITHIN a row is a no-op and only a row change repaints.
+        .hover_motion = true,
         .mode  = maya::Mode::Fullscreen,
     });
     return 0;
