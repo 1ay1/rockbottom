@@ -10,11 +10,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
-#include <unistd.h>   // getpid (selfcheck)
+#include <unistd.h>   // getpid, _exit (selfcheck)
 
 int main(int argc, char** argv) {
     using namespace rockbottom;
@@ -114,10 +116,29 @@ int main(int argc, char** argv) {
     // a platform we can't run locally. Two samples so delta-based fields
     // (cpu%, rates) are actually computed, not left at their first-tick zero.
     if (selfcheck) {
-        Sampler sampler;
-        (void)sampler.sample(cfg.sort, 0, /*fast=*/false);   // prime deltas
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        const Snapshot s = sampler.sample(cfg.sort, 0, /*fast=*/false);
+        // Run the two priming/measuring samples on a worker with a hard
+        // deadline. A collector that WEDGES (a hung syscall on a broken
+        // /proc, a stuck IOReport subscription, an NSS lookup that never
+        // returns) must fail this check loudly rather than hang CI until the
+        // job's global timeout — "never returned" is itself a bug worth
+        // catching. std::async + a timed wait gives us that watchdog without
+        // pulling in a signal handler.
+        auto work = std::async(std::launch::async, [&cfg]() -> Snapshot {
+            Sampler sampler;
+            (void)sampler.sample(cfg.sort, 0, /*fast=*/false);   // prime deltas
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            return sampler.sample(cfg.sort, 0, /*fast=*/false);
+        });
+        if (work.wait_for(std::chrono::seconds(30)) != std::future_status::ready) {
+            std::fprintf(stderr,
+                "selfcheck FAILED: sampler did not complete within 30s "
+                "(a collector is wedged — hung syscall or deadlock)\n");
+            // Don't join a stuck thread on the way out: _exit past any
+            // destructor that might also block on the wedged resource.
+            std::fflush(stderr);
+            _exit(2);
+        }
+        const Snapshot s = work.get();
 
         int failures = 0;
         auto check = [&](bool ok, const char* what) {

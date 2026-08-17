@@ -33,21 +33,36 @@ namespace rockbottom::sys {
 // /proc node, so steady-state allocations are ZERO. Returns false + clears
 // `out` on failure (file gone / permission). procfs files report size 0 via
 // stat, so we can't pre-size from st_size — read in chunks until EOF.
+//
+// Robustness: every /proc node we read is a few KB, but a caller could aim
+// this at a regular file (or a pathological/growing sysfs node). Cap the read
+// at kMaxSlurp so a bad path can never balloon the sampler's memory or spin
+// forever — we return what we got (still `true`; the parsers all tolerate a
+// truncated tail) rather than allocating without bound. EINTR is retried;
+// EAGAIN too, in case a caller ever hands us a non-blocking fd.
 inline bool slurp_into(const char* path, std::string& out) {
+    constexpr std::size_t kMaxSlurp = 8u << 20;   // 8 MiB hard ceiling
     out.clear();
     int fd = ::open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return false;
     char buf[4096];
+    bool ok = true;
     for (;;) {
         ssize_t n = ::read(fd, buf, sizeof buf);
-        if (n > 0) { out.append(buf, static_cast<std::size_t>(n)); continue; }
-        if (n == 0) break;                       // EOF
-        if (errno == EINTR) continue;            // retry a signal-interrupted read
-        ::close(fd);
-        out.clear();
-        return false;
+        if (n > 0) {
+            out.append(buf, static_cast<std::size_t>(n));
+            if (out.size() >= kMaxSlurp) break;   // refuse to grow without bound
+            continue;
+        }
+        if (n == 0) break;                        // EOF
+        if (errno == EINTR || errno == EAGAIN) continue;
+        ok = false;
+        break;
     }
-    ::close(fd);
+    // Retry close across EINTR; on most platforms the fd is already gone after
+    // EINTR, but the retry is harmless and correct where it isn't.
+    while (::close(fd) != 0 && errno == EINTR) {}
+    if (!ok) { out.clear(); return false; }
     return true;
 }
 
