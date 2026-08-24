@@ -23,10 +23,18 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
 
 namespace rockbottom {
 
@@ -35,15 +43,51 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Run a command, capture stdout. Empty string on any failure.
-std::string run(const char* cmd) {
+// Spawn a program directly (no intermediate /bin/sh) and capture its stdout.
+// stderr is redirected to /dev/null in the child, so callers no longer append
+// a shell "2>/dev/null". Empty string on any failure. Going through posix_spawn
+// instead of popen() eliminates the extra shell fork+exec that doubled the
+// cost of every nvidia-smi invocation.
+std::string run_argv(const char* const argv[]) {
     std::string out;
-    FILE* p = ::popen(cmd, "r");
-    if (!p) return out;
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) return out;
+
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    // child stdout -> pipe write end; stderr -> /dev/null
+    posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addclose(&fa, pipefd[0]);
+    posix_spawn_file_actions_addclose(&fa, pipefd[1]);
+
+    pid_t pid = 0;
+    int rc = ::posix_spawnp(&pid, argv[0], &fa, nullptr,
+                            const_cast<char* const*>(argv), environ);
+    posix_spawn_file_actions_destroy(&fa);
+    ::close(pipefd[1]);   // parent keeps only the read end
+    if (rc != 0) { ::close(pipefd[0]); return out; }
+
     char buf[4096];
-    while (std::fgets(buf, sizeof buf, p)) out += buf;
-    ::pclose(p);
+    for (;;) {
+        ssize_t n = ::read(pipefd[0], buf, sizeof buf);
+        if (n > 0) { out.append(buf, static_cast<std::size_t>(n)); continue; }
+        if (n == 0) break;
+        if (errno == EINTR) continue;
+        break;
+    }
+    ::close(pipefd[0]);
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     return out;
+}
+
+// Launch a program NOW and return a future for its stdout, so several
+// independent nvidia-smi queries overlap instead of running back-to-back.
+std::future<std::string> run_argv_async(std::vector<const char*> argv) {
+    argv.push_back(nullptr);
+    return std::async(std::launch::async,
+                      [a = std::move(argv)] { return run_argv(a.data()); });
 }
 
 // Split a CSV line into trimmed fields.
@@ -80,13 +124,26 @@ bool nvidia_smi_exists() {
 
 // ── NVIDIA ────────────────────────────────────────────────────────────────
 void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
-    const char* q =
-        "nvidia-smi --query-gpu="
+    // Launch the two independent per-process queries FIRST (when needed) so
+    // their subprocess latency overlaps the query-gpu fork + all parsing.
+    // pmon is the slowest (~80ms), so kicking it off up front hides most of it
+    // under everything else. Sequentially these cost ~150ms; overlapped the
+    // wall time collapses to the single slowest fork.
+    std::future<std::string> apps_fut, pmon_fut;
+    if (with_procs) {
+        apps_fut = run_argv_async({
+            "nvidia-smi", "--query-compute-apps=pid,used_memory,name",
+            "--format=csv,noheader,nounits"});
+        pmon_fut = run_argv_async({"nvidia-smi", "pmon", "-c", "1"});
+    }
+
+    static const char* const q[] = {
+        "nvidia-smi", "--query-gpu="
         "name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
         "power.draw,power.limit,clocks.sm,clocks.mem,fan.speed,"
-        "utilization.encoder,utilization.decoder,pstate,driver_version "
-        "--format=csv,noheader,nounits 2>/dev/null";
-    std::string res = run(q);
+        "utilization.encoder,utilization.decoder,pstate,driver_version",
+        "--format=csv,noheader,nounits", nullptr};
+    std::string res = run_argv(q);
     if (res.empty()) return;
 
     std::size_t line_start = 0;
@@ -132,8 +189,7 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
     // alone misses every non-CUDA GPU user, which is most of them on a desktop.
     // Attribute to the first GPU since these free queries don't name the card.
     auto& procs = out.front().procs;
-    auto ingest_apps = [&](const char* query, char type) {
-        std::string apps = run(query);
+    auto ingest_apps = [&](std::string apps, char type) {
         std::size_t ls = 0;
         while (ls < apps.size()) {
             std::size_t nl = apps.find('\n', ls);
@@ -171,8 +227,7 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
             }
         }
     };
-    ingest_apps("nvidia-smi --query-compute-apps=pid,used_memory,name "
-                "--format=csv,noheader,nounits 2>/dev/null", 'C');
+    ingest_apps(apps_fut.valid() ? apps_fut.get() : std::string{}, 'C');
     // NOTE: --query-accounted-apps is deliberately NOT ingested. It lists
     // accounting records — including apps that ALREADY EXITED — and every
     // currently-running compute app appears in BOTH lists, so summing the two
@@ -186,7 +241,7 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
     // Columns: gpu pid type sm mem enc dec [jpg ofa] command. Older drivers
     // omit the trailing engines; parse defensively by header where possible.
     {
-        std::string pm = run("nvidia-smi pmon -c 1 2>/dev/null");
+        std::string pm = pmon_fut.valid() ? pmon_fut.get() : std::string{};
         std::size_t ls = 0;
         while (ls < pm.size()) {
             std::size_t nl = pm.find('\n', ls);

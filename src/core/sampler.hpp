@@ -16,6 +16,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <future>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -230,6 +231,20 @@ private:
         std::chrono::steady_clock::time_point sampled_at{};
     };
     std::unordered_map<int, GpuFdinfoPrev> gpu_fdinfo_prev_;
+
+    // DECLARED LAST so it is DESTROYED FIRST. The GPU worker runs on a future
+    // that spans ticks and captures `this`, touching gpu_fdinfo_prev_, gpu_hist_*
+    // and the per-GPU history rings. A std::async future blocks in its
+    // destructor until the task finishes, so it must out-die (be destroyed
+    // before) every member the task can touch — hence its position at the very
+    // end of the class. sample() harvests a finished result and launches the
+    // next run without ever blocking on nvidia-smi (its subprocess can take
+    // 25-150ms); the visible gauges lag by at most one refresh interval, which
+    // is already the GPU cadence. valid() means a run is in flight;
+    // gpu_inflight_procs_ records whether that run refreshes the expensive
+    // per-process table, so a gauges-only run never supersedes a pending one.
+    bool                                 gpu_inflight_procs_ = false;
+    std::future<std::vector<GpuInfo>>    gpu_inflight_;
 };
 
 }  // namespace rockbottom
