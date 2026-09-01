@@ -20,6 +20,12 @@
 #ifndef _WIN32
 #include <pwd.h>      // getpwuid_r / struct passwd (macOS resolver)
 #endif
+#ifdef __linux__
+// The Linux-only getent fallback spawns a helper directly (no shell) and
+// reaps it; see user_of() for why popen() is not acceptable here.
+#include <spawn.h>
+#include <sys/wait.h>
+#endif
 
 namespace rockbottom::sys {
 
@@ -250,19 +256,72 @@ inline std::string user_of(uid_t uid) {
     //    system's own dynamically-linked getent, which loads the NSS stack
     //    safely in a normal process. Base install on every distro we target
     //    (glibc on Debian/Ubuntu/RHEL/SUSE, busybox on Alpine).
-    char cmd[64];
-    std::snprintf(cmd, sizeof cmd, "getent passwd %lu 2>/dev/null",
-                  static_cast<unsigned long>(uid));
-    if (FILE* p = ::popen(cmd, "r")) {
-        char line[512];
-        std::string name;
-        if (std::fgets(line, sizeof line, p)) {
+    //
+    // SECURITY: this deliberately does NOT use popen(). popen() runs the
+    // string through /bin/sh, which resolves `getent` against the inherited
+    // PATH — and `rb` is routinely run under sudo. A writable directory
+    // earlier in a preserved PATH would then be arbitrary code execution as
+    // root, from a monitoring tool, triggered by nothing more than a process
+    // owned by an unknown uid. Instead we posix_spawn a FIXED absolute path
+    // with a fixed argv: no shell, no PATH search, no word-splitting, and the
+    // uid can only ever arrive as a single argv element (it is a numeric type,
+    // but the point is that even a hostile string could not become a command).
+    // Both candidate paths are checked because Alpine/busybox puts it in /usr/bin
+    // while some older distros ship /bin/getent.
+    {
+        char uid_arg[32];
+        std::snprintf(uid_arg, sizeof uid_arg, "%lu",
+                      static_cast<unsigned long>(uid));
+        static const char* const kGetentPaths[] = {"/usr/bin/getent", "/bin/getent"};
+
+        for (const char* exe : kGetentPaths) {
+            if (::access(exe, X_OK) != 0) continue;
+
+            int pipefd[2];
+            if (::pipe(pipefd) != 0) break;
+
+            posix_spawn_file_actions_t fa;
+            posix_spawn_file_actions_init(&fa);
+            posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
+            posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+            posix_spawn_file_actions_addclose(&fa, pipefd[0]);
+            posix_spawn_file_actions_addclose(&fa, pipefd[1]);
+
+            char* const argv[] = {const_cast<char*>(exe),
+                                  const_cast<char*>("passwd"),
+                                  uid_arg,
+                                  nullptr};
+            pid_t pid = 0;
+            // Empty envp: getent needs no environment to do an NSS lookup, and
+            // an inherited one only offers a loader-variable attack surface.
+            char* const envp[] = {nullptr};
+            const int rc = ::posix_spawn(&pid, exe, &fa, nullptr, argv, envp);
+            posix_spawn_file_actions_destroy(&fa);
+            ::close(pipefd[1]);
+            if (rc != 0) { ::close(pipefd[0]); continue; }
+
+            std::string outbuf;
+            char buf[512];
+            for (;;) {
+                const ssize_t n = ::read(pipefd[0], buf, sizeof buf);
+                if (n > 0) {
+                    outbuf.append(buf, static_cast<std::size_t>(n));
+                    // The name is field 1; one line is all we will ever need.
+                    if (outbuf.size() > 4096) break;
+                    continue;
+                }
+                if (n < 0 && errno == EINTR) continue;
+                break;
+            }
+            ::close(pipefd[0]);
+            int status = 0;
+            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+
             // passwd format: name:passwd:uid:gid:gecos:dir:shell — take field 1.
-            if (const char* colon = std::strchr(line, ':'))
-                name.assign(line, static_cast<std::size_t>(colon - line));
+            const std::size_t colon = outbuf.find(':');
+            if (colon != std::string::npos && colon > 0)
+                return outbuf.substr(0, colon);
         }
-        ::pclose(p);
-        if (!name.empty()) return name;
     }
 #endif
 

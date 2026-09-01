@@ -559,9 +559,9 @@ struct App {
         // automatically on the first background tick, a heartbeat later, so the
         // window appears INSTANTLY with live CPU/mem/proc data and the battery /
         // wifi / ports chips arrive a moment after.
-        m.sampler->sample(m.sort, kTopN, /*fast=*/true);   // prime delta baselines
+        m.sampler->sample(m.sort, /*fast=*/true);   // prime delta baselines
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        m.snap = m.sampler->sample(m.sort, kTopN, /*fast=*/true);  // real, populated frame
+        m.snap = m.sampler->sample(m.sort, /*fast=*/true);  // real, populated frame
         // rockbottom opens on the flat sorted list — the fastest thing to read
         // at a glance; press t for the tree (which opens fully expanded).
         //
@@ -592,12 +592,6 @@ struct App {
         c.save();
     }
 
-    // Cap on processes carried from the sampler into the UI per tick. 0 = keep
-    // EVERYTHING: the walk touches every pid anyway, the table windows/scrolls,
-    // and the flow tree needs full parentage (a truncated list orphans kids and
-    // hides processes on a Pid/Name sort). Memory cost of ~all procs is trivial.
-    static constexpr int kTopN = 0;
-
     // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
     // runs on a dedicated detached thread; when it finishes it dispatches a
     // Sampled{} message back through update(). task_isolated (not task) is
@@ -617,7 +611,7 @@ struct App {
         sampler->set_detail_pid(m.detail == ui::Detail::Proc ? m.detail_pid : 0);
         return maya::Cmd<Msg>::task_isolated(
             [sampler, sort, epoch](std::function<void(Msg)> dispatch) {
-                dispatch(Sampled{sampler->sample(sort, kTopN), epoch});
+                dispatch(Sampled{sampler->sample(sort), epoch});
             });
     }
 
@@ -1323,8 +1317,20 @@ struct App {
         return out;
     }
 
+    // Does the process at this pid still look like the one we armed against?
+    //
+    // FAILS CLOSED. If either start time is unknown (0) we REFUSE rather than
+    // proceed. This used to return true — "unknown, so we can't check" — which
+    // inverted the whole point of the guard: the case where the armed pid has
+    // vanished from the snapshot is precisely the suspicious one, and the
+    // action being gated is sending SIGKILL. The cost of a false negative is
+    // that the user presses `y` again after a re-sample; the cost of a false
+    // positive is signalling an unrelated process. Those are not symmetric.
+    //
+    // ±2s tolerance: start_sec derives from boot_epoch, which can differ by a
+    // second across sampler restarts.
     static bool start_matches(std::uint64_t armed, std::uint64_t now) {
-        if (armed == 0 || now == 0) return true;   // unknown → can't check
+        if (armed == 0 || now == 0) return false;   // unknown → refuse
         return armed > now ? armed - now <= 2 : now - armed <= 2;
     }
 
@@ -1584,42 +1590,21 @@ struct App {
                            : wide_screen ? (ncores > 32 ? 8 : ncores > 8 ? 6 : 2)
                                          : (ncores > 24 ? 4 : ncores > 12 ? 3 : 2);
         // Narrow mode packs the cores into a single heat-strip row.
-        const int cores_rows = narrow ? 1 : (ncores + cpu_cols - 1) / cpu_cols;
         const int mem_h  = 2 + (s.mem.swap_total.value > 0 ? 2 : 1);
         const int net_h  = 2 + ui::NetPanel::rows(s.nets);
         const int disk_mounts = static_cast<int>(s.disks.size());
         const int disk_h = 2 + 1 + disk_mounts;                       // one mount per row on the right
 
-        // The ALL graph is the first thing to shrink when height is scarce.
-        // Wide mode: match the CPU column's height to the MEM+NET+DISK stack so
-        // neither column leaves a trailing gap; the graph flexes to fit.
-        // Narrow mode: everything stacks, so fit the graph into what is left
-        // after the other cards + a 5-row process table minimum.
+        // The right stat stack's natural height, used below as the floor the
+        // top band may never shrink under.
+        //
+        // NOTE: there is deliberately no graph_h estimate here any more. Every
+        // panel is constructed with graph_h = 0 and .expand(), so each one
+        // self-fills the flex slot it is actually given and its mountain is as
+        // tall as the band really is. The old hand-solved estimate could (and
+        // did) drift from what the renderer chose; the only real number is
+        // band_px, computed just below.
         const int right_stack_h = mem_h + net_h + disk_h;
-        int graph_h = 4;
-        if (narrow) {
-            const int fixed = 2 + 3 + 1                 // header+verdict+footer
-                            + 2 + 1 + cores_rows        // cpu border + ALL row + cores
-                            + right_stack_h
-                            + (2 + 5)                   // proc border + 5 rows
-                            + 2;                        // outer padding slack
-            graph_h = std::clamp(m.height - fixed, 0, 12);
-        } else {
-            // Classic split: share the vertical space between the top stat band
-            // and the process table so NEITHER dominates. The band takes about
-            // 45% of the content height (bounded so it stays readable but the
-            // process table — the primary view — always keeps the majority),
-            // and cpu_h drives both stat columns to that height.
-            const int chrome = 2 + 3 + 1;       // header + verdict + footer
-            const int content = std::max(10, m.height - chrome);
-            // Target band height: ~45% of the content, clamped to a sane range
-            // and never below what the compact right stack needs.
-            const int band_target = std::clamp(content * 45 / 100, 12, content - 10);
-            const int want = std::max(band_target, right_stack_h);
-            // cpu_h = 3 + graph_h + cores_rows; solve graph_h for that band.
-            graph_h = std::clamp(want - 3 - cores_rows, 2, 22);
-        }
-        const int cpu_h  = 2 + 1 + (graph_h >= 2 ? graph_h : 1) + cores_rows;
 
         // Classic-path top band height, in REAL rows. The band self-fills to
         // this exact height and its panels (CPU/MEM/NET all in fill mode) grow
@@ -1779,22 +1764,33 @@ struct App {
         // the process list (the primary view on a narrow screen) still keeps
         // the majority. MEM/NET/DISK sit at natural height inside; the CPU
         // panel's .expand(1) soaks the slack, growing its graph.
-        Element top = narrow
-            ? (Element{fit_col({
-                   // CPU is essential (kKeepAlways) and grows to fill slack via
-                   // its .expand(1) mountain. MEM/NET/DISK carry keep ranks so
-                   // that on a SHORT terminal fit_col sheds whole panels
-                   // (DISK first, then NET, then MEM) rather than flex-shrinking
-                   // every panel into an empty ╭title╮/╰╯ border shell. On a
-                   // tall phone the natural size keeps all four; nothing sheds.
-                   {Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem, /*heat=*/true}.expand(1)}
-                        | grow(1) | hit(ui::hit_band(ui::Detail::Cpu))},
-                   {Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)), 3},
-                   {Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)), 2},
-                   {Element{DiskPanel{s.disks, s.disk_io, false}}
-                        | hit(ui::hit_band(ui::Detail::Disk)), 1},
-               }).build()} | height(band_px)).build()
-            : (h(
+        //
+        // The fit_col result is MATERIALIZED into a named Element before the
+        // height() pipe rather than chained inline. Behaviourally identical
+        // (fit_col's render lambda owns its items through a shared_ptr, so
+        // nothing here ever dangled), but chaining left GCC unable to prove it
+        // across the inlined std::function and it reported a -Wdangling-pointer
+        // at -O1+. Naming the step keeps the build warning-clean under -Werror
+        // and reads better than a pragma suppressing a real diagnostic class.
+        Element top;
+        if (narrow) {
+            Element stacked = fit_col({
+                // CPU is essential (kKeepAlways) and grows to fill slack via
+                // its .expand(1) mountain. MEM/NET/DISK carry keep ranks so
+                // that on a SHORT terminal fit_col sheds whole panels
+                // (DISK first, then NET, then MEM) rather than flex-shrinking
+                // every panel into an empty ╭title╮/╰╯ border shell. On a
+                // tall phone the natural size keeps all four; nothing sheds.
+                {Element{CpuPanel{s.cpu, cpu_cols, graph_w, 0, &s.mem, /*heat=*/true}.expand(1)}
+                     | grow(1) | hit(ui::hit_band(ui::Detail::Cpu))},
+                {Element{MemPanel{s.mem}}  | hit(ui::hit_band(ui::Detail::Mem)), 3},
+                {Element{NetPanel{s.nets}} | hit(ui::hit_band(ui::Detail::Net)), 2},
+                {Element{DiskPanel{s.disks, s.disk_io, false}}
+                     | hit(ui::hit_band(ui::Detail::Disk)), 1},
+            }).build();
+            top = (Element{std::move(stacked)} | height(band_px)).build();
+        } else {
+            top = (h(
                   // CPU column self-fills its slot (fill() mountain) exactly
                   // like MEM/NET on the right — NO fixed graph_h estimate, so
                   // the graph is as tall as the band actually is at any
@@ -1826,6 +1822,7 @@ struct App {
                         | width(right_w);
                   }()
               ) | gap(gap_w) | height(band_px)).build();
+        }
 
         return canvas((v(
             Header{s, m.paused},
