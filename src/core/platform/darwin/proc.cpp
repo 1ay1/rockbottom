@@ -75,7 +75,7 @@ std::string proc_argv(int pid) {
 
 }  // namespace
 
-void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
+void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
     // The process the detail pane is inspecting (0 = none). The expensive
     // per-pid probes below are for that ONE row, so they're gated on it — the
     // same contract the Linux backend already honoured. Without this the cost
@@ -246,11 +246,24 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         // directory round-trips a second and is the single biggest per-tick
         // cost here. A uid maps to one name for the life of the run, so resolve
         // each distinct uid exactly once and reuse it forever.
+        //
+        // Deliberate asymmetry with the Linux backend: there is no puid_cache_
+        // here because macOS hands us the uid directly in pbi_uid, so there is
+        // no per-pid stat() to memoise — only the uid→name step is expensive.
+        // uid_cache_ is keyed by uid, not pid, so it is bounded by the number
+        // of DISTINCT owners rather than by process churn; the guard below is
+        // a backstop for a pathological host (per-container uid ranges) rather
+        // than an expected path.
         {
             const unsigned uid = tai.pbsd.pbi_uid;
             auto uit = uid_cache_.find(uid);
-            if (uit == uid_cache_.end())
+            if (uit == uid_cache_.end()) {
+                // Never let a uid-per-container host grow this without bound.
+                // Dropping the map costs one directory lookup per live uid on
+                // the next tick and cannot produce a wrong name.
+                if (uid_cache_.size() > 4096) uid_cache_.clear();
                 uit = uid_cache_.emplace(uid, sys::user_of(static_cast<uid_t>(uid))).first;
+            }
             p.user = uit->second;
         }
 
@@ -336,10 +349,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         return [](const ProcInfo& a, const ProcInfo& b){ return a.cpu > b.cpu; };
     };
     std::sort(out.begin(), out.end(), by(sort));
-    // top_n <= 0 means "keep everything" — the UI windows/scrolls and tree mode
-    // needs full parentage, so we no longer drop processes here.
-    if (top_n > 0 && static_cast<int>(out.size()) > top_n)
-        out.resize(static_cast<std::size_t>(top_n));
+    // Every process is kept — see the Linux backend for why truncating here
+    // would break tree mode's parentage.
     snap.procs = std::move(out);
 }
 

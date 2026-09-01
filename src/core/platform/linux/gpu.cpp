@@ -571,6 +571,21 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
                 if (g.procs.empty() && g.name == name) { g.procs = std::move(ps); break; }
 
     // Attach rolling history per GPU index (survives across ticks).
+    //
+    // Drop rings for indices beyond the CURRENT gpu count first. The map is
+    // keyed by position in the list, and that list shrinks for real: an eGPU
+    // unplugged, a VFIO passthrough card bound away from the host, a
+    // driver-reset card that vanishes from nvidia-smi for a few ticks. A stale
+    // ring is not just wasted memory — if a card comes back at a DIFFERENT
+    // index, it would inherit some other card's history and draw a graph that
+    // never happened.
+    for (auto it = gpu_hist_.begin(); it != gpu_hist_.end(); )
+        it = static_cast<std::size_t>(it->first) < gpus.size()
+                 ? std::next(it) : gpu_hist_.erase(it);
+    for (auto it = gpu_hist_len_.begin(); it != gpu_hist_len_.end(); )
+        it = static_cast<std::size_t>(it->first) < gpus.size()
+                 ? std::next(it) : gpu_hist_len_.erase(it);
+
     for (std::size_t i = 0; i < gpus.size(); ++i) {
         int idx = static_cast<int>(i);
         auto& rings = gpu_hist_[idx];

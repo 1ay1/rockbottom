@@ -176,7 +176,16 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool /*with_procs*/) {
     ::IOObjectRelease(it);
 
     // Attach rolling util/mem history per GPU index (survives across ticks) —
-    // same bookkeeping the Linux backend does so the hero graph animates.
+    // same bookkeeping the Linux backend does so the hero graph animates,
+    // including the prune of indices that are no longer present (see the Linux
+    // backend for why a stale ring is a correctness bug, not just a leak).
+    for (auto hit = gpu_hist_.begin(); hit != gpu_hist_.end(); )
+        hit = static_cast<std::size_t>(hit->first) < gpus.size()
+                  ? std::next(hit) : gpu_hist_.erase(hit);
+    for (auto lit = gpu_hist_len_.begin(); lit != gpu_hist_len_.end(); )
+        lit = static_cast<std::size_t>(lit->first) < gpus.size()
+                  ? std::next(lit) : gpu_hist_len_.erase(lit);
+
     for (std::size_t i = 0; i < gpus.size(); ++i) {
         int idx = static_cast<int>(i);
         auto& rings = gpu_hist_[idx];

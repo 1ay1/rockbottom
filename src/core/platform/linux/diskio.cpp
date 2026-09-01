@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 
 namespace rockbottom {
@@ -114,6 +115,9 @@ void Sampler::sample_drives(std::vector<DriveIO>& drives, double dt) {
     const char* p = ds.c_str();
     const char* end = p + ds.size();
     constexpr std::uint64_t kSector = 512;
+    // Devices present THIS tick; anything in prev_drive_ but not here has gone
+    // away and is pruned at the end of the walk.
+    std::set<std::string> seen_drives;
 
     while (p < end) {
         const char* nl = static_cast<const char*>(std::memchr(p, '\n', static_cast<std::size_t>(end - p)));
@@ -155,6 +159,7 @@ void Sampler::sample_drives(std::vector<DriveIO>& drives, double dt) {
         if (partition || !nlen) { p = le < end ? le + 1 : end; continue; }
 
         std::string name(ns, nlen);
+        seen_drives.insert(name);
         DrivePrev& pv = prev_drive_[name];
         auto delta = [](std::uint64_t cur, std::uint64_t prev) {
             return cur > prev ? cur - prev : 0;
@@ -187,6 +192,15 @@ void Sampler::sample_drives(std::vector<DriveIO>& drives, double dt) {
         drives.push_back(std::move(d));
         p = le < end ? le + 1 : end;
     }
+
+    // Prune drives that VANISHED (USB disk unplugged, dm-crypt mapping torn
+    // down, loop device detached, an LVM volume removed). Without this their
+    // DrivePrev — which carries a 48-float latency ring each — lived for the
+    // life of the process, so a host that churns loop/dm devices (any CI box,
+    // any machine mounting disk images) grew this map without bound. Same
+    // seen-set discipline the net collector uses for interfaces.
+    for (auto it = prev_drive_.begin(); it != prev_drive_.end(); )
+        it = seen_drives.count(it->first) ? std::next(it) : prev_drive_.erase(it);
 
     // Busiest / slowest first — that's the drive the operator cares about.
     std::sort(drives.begin(), drives.end(), [](const DriveIO& a, const DriveIO& b) {

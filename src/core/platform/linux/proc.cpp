@@ -18,7 +18,7 @@ namespace rockbottom {
 
 using namespace procfs;
 
-void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
+void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
     DIR* proc = ::opendir("/proc");
     if (!proc) return;
 
@@ -376,8 +376,15 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
                 puid_cache_[pid] = {starttime, uid};
             }
             auto uit = uid_cache_.find(uid);
-            if (uit == uid_cache_.end())
+            if (uit == uid_cache_.end()) {
+                // Backstop against a host with a very large distinct-uid space
+                // (per-container uid ranges). Bounded by DISTINCT owners, not
+                // process churn, so this effectively never fires on a normal
+                // machine; dropping the map costs one lookup per live uid next
+                // tick and cannot produce a wrong name. Mirrors the Darwin path.
+                if (uid_cache_.size() > 4096) uid_cache_.clear();
                 uit = uid_cache_.emplace(uid, user_of(static_cast<uid_t>(uid))).first;
+            }
             p.user = uit->second;
         }
 
@@ -455,11 +462,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, int top_n, double dt) {
         return [](const ProcInfo& a, const ProcInfo& b){ return a.cpu > b.cpu; };
     };
     std::sort(out.begin(), out.end(), by(sort));
-    // top_n <= 0 means "keep everything" — the UI windows/scrolls and tree mode
-    // needs full parentage, so we no longer drop processes here. A positive cap
-    // still trims (kept for callers that want a bounded snapshot).
-    if (top_n > 0 && static_cast<int>(out.size()) > top_n)
-        out.resize(static_cast<std::size_t>(top_n));
+    // Every process is kept: the UI windows/scrolls the list and tree mode
+    // needs full parentage to resolve roots (a truncated list would orphan
+    // children onto the root level and silently misreport the hierarchy).
     snap.procs = std::move(out);
 }
 
