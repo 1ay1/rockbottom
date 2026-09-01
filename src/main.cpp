@@ -26,11 +26,13 @@ int main(int argc, char** argv) {
     bool topology  = false;
     bool bench     = false;
     bool selfcheck = false;
+    bool doctor    = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-config") == 0) no_config = true;
         if (std::strcmp(argv[i], "--topology") == 0) topology = true;
         if (std::strcmp(argv[i], "--bench") == 0) bench = true;
         if (std::strcmp(argv[i], "--selfcheck") == 0) selfcheck = true;
+        if (std::strcmp(argv[i], "--doctor") == 0) doctor = true;
     }
 
     // Precedence: defaults < config file < CLI flags.
@@ -75,19 +77,17 @@ int main(int argc, char** argv) {
     if (bench) {
         using clock = std::chrono::steady_clock;
         Sampler sampler;
-        // Match the app's real call (app.hpp kTopN == 0 = keep every process,
-        // because the UI scrolls/tree-views the full list). Passing a small
-        // top_n here would under-measure the sort + ProcInfo build the running
-        // program actually pays each tick.
-        constexpr int kBenchTopN = 0;
-        (void)sampler.sample(cfg.sort, kBenchTopN, /*fast=*/true);   // prime: cold caches
+        // The sampler always keeps every process (the UI scrolls and tree-views
+        // the full list), so the bench measures exactly the sort + ProcInfo
+        // build the running program pays each tick — no cap to under-measure it.
+        (void)sampler.sample(cfg.sort, /*fast=*/true);   // prime: cold caches
 
         constexpr int kIters = 40;
         std::vector<double> ms;
         ms.reserve(kIters);
         for (int i = 0; i < kIters; ++i) {
             const auto t0 = clock::now();
-            const Snapshot s = sampler.sample(cfg.sort, kBenchTopN, /*fast=*/false);
+            const Snapshot s = sampler.sample(cfg.sort, /*fast=*/false);
             ms.push_back(std::chrono::duration<double, std::milli>(clock::now() - t0).count());
             // Sleep between samples so throttled collectors reach their due
             // time at a realistic cadence rather than being starved or spun.
@@ -125,9 +125,9 @@ int main(int argc, char** argv) {
         // pulling in a signal handler.
         auto work = std::async(std::launch::async, [&cfg]() -> Snapshot {
             Sampler sampler;
-            (void)sampler.sample(cfg.sort, 0, /*fast=*/false);   // prime deltas
+            (void)sampler.sample(cfg.sort, /*fast=*/false);   // prime deltas
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            return sampler.sample(cfg.sort, 0, /*fast=*/false);
+            return sampler.sample(cfg.sort, /*fast=*/false);
         });
         if (work.wait_for(std::chrono::seconds(30)) != std::future_status::ready) {
             std::fprintf(stderr,
@@ -182,6 +182,151 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // --doctor: report what every collector actually produced, and when a
+    // domain is EMPTY, say WHY.
+    //
+    // This exists because rockbottom's collectors all degrade silently by
+    // design — `if (statvfs(...) != 0) continue;` is the right behaviour for a
+    // monitor, but it leaves a user staring at a blank GPU panel with no way
+    // to distinguish "no GPU" from "no permission" from "the label didn't
+    // match" short of running strace. --topology already proved the need for
+    // exactly this on the CPU probe; --doctor generalises it to every domain.
+    //
+    // Output is plain text, one line per collector, so it pastes cleanly into
+    // a bug report. This is the FIRST thing to ask for when someone says "the
+    // X panel is empty on my machine".
+    if (doctor) {
+        auto work = std::async(std::launch::async, [&cfg]() -> Snapshot {
+            Sampler sampler;
+            (void)sampler.sample(cfg.sort, /*fast=*/false);   // prime deltas
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            return sampler.sample(cfg.sort, /*fast=*/false);
+        });
+        // Same watchdog discipline as --selfcheck: a wedged collector must
+        // report as wedged rather than hang the diagnostic tool.
+        if (work.wait_for(std::chrono::seconds(30)) != std::future_status::ready) {
+            std::fprintf(stderr,
+                "doctor: sampler did not complete within 30s — a collector is "
+                "wedged (hung syscall or deadlock). This is itself the finding.\n");
+            std::fflush(stderr);
+            _exit(2);
+        }
+        const Snapshot s = work.get();
+
+        std::printf("%s\n", kVersionLine);
+        std::printf("host %s · kernel %s\n\n", s.hostname.c_str(), s.kernel.c_str());
+        std::printf("%-12s %-4s %s\n", "COLLECTOR", "OK", "DETAIL");
+
+        int empty_count = 0;
+        // ok=true prints a count/summary; ok=false prints the REASON the domain
+        // is empty, which is the entire point of this subcommand.
+        //
+        // The status marker is ASCII ("yes"/"no") rather than a glyph: printf's
+        // %-4s pads by BYTES, so a multi-byte em-dash silently under-pads and
+        // ragged the column. Plain text also survives a pipe into a bug report
+        // on a terminal with no UTF-8.
+        auto row = [&](const char* name, bool ok, const std::string& detail) {
+            if (!ok) ++empty_count;
+            std::printf("  %-10s %-4s %s\n", name, ok ? "yes" : "no", detail.c_str());
+        };
+
+        row("procs", !s.procs.empty(),
+            s.procs.empty()
+                ? "no processes — /proc unreadable or sandboxed (Termux without proc access)"
+                : std::to_string(s.procs.size()) + " processes, " +
+                  std::to_string(s.thread_count) + " threads, " +
+                  std::to_string(s.running) + " running, " +
+                  std::to_string(s.zombies) + " zombie");
+
+        row("cpu", !s.cpu.cores.empty(),
+            s.cpu.cores.empty()
+                ? "no per-core data — /proc/stat blocked or sysctl unavailable"
+                : std::to_string(s.cpu.cores.size()) + " cores, " +
+                  (s.cpu.perf_cores || s.cpu.eff_cores
+                       ? std::to_string(s.cpu.perf_cores) + "P+" +
+                         std::to_string(s.cpu.eff_cores) + "E, "
+                       : "homogeneous, ") +
+                  "busy " + std::to_string(static_cast<int>(s.cpu.total.percent())) + "%");
+
+        row("memory", s.mem.total.value > 0,
+            s.mem.total.value == 0
+                ? "no memory data — /proc/meminfo unreadable"
+                : humanize_bytes(s.mem.total) + " total, " +
+                  humanize_bytes(s.mem.available) + " available" +
+                  (s.mem.swap_total.value ? ", swap " + humanize_bytes(s.mem.swap_total)
+                                          : ", no swap"));
+
+        row("disks", !s.disks.empty(),
+            s.disks.empty()
+                ? "no mounts — all filesystems filtered as virtual, or network "
+                  "mounts skipped (they are, deliberately: statvfs can block)"
+                : std::to_string(s.disks.size()) + " mount(s)");
+
+        // Per-device I/O is a separate capability from the aggregate counters:
+        // macOS has the aggregate but no /proc/diskstats equivalent, so report
+        // on the DEVICE table (what the disk pane's latency view needs) and
+        // mention the aggregate separately rather than conflating the two.
+        row("diskio", !s.drives.empty(),
+            s.drives.empty()
+                ? "no per-device I/O or latency — /proc/diskstats absent (normal "
+                  "on macOS; the aggregate read/write rate still works)"
+                : std::to_string(s.drives.size()) + " device(s) with latency data");
+
+        row("net", !s.nets.empty(),
+            s.nets.empty()
+                ? "no interfaces — /proc/net/dev or getifaddrs unavailable"
+                : std::to_string(s.nets.size()) + " interface(s), " +
+                  std::to_string(s.connections.size()) + " connection(s)");
+
+        row("gpu", !s.gpus.empty(),
+            s.gpus.empty()
+                ? "no GPU — nvidia-smi not on PATH, no DRM card in /sys, or no "
+                  "permission to read it"
+                : std::to_string(s.gpus.size()) + " adapter(s): " + s.gpus.front().name);
+
+        row("sensors", !s.sensors.empty(),
+            s.sensors.empty()
+                ? "no sensors — no hwmon in /sys (VM/container), or macOS "
+                  "(CPU/NVMe temps need private SMC APIs)"
+                : std::to_string(s.sensors.size()) + " sensor(s)" +
+                  (s.cpu.temp_c > 0
+                       ? ", cpu " + std::to_string(static_cast<int>(s.cpu.temp_c)) + "C"
+                       : ", no cpu-zone match"));
+
+        row("psi", s.psi.cpu.available || s.psi.mem.available || s.psi.io.available,
+            (s.psi.cpu.available || s.psi.mem.available || s.psi.io.available)
+                ? "kernel pressure-stall accounting available"
+                : "no PSI — /proc/pressure absent (Linux <4.20, CONFIG_PSI=n, "
+                  "or not Linux). Verdict falls back to load/iowait heuristics.");
+
+        row("ssd", !s.ssd_health.empty(),
+            s.ssd_health.empty()
+                ? "no SMART data — NVMe admin ioctl needs root, or no NVMe device"
+                : std::to_string(s.ssd_health.size()) + " drive(s) reporting endurance");
+
+        row("battery", s.battery.present,
+            s.battery.present
+                ? std::to_string(s.battery.percent) + "%" +
+                      (s.battery.charging ? " charging" : " on battery")
+                : "no battery — desktop/server, or power supply class not exposed");
+
+        row("wireless", s.wireless.wifi_present || s.wireless.cell_present,
+            (s.wireless.wifi_present || s.wireless.cell_present)
+                ? "wireless telemetry present"
+                : "no wireless — expected on desktop (this is an Android/Termux "
+                  "source; the net pane already shows link rates)");
+
+        std::printf("\nverdict: %s\n", s.verdict.headline.c_str());
+        std::printf("         %s\n", s.verdict.detail.c_str());
+
+        std::printf("\n%d of 12 collectors reported no data.\n", empty_count);
+        std::printf("A \"no\" row is not necessarily a bug — read its reason. "
+                    "Include this\noutput when reporting an empty panel.\n");
+        // Always exit 0: "this machine has no GPU" is information, not failure.
+        // --selfcheck is the pass/fail gate; --doctor is the explainer.
+        return 0;
+    }
+
     // --topology: dump what the probe actually decided, as plain text, and
     // exit. This exists because the per-core work (issues #2/#3) is only as
     // good as the topology probe underneath it, and that probe reads evidence
@@ -195,9 +340,9 @@ int main(int argc, char** argv) {
         // Two samples: the first has no delta to divide by, so per-core load
         // would read as zero and a real "all cores busy" machine would be
         // indistinguishable from an idle one in the dump.
-        (void)sampler.sample(cfg.sort, 1, /*fast=*/true);
+        (void)sampler.sample(cfg.sort, /*fast=*/true);
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        const Snapshot s = sampler.sample(cfg.sort, 1, /*fast=*/true);
+        const Snapshot s = sampler.sample(cfg.sort, /*fast=*/true);
         const CpuInfo& c = s.cpu;
 
         std::printf("%s\n", kVersionLine);

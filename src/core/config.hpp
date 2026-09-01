@@ -144,6 +144,8 @@ struct Config {
 
                 "  --bench           time the sampler and exit (no UI)\n"
                 "  --selfcheck       verify the sampler produces sane data, then exit\n"
+                "  --doctor          report every collector's status (and why one is\n"
+                "                    empty), then exit — include this in bug reports\n"
                 "  -h, --help        show this help and exit\n"
                 "  -v, --version     show version and exit\n\n"
                 "in-app: ? for the full key reference. state persists between runs.\n");
@@ -162,6 +164,7 @@ struct Config {
             if (a == "--topology") { continue; }    // handled before boot in main
             if (a == "--bench") { continue; }        // handled before boot in main
             if (a == "--selfcheck") { continue; }    // handled before boot in main
+            if (a == "--doctor") { continue; }       // handled before boot in main
             if (auto s = val("--sort=")) {
                 if (auto k = parse_sort(*s)) c.sort = *k;
                 else { exit_msg = "unknown sort key: " + *s + "\n" + usage(); return false; }

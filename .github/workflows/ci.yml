@@ -63,16 +63,26 @@ jobs:
           export CC="${{ matrix.cc }}" CXX="${{ matrix.cxx }}"
           # Default is ON; state it so CI exercises the exact standalone link
           # the release uses (and CMake's post-build assert_standalone check).
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
+          #
+          # RB_WERROR promotes -Wall -Wextra -Wshadow to errors. This tool's
+          # whole job is parsing text it did not write and doing uint64 delta
+          # arithmetic on the result, so a new sign-compare or uninitialised
+          # field must fail the build here rather than scroll past in a log.
+          # It stays OFF by default for people building from source on a
+          # newer compiler than ours.
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON \
+            -DRB_WERROR=ON
 
       - name: Build
         run: cmake --build build -j
 
-      # The render tests are wired into CTest (add_test in CMakeLists) and,
-      # with BUILD_TESTING on (default), built as part of the normal `all`
-      # target above. They render the real widgets onto an off-screen canvas
-      # and assert the per-core grid columns line up at every width, plus drive
-      # the pure Linux topology classifier over fixtures.
+      # CTest runs three suites (see CMakeLists):
+      #   rb_render_grid — real widgets onto an off-screen canvas: the per-core
+      #                    grid columns line up at every width.
+      #   rb_core_logic  — the PURE layers: units, the filter query language,
+      #                    row ordering, and the verdict engine (the sentence
+      #                    every user reads first).
+      #   rb_selfcheck   — the REAL per-platform collectors on this runner.
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
@@ -87,6 +97,10 @@ jobs:
           # per-platform sampler at all — --version/--help exit before it and
           # rb_tests only covers the UI grid + topology classifier.
           ./build/rb --selfcheck
+          # The collector-health report must run and exit clean on every
+          # platform we ship. It is the first thing we ask a bug reporter for,
+          # so it must never be the thing that crashes.
+          ./build/rb --doctor
 
       # Exercise the topology probe against the runner's REAL hardware — the
       # only place the Linux sysfs classifier runs on Linux, since the unit
