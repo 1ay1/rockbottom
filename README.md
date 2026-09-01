@@ -26,6 +26,10 @@
 </p>
 
 <p align="center">
+  <b><a href="https://1ay1.github.io/rockbottom/">→ 1ay1.github.io/rockbottom</a></b> — the homepage, if you like your pitches with a color-ladder.
+</p>
+
+<p align="center">
   <a href="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml"><img src="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   &nbsp;
   <a href="https://github.com/1ay1/rockbottom/releases/latest"><img src="https://img.shields.io/github/v/release/1ay1/rockbottom?label=download" alt="latest release"></a>
