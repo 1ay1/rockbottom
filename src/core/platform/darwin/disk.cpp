@@ -43,7 +43,10 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
         d.mount  = sys::sanitize_display(f.f_mntonname);
         d.fstype = sys::sanitize_display(f.f_fstypename);
         d.total  = Bytes{total};
-        d.used   = Bytes{total - static_cast<std::uint64_t>(f.f_bfree) * bs};
+        // Clamp used = total - free (see the Linux backend for why f_bfree can
+        // exceed the total and underflow the unsigned subtraction to ~18 EiB).
+        const std::uint64_t free_bytes = static_cast<std::uint64_t>(f.f_bfree) * bs;
+        d.used   = Bytes{total > free_bytes ? total - free_bytes : 0};
         d.inodes_total = f.f_files;
         d.inodes_free  = f.f_ffree;
         d.read_only    = (f.f_flags & MNT_RDONLY) != 0;

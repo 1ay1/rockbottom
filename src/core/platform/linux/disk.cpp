@@ -118,7 +118,15 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
         d.mount  = procfs::sanitize_display(mount);
         d.fstype = procfs::sanitize_display(fstype);
         d.total = Bytes{total};
-        d.used  = Bytes{total - vfs.f_bfree * bs};
+        // used = total - free, but CLAMPED. f_bfree can legitimately exceed the
+        // block count that backs `total` here — reserved-block accounting, a
+        // filesystem mid-online-resize, or an overlay/network fs that reports
+        // an inflated free count. Without the guard the unsigned subtraction
+        // underflows to ~18 EiB, and that bogus "used" then drives the usage
+        // meter to a nonsense percentage. A momentary free>total just reads as
+        // 0 used, which is the honest answer.
+        const std::uint64_t free_bytes = vfs.f_bfree * bs;
+        d.used  = Bytes{total > free_bytes ? total - free_bytes : 0};
         disks.push_back(std::move(d));
     }
 

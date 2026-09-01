@@ -173,6 +173,18 @@ int main(int argc, char** argv) {
         check(s.mem.total.value > 0, "memory total is non-zero");
         check(s.mem.used.value <= s.mem.total.value, "memory used does not exceed total");
 
+        // Disks: used cannot exceed total. This is the invariant the used =
+        // total - free clamp protects — an unguarded subtraction underflows to
+        // ~18 EiB on a filesystem that transiently reports free > total
+        // (reserved blocks, online resize, some overlay/network fs). Checking
+        // it here runs the guard against every real mount on the CI runner.
+        {
+            bool disks_sane = true;
+            for (const auto& d : s.disks)
+                if (d.used.value > d.total.value) disks_sane = false;
+            check(disks_sane, "no disk reports used space exceeding its total");
+        }
+
         if (failures == 0) {
             std::printf("selfcheck OK: sampler produced sane data across %zu processes, %zu cores\n",
                         s.procs.size(), s.cpu.cores.size());
