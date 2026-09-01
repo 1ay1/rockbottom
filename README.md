@@ -496,10 +496,44 @@ clusters   heterogeneous — 4 Performance + 4 Efficiency
 through the same classifier, which is how the Linux path gets tested without
 owning every CPU ever made.)
 
+## When a panel is empty
+
+Every collector in rockbottom degrades silently on purpose — if `/sys` is masked,
+the ioctl needs root, or the machine simply has no NVMe, the field goes blank and
+the tool keeps running. That's right for a monitor and useless for debugging, so
+there's a subcommand that says the quiet part out loud:
+
+```sh
+rb --doctor
+```
+
+```
+COLLECTOR    OK   DETAIL
+  procs      yes  311 processes, 1189 threads, 3 running, 0 zombie
+  cpu        yes  8 cores, 4P+4E, busy 16%
+  memory     yes  16G total, 13G available, swap 1.0G
+  diskio     no   no per-device I/O or latency — /proc/diskstats absent (normal
+                  on macOS; the aggregate read/write rate still works)
+  gpu        yes  1 adapter(s): Apple M1
+  psi        no   no PSI — /proc/pressure absent (Linux <4.20, CONFIG_PSI=n, or
+                  not Linux). Verdict falls back to load/iowait heuristics.
+  ssd        no   no SMART data — NVMe admin ioctl needs root, or no NVMe device
+```
+
+Every `no` carries the reason it's a `no`, so you can tell "this machine has no
+GPU" from "nvidia-smi isn't on PATH" from "you need root for that ioctl" without
+reaching for strace. It always exits 0 — a missing GPU is information, not
+failure. **Paste this into any bug report about a blank panel.**
+
+Its stricter sibling `rb --selfcheck` runs the real collectors and asserts the
+data is sane (non-empty process list, our own pid present, cpu in 0..1, used ≤
+total), exiting non-zero if not. That one is a pass/fail gate and runs in CI on
+every platform.
+
 ## License
 
-MIT. Do whatever you want; we are not your dad, and we would not presume. Vendored
-maya is MIT too. Everybody's chill. Go be free.
+MIT — see [LICENSE](LICENSE). Do whatever you want; we are not your dad, and we
+would not presume. Vendored maya is MIT too. Everybody's chill. Go be free.
 
 ---
 
