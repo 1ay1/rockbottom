@@ -37,7 +37,7 @@ endif()
 # The ONE place the version is written. `rb --version`, the generated
 # core/version.hpp, the release asset names and the git tag all derive from it;
 # nothing else hardcodes a version string.
-project(rockbottom VERSION 0.2.1 LANGUAGES CXX)
+project(rockbottom VERSION 0.3.0 LANGUAGES CXX)
 
 # Second half of the macOS deployment floor (the first half is the
 # CMAKE_OSX_DEPLOYMENT_TARGET default above). GCC only emits the
