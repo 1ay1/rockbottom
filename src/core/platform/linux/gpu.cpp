@@ -158,7 +158,12 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
 
         GpuInfo g;
         g.vendor = "NVIDIA";
-        g.name = f[0];
+        // The adapter name, perf-state and driver strings originate in the
+        // GPU's VBIOS / the proprietary driver, not in rockbottom, and they
+        // flow straight to the detail pane. Same data-boundary rule as a
+        // process name: sanitize before anything else can render them. (The
+        // per-process names below already go through sanitize_display.)
+        g.name = sanitize_display(f[0]);
         g.usage = Ratio{num(f[1]) / 100.0};
         g.mem_used = Bytes{static_cast<std::uint64_t>(num(f[2])) * 1024 * 1024};
         g.mem_total = Bytes{static_cast<std::uint64_t>(num(f[3])) * 1024 * 1024};
@@ -171,8 +176,8 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
         g.fan_pct = f[9].empty() || f[9] == "[N/A]" ? -1 : static_cast<int>(num(f[9]));
         g.enc_usage = Ratio{num(f[10]) / 100.0};
         g.dec_usage = Ratio{num(f[11]) / 100.0};
-        g.pstate = f[12];
-        g.driver = f[13];
+        g.pstate = sanitize_display(f[12]);
+        g.driver = sanitize_display(f[13]);
         out.push_back(std::move(g));
     }
     if (out.empty()) return;
@@ -326,10 +331,13 @@ void collect_amd(std::vector<GpuInfo>& out) {
 
         GpuInfo g;
         g.vendor = "AMD";
-        // Newer amdgpu exposes the marketing name; fall back to the generic.
-        g.name = trim(first_line(slurp(dev + "/product_name")));
+        // product_name comes from the kernel's amdgpu driver / the card's VBIOS
+        // and reaches the detail pane; sanitize at the data boundary like every
+        // other displayed string (a masked/crafted sysfs in a container is the
+        // exact case the control-code filter exists for).
+        g.name = sanitize_display(trim(first_line(slurp(dev + "/product_name"))));
         if (g.name.empty()) g.name = "AMD GPU";
-        g.driver = trim(first_line(slurp("/sys/module/amdgpu/version")));
+        g.driver = sanitize_display(trim(first_line(slurp("/sys/module/amdgpu/version"))));
         std::string busy = trim(first_line(slurp(dev + "/gpu_busy_percent")));
         g.usage = Ratio{num(busy) / 100.0};
         g.mem_used = Bytes{read_u64(dev + "/mem_info_vram_used")};
@@ -373,7 +381,7 @@ void collect_intel(std::vector<GpuInfo>& out) {
         GpuInfo g;
         g.vendor = "Intel";
         g.name = "Intel GPU";
-        g.driver = trim(first_line(slurp("/sys/module/i915/version")));
+        g.driver = sanitize_display(trim(first_line(slurp("/sys/module/i915/version"))));
         g.core_clock = Hertz{read_u64(card + "/gt_act_freq_mhz") * 1000000ull};
         // i915 doesn't export a simple busy% in sysfs; leave usage at 0 so the
         // pane shows clocks + whatever hwmon gives us rather than a fake load.

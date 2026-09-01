@@ -53,13 +53,19 @@ double first_num(CFDictionaryRef d, std::initializer_list<CFStringRef> keys, boo
     return 0;
 }
 
+// Read a CFString/CFData property as a std::string, SANITIZED. Every value
+// this returns (adapter model, driver version, bundle name) is supplied by
+// IOKit / the graphics driver and flows to the detail pane, so it must clear
+// the same control-code boundary as a process name before anything renders it.
+// Sanitizing here rather than at each call site means a new caller can't
+// forget.
 std::string cf_string(CFDictionaryRef d, CFStringRef key) {
     auto v = CFDictionaryGetValue(d, key);
     if (!v) return {};
     if (CFGetTypeID(v) == CFStringGetTypeID()) {
         char buf[256] = {};
         CFStringGetCString(static_cast<CFStringRef>(v), buf, sizeof buf, kCFStringEncodingUTF8);
-        return buf;
+        return sys::sanitize_display(buf);
     }
     // Some nodes publish "model" as CFData (NUL-terminated C string).
     if (CFGetTypeID(v) == CFDataGetTypeID()) {
@@ -68,7 +74,7 @@ std::string cf_string(CFDictionaryRef d, CFStringRef key) {
         auto n = static_cast<std::size_t>(CFDataGetLength(data));
         std::string s(reinterpret_cast<const char*>(p), n);
         if (auto z = s.find('\0'); z != std::string::npos) s.resize(z);
-        return s;
+        return sys::sanitize_display(s);
     }
     return {};
 }
