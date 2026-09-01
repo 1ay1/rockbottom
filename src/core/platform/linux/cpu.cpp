@@ -154,7 +154,12 @@ std::uint64_t Sampler::uptime_sec() const {
     return 0;
 }
 
-void Sampler::sample_cpu(CpuInfo& cpu) {
+// `fast` is accepted for signature parity with the Darwin backend, where the
+// per-core clock sampler has a costly one-time IOReport init worth deferring.
+// On Linux the clock is cheap sysfs/proc reads with no expensive first call,
+// so there is nothing to skip and the frequency column can populate from tick
+// one.
+void Sampler::sample_cpu(CpuInfo& cpu, bool /*fast*/) {
     cpu.model = cpu_model_;
     cpu.logical = ncpu_;
 

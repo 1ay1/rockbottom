@@ -132,7 +132,7 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
 
     // Fast, genuinely per-tick metrics: CPU, memory, network, disk I/O rates,
     // GPU. These change every frame and must run every tick.
-    sample_cpu(s.cpu);        phase("cpu");
+    sample_cpu(s.cpu, fast);        phase("cpu");
     sample_mem(s.mem);        phase("mem");
     sample_mem_rates(s.mem, dt);
     sample_disk_io(s.disk_io, dt); phase("disk_io");
@@ -190,8 +190,14 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
     s.disks = disks_cache_;
     phase("disks");
 
-    // Hardware temperatures drift slowly — refresh ~every 2s.
-    if (due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
+    // Hardware temperatures drift slowly — refresh ~every 2s. Skipped on a
+    // fast startup prime: the FIRST call to sample_sensors is the expensive
+    // one (on macOS it enumerates the whole ~1600-key AppleSMC table over
+    // thousands of synchronous IOKit round-trips — ~360ms one-time), and
+    // temperatures are detail-pane data, not part of the first visible frame.
+    // They land on the first real background tick a heartbeat later, exactly
+    // like GPU/battery/ports.
+    if (!fast && due(sensors_at_, ms(2000))) { sensors_cache_.clear(); sample_sensors(sensors_cache_); }
     s.sensors = sensors_cache_;
     phase("sensors");
 

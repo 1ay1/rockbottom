@@ -105,7 +105,7 @@ std::uint64_t Sampler::uptime_sec() const {
     return now > bt.tv_sec ? static_cast<std::uint64_t>(now - bt.tv_sec) : 0;
 }
 
-void Sampler::sample_cpu(CpuInfo& cpu) {
+void Sampler::sample_cpu(CpuInfo& cpu, bool fast) {
     cpu.model = cpu_model_;
     cpu.logical = ncpu_;
 
@@ -161,8 +161,17 @@ void Sampler::sample_cpu(CpuInfo& cpu) {
     // until the second tick (a delta needs two samples) and empty forever on a
     // machine where IOReport isn't available — in both cases freq stays 0 and
     // the UI omits the column, exactly as it did before.
-    static macfreq::Sampler freq_sampler;
-    const std::vector<std::uint64_t> freqs = freq_sampler.sample();
+    //
+    // SKIPPED on the fast startup prime. Constructing the sampler dlopen's
+    // libIOReport and builds an IOReport subscription over every CPU channel —
+    // ~110ms one-time — and per-core clock is a detail-pane column that is
+    // empty on the first tick anyway (it needs a delta). Deferring it to the
+    // first real background tick keeps that cost off the path to first paint.
+    std::vector<std::uint64_t> freqs;
+    if (!fast) {
+        static macfreq::Sampler freq_sampler;
+        freqs = freq_sampler.sample();
+    }
 
     for (std::size_t i = 0; i < cores.size(); ++i) {
         CpuCore& c = core_hist_[static_cast<int>(i)];

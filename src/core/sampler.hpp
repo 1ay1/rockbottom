@@ -85,7 +85,7 @@ private:
     // hw.perflevel* sysctls on Darwin).
     void    probe_topology();
     std::uint64_t uptime_sec() const;   // seconds since boot (platform-specific)
-    void    sample_cpu(CpuInfo&);
+    void    sample_cpu(CpuInfo&, bool fast = false);
     // Stamps CpuCore::kind/phys from the topology probed at read_static() and
     // recomputes the perf/eff tallies. Platform-agnostic (the probe itself is
     // per-OS), so it lives in the orchestrator and both backends call it after
