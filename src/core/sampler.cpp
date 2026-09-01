@@ -97,7 +97,7 @@ void Sampler::apply_core_temps(CpuInfo& cpu, const std::vector<Sensor>& sensors)
     resolve_core_temps(cpu, sensors, core_id_siblings_);
 }
 
-Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
+Snapshot Sampler::sample(SortKey sort, bool fast) {
     auto now = std::chrono::steady_clock::now();
     double dt = first_ ? 0.0 : std::chrono::duration<double>(now - last_time_).count();
     if (dt <= 0 && !first_) dt = 0.001;
@@ -216,7 +216,7 @@ Snapshot Sampler::sample(SortKey sort, int top_n, bool fast) {
     // the first paint doesn't wait on walking every process's fd table.
     if (!fast && due(ports_at_, ms(1500))) sample_ports();
     phase("ports");
-    sample_procs(s, sort, top_n, dt);
+    sample_procs(s, sort, dt);
     phase("procs");
     // Attach the connection table (collected during the throttled ports scan)
     // and stamp each row with its owning process's name for the UI.

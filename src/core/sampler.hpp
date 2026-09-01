@@ -38,7 +38,7 @@ class Sampler {
 public:
     Sampler();
 
-    // Collect one snapshot. `sort` and `top_n` shape the process table. When
+    // Collect one snapshot. `sort` shapes the process table. When
     // `fast` is true (used for the synchronous startup priming reads) the
     // collectors that fork a subprocess — battery + wireless via Termux:API,
     // GPU via nvidia-smi — and the expensive per-fd port scan are SKIPPED, so
@@ -46,7 +46,12 @@ public:
     // on cold-starting the Termux:API app (~1-2s). They fill in on the first
     // background tick a moment later. Their throttle stamps are left untouched
     // so they run promptly then, not on their slow cadence.
-    Snapshot sample(SortKey sort, int top_n, bool fast = false);
+    //
+    // There is deliberately no top_n: the UI windows and scrolls the list
+    // itself, and tree mode needs full parentage to resolve roots, so a
+    // truncated snapshot could silently orphan rows. The collectors return
+    // every process and the view decides what fits.
+    Snapshot sample(SortKey sort, bool fast = false);
 
     // The per-proc /proc/<pid>/status (ctxt switches) and /proc/<pid>/fd
     // (open-fd count) reads are the two most expensive syscalls in the tick
@@ -99,15 +104,26 @@ private:
     void    sample_net(std::vector<NetIface>&, double dt);
     void    sample_gpu(std::vector<GpuInfo>&, bool with_procs);
     void    sample_sensors(std::vector<Sensor>&);
-    void    sample_procs(Snapshot&, SortKey, int top_n, double dt);
+    void    sample_procs(Snapshot&, SortKey, double dt);
     void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
     void    sample_wireless(Wireless&);
-    // `dt` = seconds since the previous sample, so trend findings (slope-based
-    // leak/rise detection) can report true per-minute rates at ANY refresh
-    // cadence instead of assuming one sample per second.
+
+public:
+    // The diagnosis engine. `dt` = seconds since the previous sample, so trend
+    // findings (slope-based leak/rise detection) can report true per-minute
+    // rates at ANY refresh cadence instead of assuming one sample per second.
+    //
+    // PUBLIC because it is a pure query — it reads only the Snapshot handed to
+    // it plus ncpu_, mutates nothing, and is the single highest-consequence
+    // function in the program (its output is the sentence every user reads
+    // first). tests/core_logic_test.cpp drives it with synthetic snapshots to
+    // pin which finding wins for a given machine state; that is worth more
+    // than the encapsulation of a const member function with no side effects.
     Verdict judge(const Snapshot&, double dt) const;
+
+private:
 
     // ── CPU topology, probed ONCE at read_static() ──
     // Heterogeneous-core class + physical-core id per logical CPU. Both are

@@ -109,6 +109,14 @@ inline std::string humanize_bytes(std::uint64_t n) {
     double d = static_cast<double>(n);
     std::size_t i = 0;
     while (d >= 1024.0 && i + 1 < u.size()) { d /= 1024.0; ++i; }
+    // ROUNDING PROMOTION. The loop leaves d < 1024, but the formatter below
+    // ROUNDS — so a value just under the next boundary (e.g. 1 MiB - 1 byte,
+    // which lands here as 1023.999K) would print as "1024K": a unit that reads
+    // as wrong even though the arithmetic was right, and the exact string a
+    // reader would call a bug. If rounding at the precision we're about to use
+    // would reach 1024, step up one unit first. %.0f rounds at .5, so 1023.5 is
+    // the threshold; after promotion d ≈ 1.0 and prints as "1.0M".
+    if (i + 1 < u.size() && d >= 1023.5) { d /= 1024.0; ++i; }
     char buf[32];
     if (d < 10 && i > 0) std::snprintf(buf, sizeof buf, "%.1f%s", d, u[i]);
     else                 std::snprintf(buf, sizeof buf, "%.0f%s", d, u[i]);
@@ -123,6 +131,9 @@ inline std::string humanize_rate(ByteRate r) {
     double d = r.per_sec;
     std::size_t i = 0;
     while (d >= 1024.0 && i + 1 < u.size()) { d /= 1024.0; ++i; }
+    // Same rounding promotion as humanize_bytes — without it a rate just under
+    // a unit boundary prints as "1024K/s".
+    if (i + 1 < u.size() && d >= 1023.5) { d /= 1024.0; ++i; }
     char buf[32];
     std::snprintf(buf, sizeof buf, d < 10 && i > 0 ? "%.1f%s" : "%.0f%s", d, u[i]);
     return buf;
