@@ -99,6 +99,18 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
 endif()
 add_subdirectory(third_party/maya)
 
+# maya is a VENDORED dependency: we do not control its warning hygiene, and its
+# header-only reactive core legitimately shadows (EvaluationScope evaluating,
+# DependencyTrackingScope dependencies) in ways that are fine there and noise
+# here. Re-export its include dirs as SYSTEM so -Wall -Wextra -Wshadow -Werror
+# police OUR code without a maya release being able to break our build. This
+# must happen after add_subdirectory, when the target exists.
+get_target_property(_maya_incs maya INTERFACE_INCLUDE_DIRECTORIES)
+if(_maya_incs)
+    set_target_properties(maya PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_maya_incs}")
+endif()
+
 # ── version ─────────────────────────────────────────────────────────────────
 # Generate core/version.hpp from the project() version above, into the build
 # tree. Both the app and the tests add ${CMAKE_CURRENT_BINARY_DIR} to their
@@ -128,13 +140,40 @@ else()
 endif()
 message(STATUS "rockbottom platform backend: ${CMAKE_SYSTEM_NAME} (${RB_PLATFORM_DIR})")
 
+# ── warnings ────────────────────────────────────────────────────────────────
+# A tool whose entire job is parsing text it did not write (/proc, sysfs,
+# nvidia-smi CSV, SMC blobs) and doing uint64 delta arithmetic on the result
+# has no business building without warnings. An INTERFACE library carries the
+# flag set so every target — app, tests, bench — gets exactly the same rules
+# and none of them can drift.
+#
+# RB_WERROR promotes them to errors. ON in CI (a new sign-compare must fail the
+# build, not scroll past in a log), OFF by default so a user building from
+# source on a compiler one version newer than ours is never blocked by a
+# cosmetic diagnostic.
+option(RB_WERROR "Treat compiler warnings as errors (CI uses this)" OFF)
+
+add_library(rb_warnings INTERFACE)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(rb_warnings INTERFACE
+        -Wall -Wextra -Wshadow
+        # maya's element DSL is built on aggregate initialisation with trailing
+        # defaulted members (cached_lines, hash_id, …). Naming every one at every
+        # construction site is noise that hides real findings, and the defaults
+        # are the point of the design. This is the ONLY -Wextra member we drop.
+        -Wno-missing-field-initializers)
+    if(RB_WERROR)
+        target_compile_options(rb_warnings INTERFACE -Werror)
+    endif()
+endif()
+
 add_executable(rockbottom
     src/main.cpp
     src/core/sampler.cpp
     src/core/verdict.cpp
     ${RB_PLATFORM_SRC}
 )
-target_link_libraries(rockbottom PRIVATE maya)
+target_link_libraries(rockbottom PRIVATE maya rb_warnings)
 target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 # rockbottom uses zero C++ modules (no `import`, no module units), but CMake >=
@@ -297,13 +336,38 @@ install(TARGETS rockbottom RUNTIME DESTINATION bin)
 # package can configure with -DBUILD_TESTING=OFF and skip building them.
 include(CTest)   # defines BUILD_TESTING (default ON) and calls enable_testing()
 add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
-target_link_libraries(rb_tests PRIVATE maya)
+target_link_libraries(rb_tests PRIVATE maya rb_warnings)
 target_include_directories(rb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_tests PRIVATE cxx_std_26)
 else()
     target_compile_features(rb_tests PRIVATE cxx_std_23)
+endif()
+
+# ── core logic tests ────────────────────────────────────────────────────────
+# The PURE layers: units, the filter query language, row ordering, and the
+# verdict engine. These are plain functions over PODs, so they need no canvas
+# — but they are the highest-consequence code in the tree (the verdict is the
+# sentence every user reads first), which is exactly why they get pinned here.
+# They link the platform backend because judge() is a Sampler member.
+add_executable(rb_core_tests EXCLUDE_FROM_ALL
+    tests/core_logic_test.cpp
+    src/core/sampler.cpp
+    src/core/verdict.cpp
+    ${RB_PLATFORM_SRC}
+)
+target_link_libraries(rb_core_tests PRIVATE maya rb_warnings)
+target_include_directories(rb_core_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(rb_core_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    target_compile_features(rb_core_tests PRIVATE cxx_std_26)
+else()
+    target_compile_features(rb_core_tests PRIVATE cxx_std_23)
+endif()
+if(APPLE)
+    target_link_libraries(rb_core_tests PRIVATE
+        "-framework CoreFoundation" "-framework IOKit")
 endif()
 
 if(BUILD_TESTING)
@@ -315,6 +379,23 @@ if(BUILD_TESTING)
     add_test(NAME rb_render_grid COMMAND rb_tests)
     set_tests_properties(rb_render_grid PROPERTIES
         LABELS "unit;render"
+        TIMEOUT 120)
+
+    set_target_properties(rb_core_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME rb_core_logic COMMAND rb_core_tests)
+    set_tests_properties(rb_core_logic PROPERTIES
+        LABELS "unit;logic"
+        TIMEOUT 120)
+
+    # --selfcheck drives the REAL per-platform collectors headlessly and
+    # asserts the collected data is sane. It was previously reachable only
+    # through hand-written CI shell steps, which meant `ctest` — what a distro
+    # packager actually runs — exercised zero collector code. Registering it
+    # here makes the one test that touches /proc, sysctl and libproc part of
+    # the standard suite on every machine that builds rockbottom.
+    add_test(NAME rb_selfcheck COMMAND rockbottom --selfcheck)
+    set_tests_properties(rb_selfcheck PROPERTIES
+        LABELS "integration;collectors"
         TIMEOUT 120)
 endif()
 
@@ -329,7 +410,7 @@ add_executable(rb_render_bench EXCLUDE_FROM_ALL
     src/core/verdict.cpp
     ${RB_PLATFORM_SRC}
 )
-target_link_libraries(rb_render_bench PRIVATE maya)
+target_link_libraries(rb_render_bench PRIVATE maya rb_warnings)
 target_include_directories(rb_render_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_render_bench PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)

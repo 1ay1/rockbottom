@@ -155,7 +155,14 @@ void test_alignment(const std::string& name, const std::vector<std::string>& row
         if (!is_core_row(r)) continue;
         std::vector<int> cols = pct_columns(r);
         if (cols.empty()) continue;
-        if (scan == Scan::LeadingColumn) cols.resize(1);
+        // LeadingColumn: keep only the FIRST '%' column. Written as an erase
+        // of the tail rather than resize(1) because resize() also has a GROW
+        // path, and GCC's inliner reasons about that path even though `cols` is
+        // known non-empty two lines up — producing a bogus -Warray-bounds.
+        // erase() can only shrink, so the intent is unambiguous to reader and
+        // compiler alike.
+        if (scan == Scan::LeadingColumn && cols.size() > 1)
+            cols.erase(cols.begin() + 1, cols.end());
         shapes.push_back(std::move(cols));
     }
     check(shapes.size() >= 2, name + ": found per-core rows to compare (" +

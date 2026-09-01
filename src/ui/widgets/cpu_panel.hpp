@@ -197,7 +197,11 @@ public:
         for (int i = 0; i < n; ++i) {
             const CpuCore& c = cpu_.cores[static_cast<std::size_t>(i)];
             const double f = c.usage.v;
-            char id[12];
+            // 20 bytes, not 12: "%2d" on an int can run to 11 characters, the
+            // separator '·' is TWO bytes of UTF-8, and the class letter and NUL
+            // want one each. The old 12 left the compiler able to prove the
+            // class letter could be cut off on an absurd core count.
+            char id[20];
             if (hetero) std::snprintf(id, sizeof id, "%2d·%c", i, c.kind == CoreKind::Eff ? 'E' : 'P');
             else        std::snprintf(id, sizeof id, "%2d", i);
             cells->push_back(CoreCell{
