@@ -29,10 +29,39 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
         "Oldest macOS the published rb must run on" FORCE)
 endif()
 
+# The deployment floor above is only HALF the story: GCC emits the
+# -mmacosx-version-min load command from CMAKE_OSX_DEPLOYMENT_TARGET only when
+# CMake also resolved a sysroot. That check lives just after project(), because
+# CMake does not populate CMAKE_OSX_SYSROOT until the compiler is configured.
+
 # The ONE place the version is written. `rb --version`, the generated
 # core/version.hpp, the release asset names and the git tag all derive from it;
 # nothing else hardcodes a version string.
 project(rockbottom VERSION 0.2.1 LANGUAGES CXX)
+
+# Second half of the macOS deployment floor (the first half is the
+# CMAKE_OSX_DEPLOYMENT_TARGET default above). GCC only emits the
+# -mmacosx-version-min load command when CMake also resolved a sysroot, so if
+# CMAKE_OSX_SYSROOT ends up empty — an interrupted first configure, a cache
+# copied between machines, an explicit -DCMAKE_OSX_SYSROOT= — the flag silently
+# disappears and the link stamps the BUILDER's SDK version instead. That is the
+# exact build-host leak the floor exists to prevent, and it produces a binary
+# that dies in dyld on an older Mac before main() runs.
+#
+# assert_standalone.cmake does catch this, but only after a full build and with
+# an error that blames the deployment target rather than the missing sysroot.
+# Catching it here costs a second and says what to actually do. It must run
+# AFTER project(), which is where CMake populates CMAKE_OSX_SYSROOT.
+if(APPLE AND NOT CMAKE_OSX_SYSROOT)
+    message(FATAL_ERROR
+        "CMAKE_OSX_SYSROOT is empty, so the macOS deployment floor "
+        "(${CMAKE_OSX_DEPLOYMENT_TARGET}) would NOT be stamped into the binary "
+        "and `rb` would refuse to launch on older Macs.\n"
+        "This usually means a stale or interrupted CMake cache. Fix with:\n"
+        "  rm -rf <builddir> && cmake -B <builddir>\n"
+        "or point at an SDK explicitly:\n"
+        "  cmake -B <builddir> -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
+endif()
 
 # rockbottom targets the same modern standard maya uses.
 set(CMAKE_CXX_STANDARD 26)

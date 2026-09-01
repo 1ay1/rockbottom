@@ -24,6 +24,7 @@
 #include "../src/core/sampler.hpp"
 #include "../src/ui/proc_query.hpp"
 #include "../src/ui/proc_order.hpp"
+#include "../src/ui/kill_plan.hpp"
 
 #include <cstdio>
 #include <set>
@@ -584,6 +585,211 @@ void test_verdict() {
     }
 }
 
+// ── kill_plan ───────────────────────────────────────────────────────────────
+
+void test_kill_plan() {
+    section("kill_plan — target selection and the pid-reuse guard");
+    using namespace rockbottom::ui;
+
+    // start_matches FAILS CLOSED. These four cases are the whole guard: an
+    // unknown start time on either side must refuse, because the action being
+    // gated is SIGKILL and "I couldn't check" is not "it's fine".
+    check(start_matches(1000, 1000), "identical start times match");
+    check(start_matches(1000, 1002), "within the +2s boot-epoch tolerance");
+    check(start_matches(1002, 1000), "tolerance is symmetric");
+    check(!start_matches(1000, 1005), "beyond tolerance is a different process");
+    check(!start_matches(0, 1000),    "unknown ARMED start refuses (fail closed)");
+    check(!start_matches(1000, 0),    "unknown CURRENT start refuses (fail closed)");
+    check(!start_matches(0, 0),       "both unknown refuses");
+
+    // THE RACE. A kill is armed against pid 4242 (start 1000). The user sits on
+    // the y/n prompt; 4242 exits and the kernel reassigns that pid to something
+    // else, which now reports a different start time. The armed target must NOT
+    // be signalled — this is the bug that would make a monitor kill a random
+    // process.
+    {
+        std::vector<ProcInfo> armed_snap{mkproc(4242, 1, "doomed", 50.0, kMiB)};
+        armed_snap[0].start_sec = 1000;
+        const std::vector<int> targets{4242};
+        const auto starts = starts_of(armed_snap, targets);
+        check(starts.size() == 1 && starts[0] == 1000, "starts_of captures the arm-time start");
+
+        // Same pid, reborn later.
+        std::vector<ProcInfo> now{mkproc(4242, 1, "innocent-bystander", 1.0, kMiB)};
+        now[0].start_sec = 9999;
+        const auto rt = resolve_targets(targets, starts, now);
+        check(rt.signalable.empty(), "a RECYCLED pid is never signalled");
+        check(rt.recycled == 1,      "the recycled target is counted");
+    }
+
+    // The same target, unchanged, must still be signalable — the guard has to
+    // not be so strict that the feature stops working.
+    {
+        std::vector<ProcInfo> snap{mkproc(4242, 1, "doomed", 50.0, kMiB)};
+        snap[0].start_sec = 1000;
+        const std::vector<int> targets{4242};
+        const auto rt = resolve_targets(targets, starts_of(snap, targets), snap);
+        check(rt.signalable.size() == 1 && rt.signalable[0] == 4242,
+              "an unchanged target is still signalable");
+        check(rt.recycled == 0, "nothing counted as recycled");
+    }
+
+    // A target that simply EXITED (absent from the new snapshot) is dropped,
+    // not signalled into the void.
+    {
+        std::vector<ProcInfo> snap{mkproc(4242, 1, "doomed", 50.0, kMiB)};
+        snap[0].start_sec = 1000;
+        const std::vector<int> targets{4242};
+        const auto starts = starts_of(snap, targets);
+        const std::vector<ProcInfo> gone;   // it exited
+        const auto rt = resolve_targets(targets, starts, gone);
+        check(rt.signalable.empty(), "a vanished target is dropped");
+        check(rt.recycled == 1,      "a vanished target counts as gone");
+    }
+
+    // A group kill where SOME targets recycled: the survivors are still
+    // signalled and the gone ones counted, so "3 of 5" behaves.
+    {
+        std::vector<ProcInfo> armed;
+        for (int i = 0; i < 4; ++i) {
+            armed.push_back(mkproc(700 + i, 1, "helper", 1.0, kMiB));
+            armed.back().start_sec = 1000;
+        }
+        const std::vector<int> targets{700, 701, 702, 703};
+        const auto starts = starts_of(armed, targets);
+
+        std::vector<ProcInfo> now = armed;
+        now[1].start_sec = 5555;   // 701 recycled
+        now.erase(now.begin() + 3); // 703 exited
+        const auto rt = resolve_targets(targets, starts, now);
+        check(rt.signalable.size() == 2, "survivors in a group are still signalled");
+        check(rt.recycled == 2,          "recycled + vanished are both counted");
+        check(rt.signalable[0] == 700 && rt.signalable[1] == 702,
+              "the right survivors are selected");
+    }
+
+    // A starts[] shorter than pids[] (defensive: should not happen, but the
+    // list is fed to kill(2)) must fail closed rather than read past the end.
+    {
+        std::vector<ProcInfo> snap{mkproc(10, 1, "a", 1.0, kMiB)};
+        snap[0].start_sec = 1000;
+        const std::vector<int> targets{10};
+        const std::vector<std::uint64_t> no_starts;   // truncated
+        const auto rt = resolve_targets(targets, no_starts, snap);
+        check(rt.signalable.empty(), "a missing arm-time start fails closed");
+    }
+
+    // plan_by_name: the "close all the Chrome helpers" gesture.
+    {
+        std::vector<ProcInfo> procs{
+            mkproc(3, 1, "helper", 1.0, kMiB),
+            mkproc(1, 1, "helper", 1.0, kMiB),
+            mkproc(2, 1, "other",  1.0, kMiB),
+        };
+        const auto pids = plan_by_name(procs, "helper");
+        check(pids.size() == 2, "plan_by_name selects every same-named process");
+        check(pids[0] == 1 && pids[1] == 3, "plan_by_name is pid-ordered (deterministic)");
+        check(plan_by_name(procs, "nonesuch").empty(), "plan_by_name of an absent name is empty");
+    }
+
+    // plan_subtree: root + all descendants, depth-first over a real tree.
+    {
+        std::vector<ProcInfo> procs{
+            mkproc(1,  0,  "init",   0.1, kMiB),
+            mkproc(10, 1,  "shell",  1.0, kMiB),
+            mkproc(11, 10, "build",  1.0, kMiB),
+            mkproc(12, 11, "cc1",    1.0, kMiB),
+            mkproc(20, 1,  "other",  1.0, kMiB),
+        };
+        const auto sub = plan_subtree(procs, 10);
+        check(sub.size() == 3, "plan_subtree collects root + all descendants");
+        std::set<int> got(sub.begin(), sub.end());
+        check(got.count(10) && got.count(11) && got.count(12),
+              "plan_subtree reaches grandchildren");
+        check(!got.count(20), "plan_subtree excludes unrelated branches");
+        check(!got.count(1),  "plan_subtree does not walk UPWARD to the parent");
+
+        // A leaf's subtree is just itself — the confirm strip words this as a
+        // single-target kill.
+        check(plan_subtree(procs, 12).size() == 1, "a leaf's subtree is itself");
+        check(plan_subtree(procs, 999).size() == 1,
+              "an unknown root yields just that pid");
+        check(plan_subtree(procs, 0).empty(),  "pid 0 plans nothing");
+        check(plan_subtree(procs, -1).empty(), "a negative pid plans nothing");
+    }
+
+    // CYCLE SAFETY. /proc is walked pid by pid while the kernel forks and
+    // reaps, so the observed ppid map can contain a loop. An unguarded
+    // depth-first walk would either spin forever or emit duplicate pids — and
+    // this list goes straight to kill(2). If this test hangs, that's the bug.
+    {
+        std::vector<ProcInfo> cyclic{
+            mkproc(600, 601, "a", 1.0, kMiB),
+            mkproc(601, 600, "b", 1.0, kMiB),
+        };
+        const auto sub = plan_subtree(cyclic, 600);
+        check(sub.size() <= 2, "a parent cycle does not duplicate targets");
+        std::set<int> uniq(sub.begin(), sub.end());
+        check(uniq.size() == sub.size(), "no pid appears twice in a kill plan");
+        check(true, "plan_subtree terminates on a cyclic ppid map");
+    }
+    {
+        // A self-parent (pid == ppid) is a 1-cycle; it must not recurse.
+        std::vector<ProcInfo> selfp{mkproc(700, 700, "self", 1.0, kMiB)};
+        const auto sub = plan_subtree(selfp, 700);
+        check(sub.size() == 1, "a self-parented process plans exactly itself");
+    }
+
+    // describe_outcome: the wording is the user's only evidence of what
+    // happened, so the signal-specific verbs are pinned. Saying "killed" for a
+    // SIGTERM the process ignored would be a lie the UI tells constantly.
+    {
+        const auto k = describe_outcome(SIGKILL, "hog", 42, 1, 1, 0, 0, "");
+        check(!k.error, "a successful kill is not an error");
+        check(k.text.find("force-killed") != std::string::npos,
+              "SIGKILL says force-killed (got: " + k.text + ")");
+        check(k.text.find("42") != std::string::npos, "single-target names the pid");
+
+        const auto t = describe_outcome(SIGTERM, "hog", 42, 1, 1, 0, 0, "");
+        check(t.text.find("asked") != std::string::npos &&
+              t.text.find("to exit") != std::string::npos,
+              "SIGTERM only ASKS (got: " + t.text + ")");
+
+        const auto s = describe_outcome(SIGSTOP, "hog", 42, 1, 1, 0, 0, "");
+        check(s.text.find("suspended") != std::string::npos,
+              "SIGSTOP says suspended (got: " + s.text + ")");
+
+        const auto c = describe_outcome(SIGCONT, "hog", 42, 1, 1, 0, 0, "");
+        check(c.text.find("resumed") != std::string::npos,
+              "SIGCONT says resumed (got: " + c.text + ")");
+
+        // A group kill reports a count, not a pid.
+        const auto g = describe_outcome(SIGTERM, "helper", 700, 5, 5, 0, 0, "");
+        check(g.text.find("5") != std::string::npos,
+              "a group kill reports how many (got: " + g.text + ")");
+
+        // Failures surface the real errno text and mark the toast as an error.
+        const auto f = describe_outcome(SIGKILL, "root-proc", 1, 1, 0, 1, 0,
+                                        "permission denied — not your process");
+        check(f.error, "a failed kill is an error toast");
+        check(f.text.find("permission denied") != std::string::npos,
+              "the failure reports the actual reason");
+
+        // Everything recycled: nothing was signalled, and we say so rather
+        // than claiming a success.
+        const auto r = describe_outcome(SIGKILL, "gone", 42, 1, 0, 0, 1, "");
+        check(r.error, "an all-recycled kill is an error toast");
+        check(r.text.find("already exited") != std::string::npos,
+              "an all-recycled kill says nothing was signaled (got: " + r.text + ")");
+
+        // Partial: some signalled, some already gone — report both halves.
+        const auto p = describe_outcome(SIGTERM, "helper", 700, 4, 3, 0, 1, "");
+        check(!p.error, "a partial success is not an error");
+        check(p.text.find("already gone") != std::string::npos,
+              "a partial kill mentions the gone targets (got: " + p.text + ")");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -591,6 +797,7 @@ int main() {
     test_units();
     test_proc_query();
     test_proc_order();
+    test_kill_plan();
     test_verdict();
 
     std::printf("\n%d checks, %d failure%s\n",

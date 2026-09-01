@@ -20,6 +20,7 @@
 #include "../core/sampler.hpp"
 #include "../core/config.hpp"
 #include "state.hpp"
+#include "kill_plan.hpp"
 #include "proc_order.hpp"
 #include "theme.hpp"
 #include "widgets/header.hpp"
@@ -794,52 +795,31 @@ struct App {
         // 1. Kill confirmation intercepts everything.
         if (m.pending) {
             if (key(ev, 'y') || key(ev, maya::SpecialKey::Enter)) {
-                const auto& targets = m.pending->pids;
-                const auto& starts  = m.pending->starts;
-                // Freshest per-pid start times: a pid recycled between ARM and
-                // CONFIRM must not receive the signal (the classic race — the
-                // user sits on y/n while the target exits and the kernel hands
-                // its pid to an unrelated process).
-                std::unordered_map<int, std::uint64_t> now_start;
-                for (const auto& q : m.snap.procs) now_start[q.pid] = q.start_sec;
-                int ok = 0, failed = 0, recycled = 0;
+                const int sig = m.pending->sig;
+
+                // Revalidate every target against the FRESHEST snapshot before
+                // signalling anything. A pid recycled between ARM and CONFIRM
+                // must not receive the signal — the user can sit on the y/n
+                // prompt indefinitely while the target exits and the kernel
+                // hands its pid to an unrelated process. The decision is pure
+                // and lives in ui/kill_plan.hpp so it can be tested against
+                // that race directly; only the kill(2) loop is here.
+                const ui::ResolvedTargets rt =
+                    ui::resolve_targets(m.pending->pids, m.pending->starts, m.snap.procs);
+
+                int ok = 0, failed = 0;
                 std::string first_err;
-                for (std::size_t ti = 0; ti < targets.size(); ++ti) {
-                    const int pid = targets[ti];
-                    const std::uint64_t armed = ti < starts.size() ? starts[ti] : 0;
-                    auto ns = now_start.find(pid);
-                    // Vanished from the snapshot, or reborn with a different
-                    // start time → the process we armed against is gone.
-                    if (ns == now_start.end() || !start_matches(armed, ns->second)) {
-                        ++recycled;
-                        continue;
-                    }
-                    std::string err = signal_process(pid, m.pending->sig);
+                for (int pid : rt.signalable) {
+                    const std::string err = signal_process(pid, sig);
                     if (err.empty()) ++ok;
                     else { ++failed; if (first_err.empty()) first_err = err; }
                 }
-                const bool group = targets.size() > 1;
-                const int sig = m.pending->sig;
-                // Signal-aware wording: KILL is "force-killed", STOP/CONT/HUP
-                // etc. name themselves, plain TERM stays "asked … to exit".
-                std::string verb, tail;
-                if (sig == SIGKILL)      { verb = "force-killed "; tail = ""; }
-                else if (sig == SIGTERM) { verb = "asked ";        tail = " to exit"; }
-                else if (sig == SIGSTOP || sig == SIGTSTP) { verb = "suspended "; tail = ""; }
-                else if (sig == SIGCONT) { verb = "resumed ";      tail = ""; }
-                else { verb = "sent " + sig_name(sig) + " to "; tail = ""; }
-                std::string what = group
-                    ? std::to_string(ok) + " × " + m.pending->name
-                    : m.pending->name + " (" + std::to_string(m.pending->pid) + ")";
-                if (failed)
-                    m.toast = Toast{first_err + (group ? " (+" + std::to_string(failed - 1) + " more failed)"
-                                                        : ""), true};
-                else if (ok == 0 && recycled)
-                    m.toast = Toast{"target already exited — nothing signaled", true};
-                else
-                    m.toast = Toast{verb + what + tail +
-                                    (recycled ? " (" + std::to_string(recycled) + " already gone)" : ""),
-                                    false};
+
+                const ui::KillOutcome out =
+                    ui::describe_outcome(sig, m.pending->name, m.pending->pid,
+                                         m.pending->pids.size(), ok, failed,
+                                         rt.recycled, first_err);
+                m.toast = Toast{out.text, out.error};
                 m.pending.reset();
                 // Refresh the list off-thread so killed processes drop out
                 // promptly without blocking on a full re-sample here.
@@ -1299,39 +1279,12 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // Map each target pid to its start_sec in the CURRENT snapshot (0 when
-    // unknown). Captured when a kill is ARMED; the confirm path compares
-    // against the then-freshest snapshot so a pid recycled while the user sat
-    // on the y/n prompt is never signaled. ±2s tolerance: start_sec derives
-    // from boot_epoch, which can differ by a second across sampler restarts.
+    // Thin adapter over ui::starts_of — the pure version takes the process
+    // list, this takes the model. See ui/kill_plan.hpp for the pid-reuse
+    // rationale and tests/core_logic_test.cpp for the pinned behaviour.
     static std::vector<std::uint64_t> starts_of(const Model& m,
                                                 const std::vector<int>& pids) {
-        std::unordered_map<int, std::uint64_t> by_pid;
-        for (const auto& q : m.snap.procs) by_pid[q.pid] = q.start_sec;
-        std::vector<std::uint64_t> out;
-        out.reserve(pids.size());
-        for (int pid : pids) {
-            auto it = by_pid.find(pid);
-            out.push_back(it != by_pid.end() ? it->second : 0);
-        }
-        return out;
-    }
-
-    // Does the process at this pid still look like the one we armed against?
-    //
-    // FAILS CLOSED. If either start time is unknown (0) we REFUSE rather than
-    // proceed. This used to return true — "unknown, so we can't check" — which
-    // inverted the whole point of the guard: the case where the armed pid has
-    // vanished from the snapshot is precisely the suspicious one, and the
-    // action being gated is sending SIGKILL. The cost of a false negative is
-    // that the user presses `y` again after a re-sample; the cost of a false
-    // positive is signalling an unrelated process. Those are not symmetric.
-    //
-    // ±2s tolerance: start_sec derives from boot_epoch, which can differ by a
-    // second across sampler restarts.
-    static bool start_matches(std::uint64_t armed, std::uint64_t now) {
-        if (armed == 0 || now == 0) return false;   // unknown → refuse
-        return armed > now ? armed - now <= 2 : now - armed <= 2;
+        return ui::starts_of(m.snap.procs, pids);
     }
 
     static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
@@ -1350,9 +1303,7 @@ struct App {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
-            std::vector<int> pids;
-            for (const auto& q : m.snap.procs)
-                if (q.name == p->name) pids.push_back(q.pid);
+            std::vector<int> pids = ui::plan_by_name(m.snap.procs, p->name);
             if (pids.empty()) pids.push_back(p->pid);
             auto starts = starts_of(m, pids);
             m.pending = PendingKill{p->pid, p->name, sig, std::move(pids), std::move(starts)};
@@ -1368,20 +1319,14 @@ struct App {
         const int root = m.detail == ui::Detail::Proc ? m.detail_pid : selected_pid(m);
         if (root <= 0) return {std::move(m), maya::Cmd<Msg>{}};
         const ProcInfo* rp = nullptr;
-        std::unordered_map<int, std::vector<int>> kids_of;
-        for (const auto& q : m.snap.procs) {
-            if (q.pid == root) rp = &q;
-            if (q.ppid != q.pid) kids_of[q.ppid].push_back(q.pid);
-        }
-        std::vector<int> pids{root};
-        {
-            std::vector<int> stk{root};
-            while (!stk.empty()) {
-                int cur = stk.back(); stk.pop_back();
-                if (auto it = kids_of.find(cur); it != kids_of.end())
-                    for (int c : it->second) { pids.push_back(c); stk.push_back(c); }
-            }
-        }
+        for (const auto& q : m.snap.procs) if (q.pid == root) { rp = &q; break; }
+
+        // Cycle-safe descendant walk (see ui/kill_plan.hpp): /proc is not a
+        // consistent snapshot, so the ppid map can contain a loop, and this
+        // list is about to be handed to kill(2).
+        std::vector<int> pids = ui::plan_subtree(m.snap.procs, root);
+        if (pids.empty()) pids.push_back(root);
+
         std::string name = rp ? rp->name : ("pid " + std::to_string(root));
         // The confirm strip's group-wording keys off pids.size()>1, so a
         // subtree of one (a leaf) still reads as a single-target kill.
