@@ -180,6 +180,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         # construction site is noise that hides real findings, and the defaults
         # are the point of the design. This is the ONLY -Wextra member we drop.
         -Wno-missing-field-initializers)
+    # -Wmaybe-uninitialized is GCC's most notorious false-positive: at -O3 it
+    # fires from deep inside maya's std::function / std::variant machinery
+    # (Element copy) on GCC 14 but not GCC 16, blaming a header we don't own and
+    # can't fix. It is an optimizer heuristic, not a soundness check — the real
+    # uninitialized-read detection is ASan/UBSan in CI, which is exact. Drop just
+    # this one so a legitimate build isn't held hostage to a compiler-version
+    # quirk in a vendored dependency.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(rb_warnings INTERFACE -Wno-maybe-uninitialized)
+    endif()
     if(RB_WERROR)
         target_compile_options(rb_warnings INTERFACE -Werror)
     endif()

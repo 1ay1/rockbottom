@@ -224,13 +224,13 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         if (want_detail) {
             std::string st = slurp(proc_path(e->d_name, "/status"));
             auto status_value = [&](std::string_view key,
-                                    std::uint64_t& out) -> bool {
+                                    std::uint64_t& dst) -> bool {
                 std::size_t line = 0;
                 while (line < st.size()) {
                     if (st.compare(line, key.size(), key) == 0) {
                         const char* value = st.c_str() + line + key.size();
                         char* end = nullptr;
-                        out = std::strtoull(value, &end, 10);
+                        dst = std::strtoull(value, &end, 10);
                         return end != value;
                     }
                     const std::size_t nl = st.find('\n', line);
