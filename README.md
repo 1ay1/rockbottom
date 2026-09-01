@@ -329,6 +329,15 @@ unreliable about tone? `rb --bench` times the sampler alone with no UI and print
 the steady-state cost; `RB_PHASE=1 rb --bench` breaks it down per collector so you
 can see exactly what each tick spends. The numbers above came straight out of it.
 
+**It opens now, not in a second.** Time-to-first-frame is a few milliseconds:
+the window paints with real CPU load, every process, every core and real memory
+before anything slow runs. The genuinely expensive one-time probes — enumerating
+the ~1600-key AppleSMC table for temperatures, standing up the IOReport
+subscription for per-core clocks, cold-starting Termux:API for battery/wifi — are
+detail-pane data, so they're deferred to the first background tick a heartbeat
+later instead of blocking the launch. On an M1 that moved boot-to-first-frame
+from ~470ms to ~7ms. You press the key, it's there.
+
 ## Architecture (skip this; we both know you were going to)
 
 rockbottom is a maya **Elm-style `Program`** — pure functions, no sneaky in-place
