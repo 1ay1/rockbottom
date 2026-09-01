@@ -39,29 +39,18 @@ endif()
 # nothing else hardcodes a version string.
 project(rockbottom VERSION 0.3.0 LANGUAGES CXX)
 
-# Second half of the macOS deployment floor (the first half is the
-# CMAKE_OSX_DEPLOYMENT_TARGET default above). GCC only emits the
-# -mmacosx-version-min load command when CMake also resolved a sysroot, so if
-# CMAKE_OSX_SYSROOT ends up empty — an interrupted first configure, a cache
-# copied between machines, an explicit -DCMAKE_OSX_SYSROOT= — the flag silently
-# disappears and the link stamps the BUILDER's SDK version instead. That is the
-# exact build-host leak the floor exists to prevent, and it produces a binary
-# that dies in dyld on an older Mac before main() runs.
-#
-# assert_standalone.cmake does catch this, but only after a full build and with
-# an error that blames the deployment target rather than the missing sysroot.
-# Catching it here costs a second and says what to actually do. It must run
-# AFTER project(), which is where CMake populates CMAKE_OSX_SYSROOT.
-if(APPLE AND NOT CMAKE_OSX_SYSROOT)
-    message(FATAL_ERROR
-        "CMAKE_OSX_SYSROOT is empty, so the macOS deployment floor "
-        "(${CMAKE_OSX_DEPLOYMENT_TARGET}) would NOT be stamped into the binary "
-        "and `rb` would refuse to launch on older Macs.\n"
-        "This usually means a stale or interrupted CMake cache. Fix with:\n"
-        "  rm -rf <builddir> && cmake -B <builddir>\n"
-        "or point at an SDK explicitly:\n"
-        "  cmake -B <builddir> -DCMAKE_OSX_SYSROOT=$(xcrun --show-sdk-path)")
-endif()
+# NOTE on the macOS deployment floor: the CMAKE_OSX_DEPLOYMENT_TARGET default
+# above is what makes the linker stamp a -mmacosx-version-min load command, so a
+# published `rb` launches on older Macs than the one it was built on. Whether
+# that actually happened is not something to guess at configure time — an
+# earlier version of this file FATAL_ERROR'd on an empty CMAKE_OSX_SYSROOT, but
+# that variable is a toolchain-specific proxy (Homebrew GCC finds the SDK via
+# its own -isysroot autodetection and legitimately leaves the CMake variable
+# empty, which is exactly how every release before this one built). The
+# authoritative check is cmake/assert_standalone.cmake, which runs POST-BUILD
+# and inspects the real load command in the actual binary; it fails the build
+# with a precise message if the floor is missing. That is the right place for
+# it, so there is no configure-time guard here.
 
 # rockbottom targets the same modern standard maya uses.
 set(CMAKE_CXX_STANDARD 26)
