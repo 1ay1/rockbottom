@@ -39,9 +39,9 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
         if (total == 0) continue;
 
         DiskInfo d;
-        d.device = f.f_mntfromname;
-        d.mount  = f.f_mntonname;
-        d.fstype = f.f_fstypename;
+        d.device = sys::sanitize_display(f.f_mntfromname);
+        d.mount  = sys::sanitize_display(f.f_mntonname);
+        d.fstype = sys::sanitize_display(f.f_fstypename);
         d.total  = Bytes{total};
         d.used   = Bytes{total - static_cast<std::uint64_t>(f.f_bfree) * bs};
         d.inodes_total = f.f_files;

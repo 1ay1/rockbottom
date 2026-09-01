@@ -720,6 +720,18 @@ void test_sanitize() {
           "accents / nbsp / CJK / emoji pass through unchanged");
     check(sanitize_display("normal-proc") == "normal-proc" && sanitize_display("").empty(),
           "plain names and empty strings are unchanged");
+
+    // This function is no longer only about process names. Every string that
+    // reaches the renderer from an untrusted source now routes through it:
+    // GPU adapter/driver names (VBIOS + driver), /proc/mounts device/mount/
+    // fstype, and hwmon sensor labels. The payloads above stand in for all of
+    // them — a crafted GPU product name or a container's synthetic mount path
+    // is the same threat as a hostile process name, and this contract is what
+    // makes routing them through here sufficient.
+    check(!unsafe(sanitize_display(std::string("GeForce\x1b[2J RTX"))),
+          "a crafted GPU adapter name is neutralized like a process name");
+    check(!unsafe(sanitize_display(std::string("/mnt/\x9d evil"))),
+          "a crafted mount path is neutralized");
 }
 
 void test_proc_order_strictness() {

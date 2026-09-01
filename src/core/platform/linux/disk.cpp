@@ -110,7 +110,13 @@ void Sampler::sample_disks(std::vector<DiskInfo>& disks) {
         if (total == 0) continue;
 
         DiskInfo d;
-        d.device = dev; d.mount = mount; d.fstype = fstype;
+        // device, mount path and fstype come from /proc/mounts and reach the
+        // disk panel + detail pane. /proc/mounts octal-escapes control bytes,
+        // but a container's synthetic mount table is not guaranteed to, so
+        // sanitize at the boundary like every other displayed string.
+        d.device = procfs::sanitize_display(dev);
+        d.mount  = procfs::sanitize_display(mount);
+        d.fstype = procfs::sanitize_display(fstype);
         d.total = Bytes{total};
         d.used  = Bytes{total - vfs.f_bfree * bs};
         disks.push_back(std::move(d));

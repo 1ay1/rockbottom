@@ -73,7 +73,10 @@ void Sampler::sample_sensors(std::vector<Sensor>& out) {
                 label = dev_name.empty() ? ("temp" + std::to_string(i)) : dev_name;
 
             Sensor s;
-            s.label  = label;
+            // hwmon labels and device names are driver-supplied sysfs strings
+            // that reach the sensors pane; sanitize at the data boundary like
+            // every other displayed string.
+            s.label  = procfs::sanitize_display(label);
             s.zone   = zone;
             s.temp_c = t;
             s.high_c = read_milli_c(base + "/temp" + std::to_string(i) + "_max");
