@@ -105,7 +105,12 @@ std::vector<std::string> csv(const std::string& line) {
 
 double num(const std::string& s) {
     if (s.empty() || s == "[N/A]" || s == "N/A") return 0;
-    return std::strtod(s.c_str(), nullptr);
+    const double v = std::strtod(s.c_str(), nullptr);
+    // strtod parses "inf"/"nan" — a driver or a crafted CSV emitting those
+    // would put a non-finite value into a Ratio, the usage meter, and the
+    // history rings, where it poisons min/max scaling and the verdict math.
+    // A number we can't trust is 0, same as a missing field.
+    return std::isfinite(v) ? v : 0.0;
 }
 
 bool has_nvidia_card() {
@@ -319,7 +324,11 @@ std::uint64_t active_clock_mhz(const std::string& path) {
     // e.g. "1: 1234Mhz"
     std::size_t colon = line.find(':');
     if (colon != std::string::npos) line = line.substr(colon + 1);
-    return static_cast<std::uint64_t>(std::strtod(trim(line).c_str(), nullptr));
+    // Casting a non-finite double to uint64_t is undefined behaviour, and this
+    // value comes from driver-supplied sysfs (maskable in a container). Clamp
+    // to a real, non-negative number before the cast.
+    const double v = std::strtod(trim(line).c_str(), nullptr);
+    return (std::isfinite(v) && v > 0) ? static_cast<std::uint64_t>(v) : 0;
 }
 
 void collect_amd(std::vector<GpuInfo>& out) {
