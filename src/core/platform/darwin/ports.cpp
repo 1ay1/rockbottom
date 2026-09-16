@@ -137,6 +137,19 @@ void Sampler::sample_ports() {
                          };
                          return rank(a.state) < rank(b.state);
                      });
+
+    // Real totals first, then cap — see the Linux backend and sampler.hpp for
+    // why the uncapped vector is a per-tick deep-copy cliff on a busy host.
+    conns_established_ = conns_listening_ = 0;
+    for (const Connection& c : connections_) {
+        if (c.state == "ESTABLISHED") ++conns_established_;
+        else if (c.state == "LISTEN") ++conns_listening_;
+    }
+    conns_total_ = static_cast<int>(connections_.size());
+    if (connections_.size() > kMaxConnections) {
+        connections_.resize(kMaxConnections);
+        connections_.shrink_to_fit();
+    }
 }
 
 }  // namespace rockbottom

@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -29,7 +31,9 @@
 #include <string_view>
 #include <vector>
 
+#include <csignal>
 #include <fcntl.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -43,15 +47,73 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// Resolve a helper binary to an ABSOLUTE path against a fixed allowlist of
+// system directories. Returns empty if it isn't installed.
+//
+// SECURITY: this exists so the spawn below can use posix_spawn() rather than
+// posix_spawnP(). posix_spawnP() resolves a bare name like "nvidia-smi"
+// against the INHERITED PATH — and `rb` is routinely run under sudo. A
+// writable directory earlier in a preserved PATH (sudo -E, or an env_keep
+// rule for PATH) would then be arbitrary code execution as root, from a
+// monitoring tool, on any machine with an NVIDIA card. sys_util.hpp's
+// user_of() already refuses popen() for exactly this reason; spawning by
+// bare name is the same hole wearing a different hat. It was also plainly
+// inconsistent: nvidia_smi_exists() probes ABSOLUTE paths, then we execed a
+// bare name that PATH could point somewhere else entirely.
+//
+// Unlike the getent call in user_of() we do NOT clear the environment here.
+// getent needs nothing; nvidia-smi legitimately relies on the inherited env
+// (LD_LIBRARY_PATH locating libnvidia-ml.so) inside containers and CUDA
+// images, and blanking it would break GPU detection for those users. Once
+// the executable itself is a trusted absolute path, passing our own env to
+// it is just an ordinary exec.
+std::string resolve_exe(const char* name) {
+    if (name && name[0] == '/')
+        return ::access(name, X_OK) == 0 ? std::string(name) : std::string{};
+    static const char* const kDirs[] = {"/usr/bin/", "/bin/", "/usr/local/bin/"};
+    for (const char* d : kDirs) {
+        std::string p = std::string(d) + (name ? name : "");
+        if (::access(p.c_str(), X_OK) == 0) return p;
+    }
+    return {};
+}
+
 // Spawn a program directly (no intermediate /bin/sh) and capture its stdout.
 // stderr is redirected to /dev/null in the child, so callers no longer append
 // a shell "2>/dev/null". Empty string on any failure. Going through posix_spawn
 // instead of popen() eliminates the extra shell fork+exec that doubled the
 // cost of every nvidia-smi invocation.
+//
+// Bounded on BOTH axes, because this runs forever on a long-lived monitor:
+//
+//  * TIME. A wedged GPU (driver in a bad state, a hung reset, an Xid storm)
+//    leaves nvidia-smi blocked in uninterruptible sleep — a well-known
+//    failure mode. A plain read-to-EOF would then block this worker for
+//    ever: the GPU pane would freeze permanently, and because std::async's
+//    future BLOCKS in its destructor, ~Sampler would hang too — so `q`
+//    would never quit and the user would have to SIGKILL the monitor. We
+//    poll against a deadline and SIGKILL the child if it overruns.
+//  * SIZE. Output was appended with no cap. A helper that streams garbage
+//    (or a wrong binary shadowing the name) could grow this string until the
+//    box OOMs. nvidia-smi's real output here is a few KB.
+constexpr std::size_t kMaxHelperOutput = 1u << 20;   // 1 MiB
+constexpr int         kHelperTimeoutMs = 5000;
+
 std::string run_argv(const char* const argv[]) {
     std::string out;
+    if (!argv || !argv[0]) return out;
+    const std::string exe = resolve_exe(argv[0]);
+    if (exe.empty()) return out;
+
+    // O_CLOEXEC matters here: collect_nvidia() runs THREE of these spawns
+    // concurrently (query-gpu, query-compute-apps, pmon). Without it, child A
+    // inherits child B's pipe write end, so B's read end never sees EOF until
+    // A also exits — the fast queries would block on the slowest one, and a
+    // child that outlives its sibling could wedge the read outright.
+    // posix_spawn's dup2 action clears CLOEXEC on the target fd, so the
+    // child's own stdout still works.
     int pipefd[2];
-    if (::pipe(pipefd) != 0) return out;
+    if (::pipe2(pipefd, O_CLOEXEC) != 0) return out;
 
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
@@ -62,23 +124,51 @@ std::string run_argv(const char* const argv[]) {
     posix_spawn_file_actions_addclose(&fa, pipefd[1]);
 
     pid_t pid = 0;
-    int rc = ::posix_spawnp(&pid, argv[0], &fa, nullptr,
-                            const_cast<char* const*>(argv), environ);
+    int rc = ::posix_spawn(&pid, exe.c_str(), &fa, nullptr,
+                           const_cast<char* const*>(argv), environ);
     posix_spawn_file_actions_destroy(&fa);
     ::close(pipefd[1]);   // parent keeps only the read end
     if (rc != 0) { ::close(pipefd[0]); return out; }
 
+    const auto start = std::chrono::steady_clock::now();
+    bool timed_out = false;
     char buf[4096];
     for (;;) {
-        ssize_t n = ::read(pipefd[0], buf, sizeof buf);
-        if (n > 0) { out.append(buf, static_cast<std::size_t>(n)); continue; }
-        if (n == 0) break;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        const int left = kHelperTimeoutMs - static_cast<int>(elapsed);
+        if (left <= 0) { timed_out = true; break; }
+
+        struct pollfd pfd{pipefd[0], POLLIN, 0};
+        const int pr = ::poll(&pfd, 1, left);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pr == 0) { timed_out = true; break; }
+
+        const ssize_t n = ::read(pipefd[0], buf, sizeof buf);
+        if (n > 0) {
+            if (out.size() + static_cast<std::size_t>(n) > kMaxHelperOutput) {
+                out.append(buf, kMaxHelperOutput - out.size());
+                timed_out = true;   // treat as runaway: kill and take what we have
+                break;
+            }
+            out.append(buf, static_cast<std::size_t>(n));
+            continue;
+        }
+        if (n == 0) break;                      // clean EOF
         if (errno == EINTR) continue;
         break;
     }
     ::close(pipefd[0]);
+
+    // Always reap. On the timeout path the child is still running and would
+    // otherwise become a zombie that accumulates once per sample forever.
+    if (timed_out) ::kill(pid, SIGKILL);
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    if (timed_out) out.clear();   // partial CSV parses into garbage metrics
     return out;
 }
 

@@ -187,7 +187,25 @@ private:
     std::array<float, 120>                mem_hist_{};
     int                                   mem_hist_len_ = 0;
     std::unordered_map<int, std::vector<std::uint16_t>> pid_ports_;  // per tick
-    std::vector<Connection> connections_;   // active sockets (filled by sample_ports)
+    // Active sockets (filled by sample_ports), CAPPED at kMaxConnections.
+    //
+    // This list is deep-copied into every Snapshot, once per tick, forever.
+    // Uncapped that is a production cliff rather than a slow leak: a busy
+    // proxy / web server / CI box legitimately holds 100k+ sockets (plus
+    // TIME_WAIT churn), and at ~120 bytes of std::string payload per row
+    // that is tens of MB copied every second by a tool whose entire job is
+    // to NOT be the thing eating the machine. The UI can only ever show a
+    // screenful, so retaining the rest buys nothing.
+    //
+    // The cap is applied AFTER the established-then-listener sort in both
+    // backends, so what survives is exactly what the pane shows first; the
+    // summary counts are taken before the truncation so "N active · M
+    // listening" still reports the machine's real totals.
+    static constexpr std::size_t kMaxConnections = 4096;
+    std::vector<Connection> connections_;
+    int conns_established_ = 0;   // true totals, counted before the cap
+    int conns_listening_ = 0;
+    int conns_total_ = 0;
     std::unordered_map<int, std::pair<std::uint64_t, std::string>> cmd_cache_;  // pid -> (starttime, argv); starttime guards pid reuse
     std::unordered_map<int, std::pair<std::uint64_t, unsigned>> puid_cache_;  // pid -> (starttime, uid); skips per-tick stat()
     std::unordered_map<unsigned, std::string> uid_cache_;  // uid -> user name (getpwuid is slow)

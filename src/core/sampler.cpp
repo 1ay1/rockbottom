@@ -230,6 +230,9 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
         std::unordered_map<int, const std::string*> name_of;
         for (const auto& p : s.procs) name_of[p.pid] = &p.name;
         s.connections = connections_;
+        s.conns_established = conns_established_;
+        s.conns_listening   = conns_listening_;
+        s.conns_total       = conns_total_;
         for (auto& c : s.connections)
             if (auto it = name_of.find(c.pid); it != name_of.end()) c.pname = *it->second;
     }

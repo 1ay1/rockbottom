@@ -121,12 +121,28 @@ inline maya::Table conn_table(const Snapshot& s, bool with_proto, int max_rows =
 }
 
 inline std::string conn_summary(const Snapshot& s, int& established, int& listen) {
-    established = 0; listen = 0;
-    for (const auto& c : s.connections) {
-        if (c.state == "ESTABLISHED") ++established;
-        else if (c.state == "LISTEN") ++listen;
+    // Prefer the sampler's pre-cap totals: s.connections is truncated on a
+    // busy host, so counting it here would under-report the machine on
+    // exactly the boxes where the number matters. Fall back to counting the
+    // vector only if the collector didn't stamp the totals (conns_total 0).
+    if (s.conns_total > 0) {
+        established = s.conns_established;
+        listen      = s.conns_listening;
+    } else {
+        established = 0; listen = 0;
+        for (const auto& c : s.connections) {
+            if (c.state == "ESTABLISHED") ++established;
+            else if (c.state == "LISTEN") ++listen;
+        }
     }
-    return std::to_string(established) + " active · " + std::to_string(listen) + " listening";
+    std::string out = std::to_string(established) + " active \xc2\xb7 "
+                    + std::to_string(listen) + " listening";
+    // Be honest when the table below is only part of the picture, rather than
+    // letting a 100k-socket box silently look like a 4096-socket one.
+    if (s.conns_total > static_cast<int>(s.connections.size()))
+        out += " \xc2\xb7 showing " + std::to_string(s.connections.size())
+             + " of " + std::to_string(s.conns_total);
+    return out;
 }
 
 // How many socket rows the split-mode connections column can scroll past —

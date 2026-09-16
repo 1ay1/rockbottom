@@ -314,7 +314,15 @@ struct Snapshot {
     std::vector<DriveIO>  drives;    // per-device I/O + latency (Linux); empty on macOS
     std::vector<SsdHealth> ssd_health; // NVMe endurance (Linux, root); empty otherwise
     std::vector<NetIface> nets;
-    std::vector<Connection> connections;   // active sockets + owning pids
+    std::vector<Connection> connections;   // active sockets + owning pids (capped)
+    // TRUE totals, counted before the connection list is capped. The vector is
+    // truncated to a few thousand rows so a 100k-socket server doesn't get
+    // deep-copied every tick, but the summary line must still report what the
+    // machine is actually doing — counting the truncated vector would quietly
+    // under-report "N active" on exactly the busy hosts where it matters.
+    int conns_established = 0;
+    int conns_listening = 0;
+    int conns_total = 0;
     std::vector<GpuInfo>  gpus;
     std::vector<Sensor>   sensors;   // hwmon temps (Linux); empty on macOS
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
