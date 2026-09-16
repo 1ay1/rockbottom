@@ -25,6 +25,7 @@
 #include "../src/ui/proc_query.hpp"
 #include "../src/ui/proc_order.hpp"
 #include "../src/ui/kill_plan.hpp"
+#include "../src/ui/user_stats.hpp"
 
 #include <cstdio>
 #include <set>
@@ -790,6 +791,126 @@ void test_kill_plan() {
     }
 }
 
+// ── user_stats ──────────────────────────────────────────────────────────────
+
+void test_user_stats() {
+    section("user_stats — per-user rollup and kill-by-user targeting");
+    using namespace rockbottom::ui;
+
+    std::vector<ProcInfo> procs = {
+        mkproc(10, 1, "build",  50.0, 100 * kMiB, "alice"),
+        mkproc(11, 1, "editor", 10.0,  50 * kMiB, "alice"),
+        mkproc(12, 1, "cc1",    90.0, 400 * kMiB, "bob"),
+        mkproc(13, 1, "idle",    0.0,   1 * kMiB, "bob"),
+        mkproc(14, 1, "sshd",    1.0,   2 * kMiB, "root"),
+    };
+    procs[0].threads = 4;
+    procs[2].threads = 8;
+    procs[3].state = 'Z';
+    procs[1].state = 'R';
+
+    {
+        const std::vector<UserStat> u = user_stats(procs, 1000 * kMiB, UserSort::Cpu);
+        check(u.size() == 3, "one row per distinct user");
+        eq_str(u[0].user, "bob", "cpu sort puts the busiest user first");
+        check(u[0].cpu == 90.0, "bob's cpu is the sum of his processes");
+        check(u[0].procs == 2, "bob owns two processes");
+        check(u[0].zombies == 1, "a zombie is counted for its owner");
+        eq_str(u[0].top_name, "cc1", "top process is the user's busiest");
+
+        // alice: 60% cpu, 150 MiB across two procs.
+        const UserStat* alice = nullptr;
+        for (const UserStat& s : u) if (s.user == "alice") alice = &s;
+        check(alice != nullptr, "alice has a row");
+        if (alice) {
+            check(alice->cpu == 60.0, "alice's cpu sums both processes");
+            check(alice->rss == 150 * kMiB, "alice's rss sums both processes");
+            check(alice->running == 1, "alice has one running process");
+            check(alice->mem_share > 0.14 && alice->mem_share < 0.16,
+                  "mem_share is rss/total_ram");
+        }
+    }
+
+    {
+        // total_ram = 0 must not divide by zero.
+        const std::vector<UserStat> u = user_stats(procs, 0, UserSort::Cpu);
+        check(!u.empty() && u[0].mem_share == 0.0,
+              "total_ram=0 leaves mem_share at 0 (no div-by-zero)");
+    }
+
+    {
+        const std::vector<UserStat> u = user_stats(procs, 1000 * kMiB, UserSort::Mem);
+        eq_str(u[0].user, "bob", "mem sort puts the heaviest user first");
+        const std::vector<UserStat> n = user_stats(procs, 1000 * kMiB, UserSort::Name);
+        eq_str(n[0].user, "alice", "name sort is alphabetical");
+    }
+
+    {
+        // An empty owner is bucketed, never dropped: the totals must agree
+        // with the process pane.
+        std::vector<ProcInfo> anon = {mkproc(20, 1, "ghost", 5.0, kMiB, "")};
+        const std::vector<UserStat> u = user_stats(anon, kGiB, UserSort::Cpu);
+        check(u.size() == 1, "a process with no owner still produces a row");
+        eq_str(u[0].user, "?", "unknown owner is bucketed under ?");
+    }
+
+    {
+        // REGRESSION: a user whose processes are ALL idle must still report a
+        // busiest process. The first cut used `p.cpu > u.top_cpu`, which is
+        // false for 0 > 0, so a user owning 292 sleeping daemons rendered
+        // "—" in the BUSIEST column — caught on a live frame, not in review.
+        std::vector<ProcInfo> idle = {
+            mkproc(70, 1, "sleepy", 0.0, kMiB, "daemon"),
+            mkproc(71, 1, "dozy",   0.0, kMiB, "daemon"),
+        };
+        const std::vector<UserStat> u = user_stats(idle, kGiB, UserSort::Cpu);
+        check(u.size() == 1 && u[0].top_pid != 0,
+              "an all-idle user still names a busiest process");
+        eq_str(u[0].top_name, "sleepy", "all-idle ties resolve to the lowest pid");
+    }
+
+    // ── plan_by_user: this list goes to kill(2) ──
+    {
+        const std::vector<int> pids = plan_by_user(procs, "bob");
+        check(pids.size() == 2 && pids[0] == 12 && pids[1] == 13,
+              "plan_by_user selects exactly that user's pids, sorted");
+    }
+    {
+        // Substring must NOT match: "adm" selecting "admin" would be a
+        // catastrophic mis-target.
+        std::vector<ProcInfo> p2 = {
+            mkproc(30, 1, "a", 1.0, kMiB, "admin"),
+            mkproc(31, 1, "b", 1.0, kMiB, "adm"),
+        };
+        const std::vector<int> pids = plan_by_user(p2, "adm");
+        check(pids.size() == 1 && pids[0] == 31,
+              "user match is EXACT, not substring (adm != admin)");
+    }
+    {
+        // pid 1 and pid 0 must never be targets.
+        std::vector<ProcInfo> p3 = {
+            mkproc(1, 0, "init", 0.0, kMiB, "root"),
+            mkproc(0, 0, "zero", 0.0, kMiB, "root"),
+            mkproc(42, 1, "real", 0.0, kMiB, "root"),
+        };
+        const std::vector<int> pids = plan_by_user(p3, "root");
+        check(pids.size() == 1 && pids[0] == 42,
+              "pid 0 and pid 1 are never kill-by-user targets");
+    }
+    {
+        // Our own pid is excluded so the sweep can't kill the monitor.
+        const std::vector<int> pids = plan_by_user(procs, "bob", /*self=*/12);
+        check(pids.size() == 1 && pids[0] == 13,
+              "self pid is excluded from a kill-by-user sweep");
+    }
+    {
+        check(plan_by_user(procs, "").empty(), "empty user selects nothing");
+        check(plan_by_user(procs, "?").empty(),
+              "the unknown-owner bucket is never a kill target");
+        check(plan_by_user(procs, "nobody_here").empty(),
+              "an unmatched user selects nothing");
+    }
+}
 }  // namespace
 
 int main() {
@@ -798,6 +919,7 @@ int main() {
     test_proc_query();
     test_proc_order();
     test_kill_plan();
+    test_user_stats();
     test_verdict();
 
     std::printf("\n%d checks, %d failure%s\n",

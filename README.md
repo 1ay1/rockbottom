@@ -222,6 +222,21 @@ going *"…so what?"*
   Google, understand for nine seconds, and forget forever), owner, and its listening
   ports. `x`/`K` still end it from right here; `↑↓` walks the list.
 
+- **`7` USERS** — the *admin* pane, and the one thing neither `htop` nor `btop` will
+  do for you. Every other view answers "which **process**"; on a shared box — a
+  build farm, a jump host, a lab server, a CI runner — the real question is "which
+  **person**," and the answer currently lives in an `awk` one-liner you re-derive
+  from memory every single time. Here it's one keystroke: every user on the machine
+  with their **total** CPU (as a share of the whole box, with a bar, not a
+  meaningless `1179%`), total RAM, process and thread counts, I/O rate, a zombie
+  tally (`12 (3Z)` — someone's orphaned mess), and the single busiest thing they're
+  running. Sort by `c`·`m`·`p`·`i`·`n`. Then act on it: **`Enter`/`f`** drops you back
+  to the process list already filtered to that user, and **`X`** arms a SIGTERM
+  against *every process they own* (`K` for SIGKILL) behind the same `y`/`n` confirm
+  and the same pid-reuse revalidation as every other kill in the program. `root` is
+  refused outright — "kill every root process" isn't a recovery action, it's an
+  unbootable machine — and your own `rb` is never in the blast radius.
+
 Every pane is **responsive** (it reflows to your terminal — more core columns on a
 wide screen, tighter on a small one) and **scrollable** (`↑↓` / `PgUp` / `PgDn` /
 `g` / `G` / the wheel, with a live scrollbar), so no matter how dense the data or
@@ -429,7 +444,9 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | `K` | *firmly* remove a process (SIGKILL — still asks you first; we're unhinged, not savages) |
 | `y` / `n` | yes, commit the crime / no, I panicked, put it back |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
-| `1`–`6` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process) |
+| `1`–`7` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process · users) |
+| `7` then `f` | see who's eating the box, then filter the list to that one user |
+| `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |
 | `?` / `h` | help, for when every key you just read immediately evaporates from your brain |

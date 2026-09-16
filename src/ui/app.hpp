@@ -73,6 +73,8 @@ struct App {
         ui::Detail detail = ui::Detail::None;   // full-screen drill-down
         int      detail_scroll = 0;              // scroll offset within a pane
         int      detail_pid = 0;                 // PID the Proc pane is pinned to
+        ui::UserSort user_sort = ui::UserSort::Cpu;  // USERS pane ordering
+        int      user_sel = 0;                   // selected row in the USERS table
         int      width = 100, height = 40;
         int      ticks = 0;
         // Monotonic generation bumped every time a new Snapshot is folded in
@@ -872,6 +874,49 @@ struct App {
             if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m); return {std::move(m), C{}}; }
+            if (key(ev, '7')) { m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0; return {std::move(m), C{}}; }
+            if (m.detail == ui::Detail::Users) {
+                // ↑↓ move the row cursor (and drag the scroll window with it),
+                // because the selection is what the destructive keys target —
+                // scrolling a selection off-screen and then pressing X would
+                // signal a user you can no longer see.
+                const int nusers = static_cast<int>(
+                    ui::user_stats(m.snap.procs, m.snap.mem.total.value).size());
+                auto clamp_usel = [&](Model& mm) {
+                    mm.user_sel = std::clamp(mm.user_sel, 0, std::max(0, nusers - 1));
+                    if (mm.user_sel < mm.detail_scroll) mm.detail_scroll = mm.user_sel;
+                    const int view = std::max(1, users_view_rows(mm));
+                    if (mm.user_sel >= mm.detail_scroll + view)
+                        mm.detail_scroll = mm.user_sel - view + 1;
+                    clamp_detail_scroll(mm);
+                };
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.user_sel = 0; clamp_usel(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.user_sel = nusers - 1; clamp_usel(m); return {std::move(m), C{}}; }
+                // Re-sort the table. Same letters the process table uses, so
+                // the muscle memory carries over.
+                if (key(ev, 'c')) { m.user_sort = ui::UserSort::Cpu;   m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'm')) { m.user_sort = ui::UserSort::Mem;   m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'p')) { m.user_sort = ui::UserSort::Procs; m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'i')) { m.user_sort = ui::UserSort::Io;    m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'n')) { m.user_sort = ui::UserSort::Name;  m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                // Enter / f: leave the pane with the process list FILTERED to
+                // this user. This is the gesture that makes the pane useful
+                // rather than merely informative — "who is eating the box"
+                // straight into "show me exactly what they're running".
+                if (key(ev, maya::SpecialKey::Enter) || key(ev, 'f'))
+                    return filter_to_selected_user(std::move(m));
+                // The destructive one. Deliberately capital-X only (no lone
+                // 'x'): every other pane's lowercase x kills ONE process, and
+                // reusing it for "signal everything this person owns" would be
+                // a punishing overload of a one-key gesture.
+                if (key(ev, 'X')) return arm_kill_user(std::move(m), SIGTERM);
+                if (key(ev, 'K')) return arm_kill_user(std::move(m), SIGKILL);
+                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; m.user_sel += 10; clamp_usel(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; m.user_sel -= 10; clamp_usel(m); return {std::move(m), C{}}; }
+                return {std::move(m), C{}};
+            }
             if (m.detail == ui::Detail::Proc) {
                 // ↑↓ walk the table selection AND re-pin the pane to the new
                 // row, so the pane follows deliberate navigation but never
@@ -958,6 +1003,10 @@ struct App {
         if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
         if (key(ev, '6') || key(ev, maya::SpecialKey::Enter)) {
             m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m);
+            return {std::move(m), C{}};
+        }
+        if (key(ev, '7')) {
+            m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0;
             return {std::move(m), C{}};
         }
 
@@ -1311,6 +1360,80 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
+    // Arm a kill for EVERY process owned by the USERS pane's selected row —
+    // the "log this person out of my build box" move.
+    //
+    // This is the widest-reaching gesture in the program, so it is the most
+    // conservative. plan_by_user (ui/user_stats.hpp, unit-tested) enforces the
+    // target rules: exact user match (never substring — "adm" must not select
+    // "admin"), never pid 0 or 1, and never our own pid. On top of that:
+    //
+    //  * root is refused outright. "Kill every root process" is not a
+    //    recovery action, it is an unbootable machine; an admin who genuinely
+    //    wants that has better tools. Refusing costs nothing and removes the
+    //    single worst keystroke in the program.
+    //  * The confirm strip still runs, and on confirm every pid is
+    //    revalidated against start_sec, so the pid-reuse race is covered by
+    //    exactly the same guard as every other kill path.
+    static std::pair<Model, maya::Cmd<Msg>> arm_kill_user(Model m, int sig) {
+        const std::vector<ui::UserStat> us =
+            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort);
+        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
+        const std::string& user = us[static_cast<std::size_t>(idx)].user;
+
+        if (user == "root") {
+            m.toast = Toast{"refusing to mass-signal root \xe2\x80\x94 that's not a recovery action",
+                            true};
+            return {std::move(m), maya::Cmd<Msg>{}};
+        }
+        std::vector<int> pids =
+            ui::plan_by_user(m.snap.procs, user, static_cast<int>(::getpid()));
+        if (pids.empty()) {
+            m.toast = Toast{"no signalable processes for " + user, false};
+            return {std::move(m), maya::Cmd<Msg>{}};
+        }
+        auto starts = starts_of(m, pids);
+        // The anchor pid is only used for messaging; the name carries the
+        // user so the confirm strip reads "12 × alice", not a pid nobody
+        // recognises.
+        const int anchor = pids.front();
+        m.pending = PendingKill{anchor, user, sig, std::move(pids), std::move(starts)};
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Leave the USERS pane with the process table filtered to that user. The
+    // pane answers "who", this turns it straight into "show me what" without
+    // making the admin retype a filter they just read off the screen.
+    static std::pair<Model, maya::Cmd<Msg>> filter_to_selected_user(Model m) {
+        const std::vector<ui::UserStat> us =
+            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort);
+        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
+        const std::string& user = us[static_cast<std::size_t>(idx)].user;
+        if (user == "?") {
+            m.toast = Toast{"those processes have no resolvable owner", false};
+            return {std::move(m), maya::Cmd<Msg>{}};
+        }
+        m.filter = "user:" + user;
+        m.detail = ui::Detail::None;
+        m.detail_scroll = 0;
+        m.sel = 0;
+        clamp_sel(m);
+        sync_scroll(m);
+        m.toast = Toast{"filtered to " + user + " \xc2\xb7 esc clears", false};
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // How many USERS rows the table can show. Mirrors the pane's own budget
+    // (chrome + headline block) so cursor-follows-scroll math agrees with what
+    // is actually painted.
+    static int users_view_rows(const Model& m) {
+        const ui::detail::Ctx cx =
+            ui::detail::Ctx::make(m.width, m.height, m.detail_scroll);
+        return std::max(1, cx.body_h - 10);
+    }
+
     // Arm a kill of the WHOLE subtree under the pinned process (this + every
     // descendant), pid-collected by walking the parent map. The "reap this
     // process group" move — one confirm, the strip shows the count. Targets
@@ -1516,7 +1639,8 @@ struct App {
         if (m.detail != ui::Detail::None) {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
             return canvas(DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
-                              m.pending ? &*m.pending : nullptr});
+                              m.pending ? &*m.pending : nullptr,
+                              m.user_sort, m.user_sel});
         }
 
         const Snapshot& s = m.snap;

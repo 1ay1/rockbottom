@@ -57,7 +57,7 @@ public:
                 {"R / re-press", "reverse sort direction"},
             }},
             {"DETAIL", {
-                {"1 2 3 4 5 6", "cpu · mem · net · gpu · disk · proc"},
+                {"1 2 3 4 5 6 7", "cpu · mem · net · gpu · disk · proc · users"},
                 {"Enter", "open selected process detail"},
                 {"↑↓ / PgUp PgDn", "walk the list / scroll the pane"},
                 {"← →", "proc pane: walk to parent / busiest child"},
@@ -66,6 +66,14 @@ public:
                 {"x K l X", "proc pane: stop · kill · signal · end-all-by-name"},
                 {"g / G", "jump to top / bottom of pane"},
                 {"Esc", "close detail / help"},
+            }},
+            {"USERS PANE (7)", {
+                {"↑↓ / g G", "move the row cursor (this is what X targets)"},
+                {"c m p i n", "sort by cpu · mem · procs · i/o · name"},
+                {"Enter / f", "filter the process list to this user"},
+                {"X", "end EVERY process this user owns (SIGTERM)"},
+                {"K", "force-kill every process this user owns (SIGKILL)"},
+                {"—", "root is refused; your own rb process is never a target"},
             }},
             {"GENERAL", {
                 {"p / Space", "pause / resume"},

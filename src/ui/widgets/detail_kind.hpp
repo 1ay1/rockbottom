@@ -6,6 +6,6 @@
 namespace rockbottom::ui {
 
 // Which drill-down pane is open (None = main dashboard).
-enum class Detail { None, Cpu, Mem, Net, Gpu, Disk, Proc };
+enum class Detail { None, Cpu, Mem, Net, Gpu, Disk, Proc, Users };
 
 }  // namespace rockbottom::ui

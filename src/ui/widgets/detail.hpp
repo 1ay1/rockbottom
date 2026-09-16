@@ -31,6 +31,7 @@
 #include "detail/gpu.hpp"
 #include "detail/disk.hpp"
 #include "detail/proc.hpp"
+#include "detail/users.hpp"
 
 #include <string>
 #include <vector>
@@ -46,13 +47,16 @@ class DetailPane {
     const ProcInfo* proc_;   // for Detail::Proc
     int w_, h_, scroll_;
     const PendingKill* pending_ = nullptr;  // in-pane kill confirmation
+    UserSort user_sort_ = UserSort::Cpu;    // for Detail::Users
+    int user_sel_ = 0;                      // selected row in the users table
 
 public:
     DetailPane(const Snapshot& s, Detail which, const ProcInfo* proc = nullptr,
                int w = 100, int h = 40, int scroll = 0,
-               const PendingKill* pending = nullptr)
+               const PendingKill* pending = nullptr,
+               UserSort usort = UserSort::Cpu, int usel = 0)
         : s_(s), which_(which), proc_(proc), w_(w), h_(h), scroll_(scroll),
-          pending_(pending) {}
+          pending_(pending), user_sort_(usort), user_sel_(usel) {}
 
     operator maya::Element() const { return build(); }
 
@@ -153,6 +157,7 @@ private:
             case Detail::Net:  glyph = "⇅"; title = "NETWORK"; ac = pal::net_ac;  break;
             case Detail::Gpu:  glyph = "◆"; title = "GPU";     ac = pal::gpu_ac;  break;
             case Detail::Disk: glyph = "◇"; title = "DISK";    ac = pal::disk_ac; break;
+            case Detail::Users: glyph = "◑"; title = "USERS";  ac = pal::proc_ac; break;
             case Detail::Proc:
                 glyph = "≡";
                 // Name the actual process in the pane title so it's instantly
@@ -176,6 +181,7 @@ private:
             case Detail::Gpu:  return detail::gpu_body(s_, cx);
             case Detail::Disk: return detail::disk_body(s_, cx);
             case Detail::Proc: return detail::proc_body(s_, cx, proc_);
+            case Detail::Users: return detail::users_body(s_, cx, user_sort_, user_sel_);
             default:           return {};
         }
     }
@@ -277,6 +283,7 @@ private:
             {Detail::Gpu,  "4", "◆", "gpu",  pal::gpu_ac},
             {Detail::Disk, "5", "◇", "disk", pal::disk_ac},
             {Detail::Proc, "6", "≡", "proc", pal::proc_ac},
+            {Detail::Users, "7", "◑", "users", pal::proc_ac},
         };
         const bool scrollable = this->scrollable();
 

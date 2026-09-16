@@ -24,6 +24,16 @@ namespace rockbottom::ui::fmt {
     return b;
 }
 
+// Percent with one decimal, for aggregates where whole numbers lose real
+// signal — a user sitting at 0.4% of a 64-core box is not the same as 0%.
+// Drops the decimal once the figure is big enough that it stops mattering.
+[[nodiscard]] inline std::string pct1(double frac) {
+    const double p = frac * 100.0;
+    char b[16];
+    std::snprintf(b, sizeof b, p >= 100.0 ? "%.0f%%" : "%.1f%%", p);
+    return b;
+}
+
 [[nodiscard]] inline std::string fixed1(double v) {
     char b[16];
     std::snprintf(b, sizeof b, "%.1f", v);
