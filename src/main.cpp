@@ -328,6 +328,32 @@ int main(int argc, char** argv) {
                 : "no wireless — expected on desktop (this is an Android/Termux "
                   "source; the net pane already shows link rates)");
 
+        {
+            // Accounts / sessions / disk-per-user. The disk half is the
+            // interesting diagnostic: say WHICH source answered, because
+            // "quota" is exact and instant while "scan" is a budgeted walk
+            // that may still be running — and an empty column has very
+            // different meanings in those two worlds.
+            int people = 0, quota_n = 0, scan_n = 0;
+            for (const UserAccount& a : s.accounts) {
+                if (!a.system) ++people;
+                if (a.disk_source == std::string("quota")) ++quota_n;
+                else if (a.disk_source == std::string("scan")) ++scan_n;
+            }
+            std::string why;
+            if (s.accounts.empty()) {
+                why = "no account data — /etc/passwd unreadable?";
+            } else {
+                why = std::to_string(s.accounts.size()) + " account(s), "
+                    + std::to_string(people) + " non-system, "
+                    + std::to_string(s.sessions.size()) + " live session(s)";
+                if (quota_n) why += "; disk from quota x" + std::to_string(quota_n);
+                else if (scan_n) why += "; disk from scan x" + std::to_string(scan_n);
+                else why += "; disk usage pending (no quotas; scan runs in background)";
+            }
+            row("accounts", !s.accounts.empty(), why);
+        }
+
         std::printf("\nverdict: %s\n", s.verdict.headline.c_str());
         std::printf("         %s\n", s.verdict.detail.c_str());
 

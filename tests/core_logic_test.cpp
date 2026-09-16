@@ -910,6 +910,73 @@ void test_user_stats() {
         check(plan_by_user(procs, "nobody_here").empty(),
               "an unmatched user selects nothing");
     }
+
+    // ── account join: identity, disk, sessions ──
+    {
+        std::vector<UserAccount> accts(2);
+        accts[0].name = "alice"; accts[0].uid = 1000; accts[0].home = "/home/alice";
+        accts[0].shell = "/bin/bash"; accts[0].can_login = true;
+        accts[0].disk_bytes = 5 * kGiB; accts[0].disk_known = true;
+        accts[0].disk_source = "scan";
+        accts[1].name = "carol"; accts[1].uid = 1001; accts[1].home = "/home/carol";
+        accts[1].shell = "/bin/bash"; accts[1].can_login = true;
+        accts[1].disk_bytes = 90 * kGiB; accts[1].disk_known = true;
+        accts[1].disk_source = "quota"; accts[1].disk_quota = 100 * kGiB;
+
+        std::vector<LoginSession> sess(2);
+        sess[0].user = "alice"; sess[0].id = "1";
+        sess[1].user = "alice"; sess[1].id = "2";
+
+        {
+            const std::vector<UserStat> u =
+                user_stats(procs, 1000 * kMiB, UserSort::Name, &accts, &sess, false);
+            const UserStat* alice = nullptr;
+            for (const UserStat& s : u) if (s.user == "alice") alice = &s;
+            check(alice && alice->has_account, "account data joins onto a process row");
+            if (alice) {
+                check(alice->disk_bytes == 5 * kGiB, "disk bytes join from the account");
+                check(alice->sessions == 2, "live sessions are counted per user");
+                eq_str(alice->home, "/home/alice", "home directory joins");
+            }
+            // carol owns no processes, and we did NOT ask for idle accounts.
+            bool has_carol = false;
+            for (const UserStat& s : u) if (s.user == "carol") has_carol = true;
+            check(!has_carol, "an idle account is omitted unless requested");
+        }
+        {
+            // ...but WITH include_idle_accounts, carol appears — she's the
+            // person who filled the disk and logged out, which a process-only
+            // view can never surface.
+            const std::vector<UserStat> u =
+                user_stats(procs, 1000 * kMiB, UserSort::Disk, &accts, &sess, true);
+            const UserStat* carol = nullptr;
+            for (const UserStat& s : u) if (s.user == "carol") carol = &s;
+            check(carol != nullptr, "an idle account appears when requested");
+            if (carol) {
+                check(carol->procs == 0, "an idle account has no processes");
+                check(carol->disk_bytes == 90 * kGiB, "idle account still reports disk");
+            }
+            eq_str(u[0].user, "carol", "disk sort puts the biggest consumer first");
+        }
+        {
+            // A user with no account row must report disk_known = false, NOT
+            // zero. "Unmeasured" and "empty" are different answers and an
+            // admin would act on them differently.
+            const std::vector<UserStat> u =
+                user_stats(procs, 1000 * kMiB, UserSort::Cpu, &accts, &sess, false);
+            const UserStat* bob = nullptr;
+            for (const UserStat& s : u) if (s.user == "bob") bob = &s;
+            check(bob && !bob->disk_known,
+                  "a user with no account reports disk UNKNOWN, not 0");
+        }
+        {
+            // No account data at all (macOS without quotas, /etc/passwd
+            // unreadable) must still produce the process rollup.
+            const std::vector<UserStat> u = user_stats(procs, 1000 * kMiB, UserSort::Cpu);
+            check(u.size() == 3, "rollup still works with no account data");
+            check(!u[0].has_account, "has_account is false without account data");
+        }
+    }
 }
 }  // namespace
 

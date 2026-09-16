@@ -41,11 +41,28 @@ struct UserStat {
     int           top_pid = 0;
     std::string   top_name;
     double        top_cpu = 0;
+
+    // ── account data, joined from Snapshot::accounts ─────────────────────
+    // Present only for users that exist in the passwd database; a process
+    // owned by a uid with no account (a deleted user, a container mapping)
+    // still gets a row, just without these.
+    bool          has_account = false;
+    unsigned      uid = 0;
+    std::string   home;
+    std::string   shell;
+    std::string   gecos;
+    bool          system = false;
+    std::uint64_t disk_bytes = 0;
+    std::uint64_t disk_quota = 0;
+    bool          disk_known = false;    // false = not measured, NOT "zero"
+    bool          disk_partial = false;  // a budgeted scan is still running
+    const char*   disk_source = "";
+    int           sessions = 0;          // live logins right now
 };
 
 // Sort key for the users table. Mirrors the process table's idea of "the
 // interesting column first" — admins land on this pane asking about load.
-enum class UserSort { Cpu, Mem, Procs, Io, Name };
+enum class UserSort { Cpu, Mem, Procs, Io, Disk, Name };
 
 // Roll the process list up by owner.
 //
@@ -56,8 +73,11 @@ enum class UserSort { Cpu, Mem, Procs, Io, Name };
 // pane, which is exactly the kind of inconsistency that erodes trust in a
 // monitor.
 inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
-                                        std::uint64_t total_ram,
-                                        UserSort sort = UserSort::Cpu) {
+                                       std::uint64_t total_ram,
+                                       UserSort sort = UserSort::Cpu,
+                                       const std::vector<UserAccount>* accounts = nullptr,
+                                       const std::vector<LoginSession>* sessions = nullptr,
+                                       bool include_idle_accounts = false) {
     std::unordered_map<std::string, UserStat> by_user;
     by_user.reserve(32);
 
@@ -87,6 +107,41 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
 
     std::vector<UserStat> out;
     out.reserve(by_user.size());
+
+    // Join the account half: identity + disk. `include_idle_accounts` adds a
+    // row for a user who owns NO running processes — which is exactly the
+    // person filling the disk and then logging out, the case a process-only
+    // view can never show.
+    if (accounts) {
+        for (const UserAccount& a : *accounts) {
+            auto it = by_user.find(a.name);
+            if (it == by_user.end()) {
+                if (!include_idle_accounts) continue;
+                if (a.system) continue;          // don't conjure 30 daemon rows
+                if (!a.disk_known && !a.can_login) continue;
+                UserStat u;
+                u.user = a.name;
+                it = by_user.emplace(a.name, std::move(u)).first;
+            }
+            UserStat& u = it->second;
+            u.has_account  = true;
+            u.uid          = a.uid;
+            u.home         = a.home;
+            u.shell        = a.shell;
+            u.gecos        = a.gecos;
+            u.system       = a.system;
+            u.disk_bytes   = a.disk_bytes;
+            u.disk_quota   = a.disk_quota;
+            u.disk_known   = a.disk_known;
+            u.disk_partial = a.disk_partial;
+            u.disk_source  = a.disk_source;
+        }
+    }
+    if (sessions)
+        for (const LoginSession& s : *sessions)
+            if (auto it = by_user.find(s.user); it != by_user.end())
+                ++it->second.sessions;
+
     for (auto& [k, v] : by_user) {
         v.mem_share = total_ram ? static_cast<double>(v.rss) / static_cast<double>(total_ram) : 0.0;
         out.push_back(std::move(v));
@@ -102,6 +157,8 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
             case UserSort::Mem:   if (a.rss != b.rss)     return a.rss > b.rss;     break;
             case UserSort::Procs: if (a.procs != b.procs) return a.procs > b.procs; break;
             case UserSort::Io:    if (a.io != b.io)       return a.io > b.io;       break;
+            case UserSort::Disk:  if (a.disk_bytes != b.disk_bytes)
+                                      return a.disk_bytes > b.disk_bytes;  break;
             case UserSort::Name:  break;
         }
         return by_name(a, b);

@@ -230,12 +230,32 @@ going *"…so what?"*
   with their **total** CPU (as a share of the whole box, with a bar, not a
   meaningless `1179%`), total RAM, process and thread counts, I/O rate, a zombie
   tally (`12 (3Z)` — someone's orphaned mess), and the single busiest thing they're
-  running. Sort by `c`·`m`·`p`·`i`·`n`. Then act on it: **`Enter`/`f`** drops you back
+  running. Sort by `c`·`m`·`p`·`i`·`d`·`n`. Then act on it: **`Enter`/`f`** drops you back
   to the process list already filtered to that user, and **`X`** arms a SIGTERM
   against *every process they own* (`K` for SIGKILL) behind the same `y`/`n` confirm
   and the same pid-reuse revalidation as every other kill in the program. `root` is
   refused outright — "kill every root process" isn't a recovery action, it's an
   unbootable machine — and your own `rb` is never in the blast radius.
+
+  It also answers the other half of user management. A **`●2`** badge means that
+  person has two live login sessions *right now* (from logind, or utmp) — the
+  difference between "a daemon account owns processes" and "a human is sitting at
+  this machine", which is worth knowing *before* you mass-signal them. And the
+  **DISK** column answers the question that actually gets you paged: *who is filling
+  the disk*. Users who own no running processes still get a row, because the person
+  who filled `/home` and logged out is invisible to every process-based view.
+
+  Disk usage is the one number here with no cheap kernel counter, so rockbottom is
+  explicit about where it came from. If the filesystem has **quotas** enabled, that's
+  exact and instant. Otherwise a **background scanner** walks each home under a hard
+  wall-clock budget — never on the render path, never more than one at a time, and
+  cancelled instantly on quit (a real 242 GB home takes ~12s to walk; a monitor that
+  blocks a frame for twelve seconds has become the problem). While a walk is still
+  running the cell reads **`≥112G`** — a floor, not a guess. And if nothing has
+  measured that user yet it reads **`—`**, *not* `0`: a confident zero for an
+  unmeasured home is a lie an admin would act on. The scanner matches `du -sx`
+  byte-for-byte (same `st_blocks` accounting, same hardlink dedup, same
+  don't-cross-mounts rule) — verified against four real trees.
 
 Every pane is **responsive** (it reflows to your terminal — more core columns on a
 wide screen, tighter on a small one) and **scrollable** (`↑↓` / `PgUp` / `PgDn` /
@@ -446,6 +466,7 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
 | `1`–`7` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process · users) |
 | `7` then `f` | see who's eating the box, then filter the list to that one user |
+| `7` then `d` | sort users by DISK — who is filling `/home` (quota, or a budgeted scan) |
 | `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |

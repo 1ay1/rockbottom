@@ -112,6 +112,51 @@ struct NetIface {
     bool        up = false;
 };
 
+// One login session (logind, or utmp where logind isn't running). "Who is
+// actually ON this box right now" — distinct from "who owns a process", since
+// a daemon account owns plenty of processes and is logged in nowhere.
+struct LoginSession {
+    std::string id;       // logind session id ("3"), or the utmp line
+    std::string user;
+    std::string tty;      // pts/2, tty1, …
+    std::string remote;   // remote host, empty = local
+    std::string type;     // tty / x11 / wayland / unspecified
+    bool        active = false;
+    int         leader = 0;          // session leader pid
+    std::uint64_t login_at = 0;      // unix seconds, 0 unknown
+};
+
+// A user ACCOUNT, as opposed to a bucket of running processes.
+//
+// Identity here comes from the passwd database, disk usage from quotas or a
+// budgeted background scan, and `sessions` from logind/utmp. All of it is
+// optional: an account with no quota and no completed scan simply reports
+// disk_bytes = 0 with disk_known = false, and the UI says so rather than
+// printing a confident zero.
+struct UserAccount {
+    std::string   name;
+    unsigned      uid = 0;
+    unsigned      gid = 0;
+    std::string   home;
+    std::string   shell;
+    std::string   gecos;         // real name / description field
+    // System accounts (uid < 1000 on Linux, the usual convention) are the
+    // daemons; separating them lets the UI default to showing PEOPLE and hide
+    // the 20 rows of service accounts nobody logged in as.
+    bool          system = false;
+    bool          can_login = false;   // shell is not nologin/false
+
+    // Disk. `disk_known` distinguishes "genuinely zero" from "we haven't
+    // measured it" — printing 0 for an unmeasured home is a lie an admin
+    // would act on.
+    std::uint64_t disk_bytes = 0;
+    std::uint64_t disk_quota = 0;      // hard limit, 0 = none
+    std::uint64_t disk_files = 0;      // inode count, 0 = unknown
+    bool          disk_known = false;
+    bool          disk_partial = false;  // a scan is still running
+    const char*   disk_source = "";     // "quota" | "scan" | ""
+};
+
 // One active network socket, attributed to its owning process. The connection
 // table (nethogs / lsof -i / ss territory) answers "who is talking to whom":
 // local and remote endpoints, TCP state, and the pid/name that owns it.
@@ -324,6 +369,11 @@ struct Snapshot {
     int conns_listening = 0;
     int conns_total = 0;
     std::vector<GpuInfo>  gpus;
+    // User ACCOUNTS (passwd + quota/scan disk) and live login sessions. These
+    // describe the machine's PEOPLE, independent of what's currently running:
+    // an account with no processes still has a home directory and a shell.
+    std::vector<UserAccount>  accounts;
+    std::vector<LoginSession> sessions;
     std::vector<Sensor>   sensors;   // hwmon temps (Linux); empty on macOS
     std::vector<ProcInfo> procs;   // sorted by the active key (full list)
     Psi                   psi;

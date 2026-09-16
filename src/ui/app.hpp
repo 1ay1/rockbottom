@@ -881,7 +881,8 @@ struct App {
                 // scrolling a selection off-screen and then pressing X would
                 // signal a user you can no longer see.
                 const int nusers = static_cast<int>(
-                    ui::user_stats(m.snap.procs, m.snap.mem.total.value).size());
+                    ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
+                                   &m.snap.accounts, &m.snap.sessions, true).size());
                 auto clamp_usel = [&](Model& mm) {
                     mm.user_sel = std::clamp(mm.user_sel, 0, std::max(0, nusers - 1));
                     if (mm.user_sel < mm.detail_scroll) mm.detail_scroll = mm.user_sel;
@@ -900,6 +901,7 @@ struct App {
                 if (key(ev, 'm')) { m.user_sort = ui::UserSort::Mem;   m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
                 if (key(ev, 'p')) { m.user_sort = ui::UserSort::Procs; m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
                 if (key(ev, 'i')) { m.user_sort = ui::UserSort::Io;    m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'd')) { m.user_sort = ui::UserSort::Disk;  m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
                 if (key(ev, 'n')) { m.user_sort = ui::UserSort::Name;  m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
                 // Enter / f: leave the pane with the process list FILTERED to
                 // this user. This is the gesture that makes the pane useful
@@ -1376,8 +1378,12 @@ struct App {
     //    revalidated against start_sec, so the pid-reuse race is covered by
     //    exactly the same guard as every other kill path.
     static std::pair<Model, maya::Cmd<Msg>> arm_kill_user(Model m, int sig) {
+        // MUST use the same arguments as the pane renders with, or `user_sel`
+        // would index a different list than the one on screen — and this one
+        // ends in kill(2).
         const std::vector<ui::UserStat> us =
-            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort);
+            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
+                           &m.snap.accounts, &m.snap.sessions, true);
         if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;
@@ -1407,7 +1413,8 @@ struct App {
     // making the admin retype a filter they just read off the screen.
     static std::pair<Model, maya::Cmd<Msg>> filter_to_selected_user(Model m) {
         const std::vector<ui::UserStat> us =
-            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort);
+            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
+                           &m.snap.accounts, &m.snap.sessions, true);
         if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;

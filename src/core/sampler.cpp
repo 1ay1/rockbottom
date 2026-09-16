@@ -3,6 +3,7 @@
 
 #include "sampler.hpp"
 #include "core_temps.hpp"
+#include "platform/common/home_scan.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -237,6 +238,21 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
             if (auto it = name_of.find(c.pid); it != name_of.end()) c.pname = *it->second;
     }
 
+    // User accounts + login sessions. getpwent() walks NSS (which can mean a
+    // network round-trip on an LDAP/AD-joined box), and quotactl touches every
+    // quota-enabled filesystem, so this is throttled hard — account identity
+    // changes on the timescale of useradd, not of a refresh tick. Skipped on
+    // a fast prime so the first paint never waits on NSS.
+    if (!fast && due(accounts_at_, ms(5000))) {
+        sample_accounts(accounts_cache_, sessions_cache_);
+        // Kick at most one background home-directory scan per pass, for the
+        // accounts quotas didn't answer. This never blocks: it either starts a
+        // thread or returns immediately.
+        start_home_scan(accounts_cache_);
+    }
+    s.accounts = accounts_cache_;
+    s.sessions = sessions_cache_;
+
     // PSI pressure (/proc/pressure/*) is a moving average already; ~1s is ample.
     if (due(psi_at_, ms(1000))) { psi_cache_ = Psi{}; sample_psi(psi_cache_); }
     s.psi = psi_cache_;
@@ -264,6 +280,57 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
 
     first_ = false;
     return s;
+}
+
+// Kick off a home-directory scan for accounts quotas couldn't answer.
+//
+// Lives here rather than in a platform backend because it is pure POSIX and
+// identical everywhere — see platform/common/home_scan.hpp for why the walk is
+// budgeted rather than simply run to completion.
+//
+// At most ONE scan runs at a time, and each account is re-scanned only every
+// kHomeScanPeriod. This is by far the most expensive thing rockbottom can do,
+// so it is also the most rate-limited. The thread is detached and observes
+// home_scan_cancel_, which ~Sampler sets — quitting never waits on a walk.
+void Sampler::start_home_scan(const std::vector<UserAccount>& accounts) {
+    if (home_scan_busy_.load()) return;
+
+    std::string target_user, target_home;
+    {
+        std::lock_guard<std::mutex> lk(home_scan_mu_);
+        const auto now = std::chrono::steady_clock::now();
+        for (const UserAccount& a : accounts) {
+            if (a.system || !a.can_login) continue;
+            if (a.disk_source == std::string("quota")) continue;   // already exact
+            if (!homescan::scannable_home(a.home)) continue;
+            auto it = home_scan_.find(a.name);
+            if (it != home_scan_.end() && now < it->second.next_at) continue;
+            target_user = a.name;
+            target_home = a.home;
+            break;
+        }
+    }
+    if (target_user.empty()) return;
+
+    home_scan_busy_.store(true);
+    std::thread([this, user = std::move(target_user), home = std::move(target_home)] {
+        const auto deadline = std::chrono::steady_clock::now() + kHomeScanBudget;
+        const homescan::Result r =
+            homescan::scan_tree(home, deadline, kHomeScanFileCap, home_scan_cancel_);
+        {
+            std::lock_guard<std::mutex> lk(home_scan_mu_);
+            HomeScan& hs = home_scan_[user];
+            hs.bytes = r.bytes;
+            hs.files = r.files;
+            hs.complete = r.complete;
+            // A finished scan is good for a long while. A truncated one is
+            // retried sooner — but not so soon that it re-burns the budget on
+            // every pass, which would turn a bounded cost into a continuous one.
+            hs.next_at = std::chrono::steady_clock::now() +
+                         (r.complete ? kHomeScanPeriod : kHomeScanRetry);
+        }
+        home_scan_busy_.store(false);
+    }).detach();
 }
 
 }  // namespace rockbottom

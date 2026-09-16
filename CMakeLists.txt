@@ -367,6 +367,18 @@ add_executable(rb_tests EXCLUDE_FROM_ALL tests/core_grid_test.cpp)
 target_link_libraries(rb_tests PRIVATE maya rb_warnings)
 target_include_directories(rb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+
+# The budgeted home-directory scanner. Header-only and pure POSIX, so it needs
+# no platform sources — it just walks a real tree and asserts that every budget
+# (deadline, file cap, cancellation) actually bounds it.
+add_executable(rb_scan_tests EXCLUDE_FROM_ALL tests/home_scan_test.cpp)
+target_link_libraries(rb_scan_tests PRIVATE rb_warnings)
+set_target_properties(rb_scan_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    target_compile_features(rb_scan_tests PRIVATE cxx_std_26)
+else()
+    target_compile_features(rb_scan_tests PRIVATE cxx_std_23)
+endif()
 if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
     target_compile_features(rb_tests PRIVATE cxx_std_26)
 else()
@@ -413,6 +425,13 @@ if(BUILD_TESTING)
     add_test(NAME rb_core_logic COMMAND rb_core_tests)
     set_tests_properties(rb_core_logic PROPERTIES
         LABELS "unit;logic"
+        TIMEOUT 120)
+
+    # Scans /etc (small, present everywhere, and readable unprivileged).
+    set_target_properties(rb_scan_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME rb_home_scan COMMAND rb_scan_tests /etc)
+    set_tests_properties(rb_home_scan PROPERTIES
+        LABELS "unit;collectors"
         TIMEOUT 120)
 
     # --selfcheck drives the REAL per-platform collectors headlessly and

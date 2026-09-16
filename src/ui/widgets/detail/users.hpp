@@ -64,6 +64,10 @@ inline std::vector<maya::ColumnDef> user_columns(bool wide) {
     cols.push_back({.header = "PROCS", .keep = 1, .min_width = 5});
     cols.push_back({.header = "THR", .keep = 3, .min_width = 4});
     cols.push_back({.header = "I/O", .keep = 2, .min_width = 8});
+    // DISK outranks I/O and THR: "who is filling the disk" is the question
+    // that gets an admin paged, and it's the one column no other tool here
+    // answers. It sheds only just before PROCS.
+    cols.push_back({.header = "DISK", .keep = 1, .min_width = 7});
     cols.push_back({.header = "BUSIEST", .keep = 6,
                     .weight = 2.6f, .min_width = 10, .max_width = 28});
     return cols;
@@ -87,9 +91,15 @@ inline maya::TableRow user_row(const UserStat& u, double total_cpu,
     row.cells.emplace_back(sel ? "\xe2\x96\x8d" : "");   // ▍ cursor rail
     // root gets its own ink: "root is at 300%" is a different sentence from
     // "a user is at 300%", and on a shared box that distinction matters.
-    row.cells.push_back(TableCell{}.span(u.user,
+    // The user cell carries a session badge: "ayush ●2" = two live logins.
+    // That's the difference between "a daemon account owns processes" and "a
+    // person is sitting at this machine right now", which matters a lot
+    // before you mass-signal them.
+    row.cells.push_back(TableCell{}.span(
+        u.user + (u.sessions > 0 ? " \xe2\x97\x8f" + std::to_string(u.sessions) : ""),
         Style{}.with_bold().with_fg(u.user == "root" ? pal::crit
-                                  : u.user == "?"   ? pal::dim : pal::text)));
+                                  : u.user == "?"   ? pal::dim
+                                  : u.sessions > 0  ? pal::good : pal::text)));
     // CPU as a share of the WHOLE MACHINE, matching the bar beside it. The
     // raw htop-style sum ("1179%") is unreadable without knowing the core
     // count, and printing it next to a share-scaled bar made the number and
@@ -118,6 +128,28 @@ inline maya::TableRow user_row(const UserStat& u, double total_cpu,
     row.cells.push_back(TableCell{}.span(
         u.io > 1024 ? std::string(humanize_rate(ByteRate{u.io})) : std::string("\xc2\xb7"),
         Style{}.with_fg(u.io > 1024 * 1024 ? pal::hot : pal::dim)));
+    // DISK. The three states are genuinely different and must not look alike:
+    //   • measured        — "242G"
+    //   • still scanning  — "≥112G" (a floor, because the walk was truncated)
+    //   • never measured  — "—", NOT "0". Printing a confident zero for a home
+    //                       nobody has walked is a lie an admin would act on.
+    {
+        std::string txt;
+        maya::Color dc = pal::dim;
+        if (!u.disk_known) {
+            txt = "\xe2\x80\x94";
+        } else {
+            txt = (u.disk_partial ? "\xe2\x89\xa5" : "")
+                + std::string(humanize_bytes(Bytes{u.disk_bytes}));
+            // Over quota is the alarm; near it is the warning.
+            if (u.disk_quota && u.disk_bytes >= u.disk_quota) dc = pal::crit;
+            else if (u.disk_quota && u.disk_bytes > u.disk_quota * 9 / 10) dc = pal::hot;
+            else if (u.disk_bytes > 50ull << 30) dc = pal::warn;
+            else dc = pal::disk_ac;
+            if (u.disk_partial) dc = pal::dim;   // provisional: don't shout yet
+        }
+        row.cells.push_back(TableCell{}.span(txt, Style{}.with_fg(dc)));
+    }
     row.cells.push_back(TableCell::dyn(
         [name = u.top_name, pid = u.top_pid](int w) -> TableCell {
             if (pid <= 0) return {"\xe2\x80\x94"};
@@ -154,7 +186,8 @@ inline maya::Table users_table(const std::vector<UserStat>& us, double total_cpu
 
 // Scroll ceiling for the users pane, so ↑↓ can't run past the last row.
 inline int users_scroll_max(const Snapshot& s, const Ctx& cx) {
-    const int n = static_cast<int>(user_stats(s.procs, s.mem.total.value).size());
+    const int n = static_cast<int>(user_stats(s.procs, s.mem.total.value, UserSort::Cpu,
+                                              &s.accounts, &s.sessions, true).size());
     const int view = std::max(1, cx.body_h - 8);   // headline block + rules
     return std::max(0, n - view);
 }
@@ -165,7 +198,9 @@ inline std::vector<Element> users_body(const Snapshot& s, const Ctx& cx,
     using namespace maya; using namespace maya::dsl;
     std::vector<Element> b;
 
-    const std::vector<UserStat> us = user_stats(s.procs, s.mem.total.value, sort);
+    const std::vector<UserStat> us = user_stats(s.procs, s.mem.total.value, sort,
+                                                &s.accounts, &s.sessions,
+                                                /*include_idle_accounts=*/true);
     if (us.empty()) {
         b.push_back(verdict("no processes to attribute \xe2\x80\x94 nothing to show", pal::dim));
         return b;
@@ -232,7 +267,8 @@ inline std::vector<Element> users_body(const Snapshot& s, const Ctx& cx,
     const char* sort_name = sort == UserSort::Cpu ? "by cpu"
                           : sort == UserSort::Mem ? "by mem"
                           : sort == UserSort::Procs ? "by procs"
-                          : sort == UserSort::Io ? "by i/o" : "by name";
+                          : sort == UserSort::Io ? "by i/o"
+                          : sort == UserSort::Disk ? "by disk" : "by name";
     b.push_back(section("USERS", pal::proc_ac, sort_name));
 
     const int view = std::max(1, cx.body_h - static_cast<int>(b.size()) - 2);

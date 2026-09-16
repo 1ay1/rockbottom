@@ -69,8 +69,11 @@ public:
             }},
             {"USERS PANE (7)", {
                 {"↑↓ / g G", "move the row cursor (this is what X targets)"},
-                {"c m p i n", "sort by cpu · mem · procs · i/o · name"},
+                {"c m p i d n", "sort by cpu · mem · procs · i/o · disk · name"},
                 {"Enter / f", "filter the process list to this user"},
+                {"●2 badge", "live login sessions — someone is actually on the box"},
+                {"DISK —", "not measured yet (no quota; scan runs in background)"},
+                {"DISK ≥N", "a floor — the budgeted scan was truncated"},
                 {"X", "end EVERY process this user owns (SIGTERM)"},
                 {"K", "force-kill every process this user owns (SIGKILL)"},
                 {"—", "root is refused; your own rb process is never a target"},

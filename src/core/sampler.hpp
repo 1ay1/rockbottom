@@ -17,7 +17,9 @@
 #include <atomic>
 #include <cstdint>
 #include <future>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -37,6 +39,10 @@ enum class SortKey { Cpu, Mem, Io, Pid, Name, Port };
 class Sampler {
 public:
     Sampler();
+    // Tell the background home scanner to stop. It can be several seconds into
+    // walking a multi-hundred-GB tree, and quitting the app must not wait on
+    // that — the flag is checked in the scanner's inner loop.
+    ~Sampler() { home_scan_cancel_.store(true); }
 
     // Collect one snapshot. `sort` shapes the process table. When
     // `fast` is true (used for the synchronous startup priming reads) the
@@ -109,6 +115,13 @@ private:
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
     void    sample_wireless(Wireless&);
+    // User accounts (passwd + quota disk) and live login sessions. On
+    // platforms without a backend this is a no-op and the vectors stay empty,
+    // which the UI reads as "no account data" rather than "no users".
+    void    sample_accounts(std::vector<UserAccount>&, std::vector<LoginSession>&);
+    // Kick the background home-directory scanner (see accounts.cpp for why
+    // disk-per-user cannot be measured synchronously).
+    void    start_home_scan(const std::vector<UserAccount>&);
 
 public:
     // The diagnosis engine. `dt` = seconds since the previous sample, so trend
@@ -206,6 +219,29 @@ private:
     int conns_established_ = 0;   // true totals, counted before the cap
     int conns_listening_ = 0;
     int conns_total_ = 0;
+
+    // ── background home-directory scanner ──────────────────────────────
+    // Disk-per-user has no cheap kernel counter when quotas are off, and a
+    // real home takes SECONDS to walk (measured: 12.3s for 242 GB, warm
+    // cache). So it runs on its own thread, at most one at a time, under a
+    // wall-clock budget, and publishes into this cache. sample_accounts()
+    // only ever reads completed results — no frame ever waits on a walk.
+    struct HomeScan {
+        std::uint64_t bytes = 0;
+        std::uint64_t files = 0;
+        bool complete = false;
+        std::chrono::steady_clock::time_point next_at{};
+    };
+    static constexpr auto kHomeScanBudget = std::chrono::seconds(4);
+    static constexpr auto kHomeScanPeriod = std::chrono::minutes(10);
+    static constexpr auto kHomeScanRetry  = std::chrono::minutes(2);
+    static constexpr std::uint64_t kHomeScanFileCap = 2'000'000;
+    std::unordered_map<std::string, HomeScan> home_scan_;
+    std::mutex        home_scan_mu_;
+    std::atomic<bool> home_scan_busy_{false};
+    std::atomic<bool> home_scan_cancel_{false};
+    std::vector<UserAccount>  accounts_cache_;
+    std::vector<LoginSession> sessions_cache_;
     std::unordered_map<int, std::pair<std::uint64_t, std::string>> cmd_cache_;  // pid -> (starttime, argv); starttime guards pid reuse
     std::unordered_map<int, std::pair<std::uint64_t, unsigned>> puid_cache_;  // pid -> (starttime, uid); skips per-tick stat()
     std::unordered_map<unsigned, std::string> uid_cache_;  // uid -> user name (getpwuid is slow)
@@ -230,7 +266,7 @@ private:
     std::chrono::steady_clock::time_point disks_at_{}, sensors_at_{},
                                           battery_at_{}, psi_at_{}, ports_at_{},
                                           wireless_at_{}, gpus_at_{}, gpu_procs_at_{},
-                                          ssd_at_{};
+                                          ssd_at_{}, accounts_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
     std::vector<GpuInfo>                  gpus_cache_;
