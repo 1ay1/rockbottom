@@ -111,7 +111,8 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         // fill()-mode graph reads them at paint time, so it must copy.
         H.push_back(traffic_hero(rds.data(), wrs.data(), s.disk_io.hist_len,
                                  static_cast<double>(shared_pk),
-                                 pal::teal, pal::hot, gh));
+                                 pal::teal, pal::hot, gh, 0.5f, 5,
+                                 "disk i/o", pal::disk_ac));
     }
     // Live figures + peaks for each direction, keyed by the graph's colors.
     // Width-aware: iops then peak shed right-to-left on a thin pane so the

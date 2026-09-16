@@ -334,21 +334,67 @@ inline const char* big_digit(int d, int row) {
     return F[d][row];
 }
 
-// A fixed-width column: big percent digits, label, trend arrow computed from
-// the history ring (recent window vs the stretch before it), avg + peak of
-// the window. Emits exactly `rows_avail` rows so it slots beside a graph of
-// the same height; lines drop from the bottom when the graph is short.
+// Big-glyph lookup that also knows the decimal point, so a RATE card can read
+// "1.2 M/s" at full fidelity instead of truncating its mantissa to "1". The
+// point is a 1-cell foot on the baseline row; unknown chars render as a blank
+// of the same advance so nothing can desync the three rows.
+inline const char* big_glyph(char ch, int row) {
+    if (ch == '.') {
+        static constexpr const char* D[3] = {" ", " ", "\xe2\x96\x84"};
+        return D[row];
+    }
+    if (ch < '0' || ch > '9') {
+        static constexpr const char* B[3] = {"   ", "   ", "   "};
+        return B[row];
+    }
+    return big_digit(ch - '0', row);
+}
+
+// Cell advance of one big glyph (glyph + its trailing space).
+inline int big_glyph_w(char ch) { return ch == '.' ? 2 : 4; }
+
+// Split a humanized figure ("1.2M/s", "430K/s", "20%") into the part that gets
+// rendered in block digits and the unit that trails it in small type.
+inline std::pair<std::string, std::string> split_unit(const std::string& s) {
+    std::size_t i = 0;
+    while (i < s.size() && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.')) ++i;
+    return {s.substr(0, i), s.substr(i)};
+}
+
+// A fixed-width column: the headline figure in block digits, label, trend
+// arrow computed from the history ring (recent window vs the stretch before
+// it), avg + peak of the window. Emits exactly `rows_avail` rows so it slots
+// beside a graph of the same height; lines drop from the bottom when the
+// graph is short.
+//
+// `scale_top` picks the DIMENSION. 0 (default) = percent: `frac` and the
+// history are 0..1 fractions printed as "20 %". >0 = byte rate: the history
+// is normalised against `scale_top`, so every figure is multiplied back up
+// and humanized ("1.2 M/s") — which is what makes the card meaningful on the
+// NET and DISK panes, where a percentage would answer no question at all.
 inline Element stat_card(double frac, maya::Color c, const std::string& label,
-                         const float* hist, int len, int rows_avail) {
+                         const float* hist, int len, int rows_avail,
+                         double scale_top = 0.0) {
     using namespace maya; using namespace maya::dsl;
-    const int pct = std::clamp(static_cast<int>(std::lround(frac * 100)), 0, 999);
-    std::string digits = std::to_string(pct);
+    const bool rate = scale_top > 0;
+
+    // One formatter for the headline AND the avg/pk footer, so the card can
+    // never print two different unit systems for the same series.
+    auto fmt_val = [&](double v) -> std::string {
+        return rate ? humanize_rate(ByteRate{v * scale_top}) : fmt::pct(v);
+    };
+    const auto [digits, unit] = split_unit(
+        rate ? fmt_val(frac)
+             : std::to_string(std::clamp(static_cast<int>(std::lround(frac * 100)), 0, 999)) + "%");
 
     std::array<std::string, 3> rows;
-    for (char ch : digits)
+    int digits_w = 0;
+    for (char ch : digits) {
         for (int r = 0; r < 3; ++r)
-            rows[static_cast<std::size_t>(r)] += std::string(big_digit(ch - '0', r)) + " ";
-    rows[2] += "%";
+            rows[static_cast<std::size_t>(r)] += std::string(big_glyph(ch, r)) + " ";
+        digits_w += big_glyph_w(ch);
+    }
+    rows[2] += unit;
 
     // Window stats + trend: mean of the last ~6 samples vs the ~18 before.
     double avg = 0, peak = 0, recent = 0, prior = 0;
@@ -363,8 +409,16 @@ inline Element stat_card(double frac, maya::Color c, const std::string& label,
     if (rn) recent /= rn;
     if (pn) prior /= pn;
     const double d = pn ? recent - prior : 0;
-    const char* arrow = d > 0.03 ? "↗ rising" : d < -0.03 ? "↘ falling" : "→ steady";
+    const char* arrow = d > 0.03 ? "\u2197 rising" : d < -0.03 ? "\u2198 falling" : "\u2192 steady";
     const maya::Color ac = d > 0.03 ? pal::hot : d < -0.03 ? pal::good : pal::dim;
+
+    // The avg/pk figures are the widest strings a rate card prints, so size
+    // the column to them — a hardcoded 16 would clip "pk  1.2M/s".
+    const std::string avg_s = "avg " + fmt_val(avg);
+    const std::string pk_s  = "pk  " + fmt_val(peak);
+    const int card_w = std::max({16, digits_w + static_cast<int>(unit.size()),
+                                 static_cast<int>(avg_s.size()),
+                                 static_cast<int>(pk_s.size())});
 
     std::vector<Element> col;
     for (int r = 0; r < 3 && r < rows_avail; ++r)
@@ -374,11 +428,11 @@ inline Element stat_card(double frac, maya::Color c, const std::string& label,
     if (rows_avail >= 6)
         col.push_back((text(arrow) | nowrap | fgc(ac)).build());
     if (rows_avail >= 8) {
-        col.push_back((text("avg " + fmt::pct(avg)) | nowrap | fgc(pal::faint)).build());
-        col.push_back((text("pk  " + fmt::pct(peak)) | nowrap | fgc(pal::faint)).build());
+        col.push_back((text(avg_s) | nowrap | fgc(pal::faint)).build());
+        col.push_back((text(pk_s) | nowrap | fgc(pal::faint)).build());
     }
     while (static_cast<int>(col.size()) < rows_avail) col.push_back(blank());
-    return (v(std::move(col)) | width(16)).build();
+    return (v(std::move(col)) | width(card_w)).build();
 }
 
 // ── HERO GRAPH ───────────────────────────────────────────────
@@ -422,32 +476,60 @@ inline Element hero_graph(double frac, maya::Color card_c, const char* label,
 // second series overlaid as a line (`over_c`), on a shared sqrt-curve axis
 // labelled in byte rates. Both `fill`/`over` are 0..1 fractions of `axis_top`.
 //
+// Like hero_graph, it parks a block-digit stat card on the left when the pane
+// is wide enough (>= 64 cols) so NET and DISK get the same unmissable
+// headline figure as CPU/MEM/GPU.
+//
+// The card reports COMBINED throughput (fill + over), not just the fill
+// series. On a two-direction pane either direction alone is a misleading
+// headline — a box pushing 38 MB/s of writes with zero reads would otherwise
+// show "0 B/s" next to a graph that is visibly pinned at the top. The total
+// is always the honest answer to "how busy is this subsystem", and unlike
+// "whichever is larger" it never flickers between two different meanings.
+// It's fed `axis_top` so it prints real byte rates rather than a meaningless
+// percentage of an arbitrary window peak. `card_label` empty = no card.
+//
 // CRITICAL: Graph.fill() defers its sample read to PAINT time (a component
 // resolved against the real slot width). So the sample buffers must OUTLIVE
 // the calling function — a caller's stack std::array would dangle and the
 // graph would read freed memory (garbage trace / corruption). This helper
 // OWNS copies of both series in shared_ptrs the render lambda captures, so
-// callers can pass transient locals safely.
+// callers can pass transient locals safely. The card reads an owned copy too,
+// so it cannot dangle either.
 inline Element traffic_hero(const float* fill, const float* over, int len,
                             double axis_top, maya::Color fill_c,
                             maya::Color over_c, int gh, float gamma = 0.5f,
-                            int axis_w = 5) {
+                            int axis_w = 5, const char* card_label = "",
+                            maya::Color card_c = pal::dim) {
     auto f = std::make_shared<std::array<float, 48>>();
     auto o = std::make_shared<std::array<float, 48>>();
+    auto sum = std::make_shared<std::array<float, 48>>();
     const int n = std::min(len, 48);
     for (int i = 0; i < n; ++i) {
-        (*f)[static_cast<std::size_t>(i)] = fill ? fill[i] : 0.0f;
-        (*o)[static_cast<std::size_t>(i)] = over ? over[i] : 0.0f;
+        const float a = fill ? fill[i] : 0.0f;
+        const float b = over ? over[i] : 0.0f;
+        (*f)[static_cast<std::size_t>(i)] = a;
+        (*o)[static_cast<std::size_t>(i)] = b;
+        (*sum)[static_cast<std::size_t>(i)] = a + b;
     }
+    // Headline = the NEWEST combined sample, which is the same instant the
+    // trace's right edge shows — so card and graph can never disagree.
+    const double latest = n > 0 ? (*sum)[static_cast<std::size_t>(n - 1)] : 0.0;
+    const std::string label = card_label;
     return Element{maya::ComponentElement{
-        .render = [f, o, n, axis_top, fill_c, over_c, gh, gamma, axis_w]
-                  (int, int) -> Element {
+        .render = [f, o, sum, n, axis_top, fill_c, over_c, gh, gamma, axis_w,
+                   latest, label, card_c](int w, int) -> Element {
             using namespace maya; using namespace maya::dsl;
-            return (h(
-                y_axis(gh, axis_top, axis_w, /*percent=*/false, gamma),
-                Element{Graph{f->data(), n}.fill().rows(gh).color(fill_c).gamma(gamma)
-                            .overlay(o->data(), n, over_c)} | grow(1)
-            ) | gap(1) | height(gh)).build();
+            std::vector<Element> row;
+            // Same width gate as hero_graph: below 64 cols the card is
+            // dropped so the trace owns the pane instead of being crushed.
+            if (!label.empty() && w >= 64)
+                row.push_back(stat_card(latest, card_c, label.c_str(),
+                                        sum->data(), n, gh, axis_top));
+            row.push_back(y_axis(gh, axis_top, axis_w, /*percent=*/false, gamma));
+            row.push_back(Element{Graph{f->data(), n}.fill().rows(gh).color(fill_c)
+                                      .gamma(gamma).overlay(o->data(), n, over_c)} | grow(1));
+            return (h(std::move(row)) | gap(1) | height(gh)).build();
         },
     }};
 }

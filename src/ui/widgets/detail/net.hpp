@@ -234,7 +234,8 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         // when this block ends, but the graph reads at paint time).
         b.push_back(center(traffic_hero(rn.data(), tn.data(), hlen,
                                         static_cast<double>(shared_pk),
-                                        pal::sky, pal::good, gh)));
+                                        pal::sky, pal::good, gh, 0.5f, 5,
+                                        "net traffic", pal::net_ac)));
         b.push_back(gap_row());
     }
 
