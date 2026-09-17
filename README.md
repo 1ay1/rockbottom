@@ -138,9 +138,9 @@ rockbottom employs, at great personal expense, a little guy whose entire job is 
 stare at all that garbage, turn to you, and deliver exactly one (1) sentence:
 
 ```
-╭──────────────────────────────────────────────────────────────╮
+╭───────────────────────────────────────────────────────────────╮
 │ ▲ Working hard — CPU is heavily loaded   chrome (pid 4160) …  │
-╰──────────────────────────────────────────────────────────────╯
+╰───────────────────────────────────────────────────────────────╯
 ```
 
 That's the **verdict.** It's color-coded, so even if you cannot read — no judgment,
