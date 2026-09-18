@@ -81,6 +81,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
     // same contract the Linux backend already honoured. Without this the cost
     // is paid ~750 times per tick to fill columns nothing is showing.
     const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
+    // The users pane sums every process's ring into a per-user trace, so it
+    // needs the ring on EVERY row — not just the inspected pid.
+    const bool want_all_hist = want_hist_.load(std::memory_order_relaxed);
 
     int cap = ::proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
     if (cap <= 0) return;
@@ -236,7 +239,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         // itself still lives in prev_proc_ (np.cpu_hist) for every pid so it's
         // populated the instant a process is selected; we just don't ship it
         // out unless this IS that row.
-        if (want_detail) {
+        if (want_detail || want_all_hist) {
             p.cpu_history = np.cpu_hist;
             p.hist_len = np.cpu_hist_len;
         }

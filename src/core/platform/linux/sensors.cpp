@@ -60,15 +60,20 @@ void Sampler::sample_sensors(std::vector<Sensor>& out) {
         std::string dev_name = trim(slurp(base + "/name"));
         std::string zone = zone_of(dev_name);
 
-        // temp1_input, temp2_input, … up to a sane ceiling.
-        for (int i = 1; i <= 32; ++i) {
-            std::string in = base + "/temp" + std::to_string(i) + "_input";
-            std::ifstream probe(in);
-            if (!probe) continue;
-            float t = read_milli_c(in);
-            if (t <= 0 || t > 200) continue;   // implausible → skip
+        // tempN_input, N = 1.. — but STOP at the first run of misses rather
+        // than probing a fixed 1..32. hwmon numbers its inputs contiguously
+        // from 1, so the old loop spent 32 open() calls per device (most on
+        // files that do not exist) every pass. A short miss tolerance keeps us
+        // safe against the rare driver that leaves a gap.
+        int misses = 0;
+        for (int i = 1; i <= 32 && misses < 4; ++i) {
+            std::string stem = base + "/temp" + std::to_string(i);
+            const float t = read_milli_c(stem + "_input");
+            if (t <= 0) { ++misses; continue; }   // absent OR unreadable
+            misses = 0;
+            if (t > 200) continue;                 // implausible → skip
 
-            std::string label = trim(slurp(base + "/temp" + std::to_string(i) + "_label"));
+            std::string label = trim(slurp(stem + "_label"));
             if (label.empty())
                 label = dev_name.empty() ? ("temp" + std::to_string(i)) : dev_name;
 
@@ -79,8 +84,8 @@ void Sampler::sample_sensors(std::vector<Sensor>& out) {
             s.label  = procfs::sanitize_display(label);
             s.zone   = zone;
             s.temp_c = t;
-            s.high_c = read_milli_c(base + "/temp" + std::to_string(i) + "_max");
-            s.crit_c = read_milli_c(base + "/temp" + std::to_string(i) + "_crit");
+            s.high_c = read_milli_c(stem + "_max");
+            s.crit_c = read_milli_c(stem + "_crit");
             out.push_back(std::move(s));
         }
     }

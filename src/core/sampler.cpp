@@ -249,6 +249,12 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
         // accounts quotas didn't answer. This never blocks: it either starts a
         // thread or returns immediately.
         start_home_scan(accounts_cache_);
+    } else if (!fast && want_disk_.load(std::memory_order_relaxed)) {
+        // The pane was JUST opened, mid-throttle-window. Kick the scan off the
+        // already-cached account list rather than making the user stare at
+        // "—" for up to five seconds — start_home_scan is itself idempotent
+        // and rate-limited per user, so calling it on every tick is cheap.
+        start_home_scan(accounts_cache_);
     }
     s.accounts = accounts_cache_;
     s.sessions = sessions_cache_;
@@ -294,6 +300,11 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
 // home_scan_cancel_, which ~Sampler sets — quitting never waits on a walk.
 void Sampler::start_home_scan(const std::vector<UserAccount>& accounts) {
     if (home_scan_busy_.load()) return;
+    // Nobody is looking at the DISK column, so don't walk anyone's home for
+    // it. This is the single biggest cost in the program (a real home is
+    // hundreds of thousands of lstat calls) and it was previously paid on
+    // every run, whether or not pane 7 was ever opened.
+    if (!want_disk_.load(std::memory_order_relaxed)) return;
 
     std::string target_user, target_home;
     {

@@ -52,6 +52,9 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
     // The pid whose expensive detail-only files (status, fd) we bother to read
     // this tick — the process the UI has open, or 0 for none. Loaded once.
     const int want_detail_pid = detail_pid_.load(std::memory_order_relaxed);
+    // The users pane sums every process's ring into a per-user trace, so it
+    // needs the ring on EVERY row — not just the inspected pid.
+    const bool want_all_hist = want_hist_.load(std::memory_order_relaxed);
 
     // Boot epoch (seconds) = now - uptime; a process's start_sec is then
     // boot_epoch + starttime_ticks/CLK_TCK. Computed ONCE and cached: both
@@ -193,9 +196,16 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         // storage layer (not page-cache hits). Readable only for our own
         // processes unless privileged; unreadable rows just stay at 0.
         std::uint64_t io_r = 0, io_w = 0;
-        {
+        // Skip the open() entirely for a pid that already refused us. On a
+        // desktop that's ~3 of every 4 processes, and the call can only ever
+        // fail again: permission on /proc/pid/io doesn't change without an
+        // exec, and an exec changes starttime, which invalidates this whole
+        // ProcPrev entry. Saves ~310 guaranteed-EACCES syscalls per tick.
+        const bool skip_io = have_prev && prev_it->second.io_denied;
+        bool io_ok = false;
+        if (!skip_io) {
             // stat/comm are fully parsed above, so fbuf is free to reuse here.
-            sys::slurp_into(proc_path(e->d_name, "/io"), fbuf);
+            io_ok = sys::slurp_into(proc_path(e->d_name, "/io"), fbuf);
             const std::string& io = fbuf;
             // Scan lines for "read_bytes:" / "write_bytes:" without allocating
             // a stream: find the key, jump past the colon, parse the number.
@@ -203,6 +213,11 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
                 io_r = std::strtoull(io.c_str() + pos + 11, nullptr, 10);
             if (auto pos = io.find("write_bytes:"); pos != std::string::npos)
                 io_w = std::strtoull(io.c_str() + pos + 12, nullptr, 10);
+        } else if (have_prev) {
+            // Carry the last known counters forward so the delta below stays
+            // at zero instead of reading as a huge negative jump.
+            io_r = prev_it->second.io_read;
+            io_w = prev_it->second.io_write;
         }
         ByteRate ior{}, iow{};
         if (have_prev && dt > 0) {
@@ -212,6 +227,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         }
         np.io_read = io_r;
         np.io_write = io_w;
+        // Latch the refusal: either we just got EACCES, or we already had.
+        np.io_denied = skip_io || !io_ok;
 
         // Context switches from /proc/pid/status (voluntary + involuntary).
         // This is a LARGE file and its only consumer is the process detail
@@ -315,7 +332,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         // non-selected rows. The ring stays maintained in prev_proc_
         // (np.cpu_hist) for every pid, so selecting a process shows its full
         // history immediately; we just don't ship it out unless this is it.
-        if (want_detail) {
+        if (want_detail || want_all_hist) {
             p.cpu_history = np.cpu_hist;
             p.hist_len = np.cpu_hist_len;
         }

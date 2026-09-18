@@ -67,6 +67,26 @@ public:
     // thread, read from the sampler thread.
     void set_detail_pid(int pid) { detail_pid_.store(pid, std::memory_order_relaxed); }
 
+    // The USERS pane graphs a PER-USER cpu trace, which is the sum of every
+    // one of that user's processes' rings. The per-process ring is maintained
+    // for every pid regardless (it lives in prev_proc_), but shipping it out
+    // in ProcInfo costs ~192 bytes of memcpy per process per tick, so by
+    // default only the inspected pid carries one. When the users pane is open
+    // it needs them ALL — without this its graph sums a field that is zero for
+    // every row and draws a flat line forever. Off again the moment the pane
+    // closes, so the common case still pays nothing.
+    void set_want_histories(bool on) { want_hist_.store(on, std::memory_order_relaxed); }
+
+    // Whether the USERS pane is open. Gates the background home-directory
+    // scan, which is BY FAR the most expensive thing this program can do:
+    // walking a real home is hundreds of thousands of lstat() calls (measured
+    // on the dev box: 366k newfstatat per 40 samples, ~1.0s of system time,
+    // dwarfing every collector combined). That cost only buys the per-user
+    // DISK column, so paying it when nobody has opened pane 7 is pure waste —
+    // it spun the disk and burned a core for a number that was never drawn.
+    // Set when the pane opens; the scan then starts on the next accounts pass.
+    void set_want_disk_usage(bool on) { want_disk_.store(on, std::memory_order_relaxed); }
+
     // Static machine facts, populated once in the constructor.
     int         ncpu() const { return ncpu_; }
     Bytes       ram_total() const { return ram_total_; }
@@ -79,6 +99,12 @@ private:
         std::uint64_t io_read = 0, io_write = 0;
         std::uint64_t faults = 0, csw = 0;
         bool csw_valid = false;              // /proc/status is sampled only for detail pid
+        // /proc/pid/io is 0600 root-or-owner. On a normal desktop ~75% of
+        // processes deny it (measured: 310 of 421), and that open() is a
+        // syscall + dentry walk spent on a guaranteed EACCES every tick.
+        // Latch the refusal and skip the file for that pid; the flag is keyed
+        // on starttime like everything else here, so a recycled pid re-probes.
+        bool io_denied = false;
         std::array<float, 48> cpu_hist{};   // rolling cpu% (0..1) so the detail pane can graph it
         int cpu_hist_len = 0;
     };
@@ -254,6 +280,8 @@ private:
     // it would break exact start-time comparison for pid-reuse guards).
     mutable std::uint64_t                 boot_epoch_ = 0;
     std::atomic<int>                      detail_pid_{0};    // proc pane target (0 = none)
+    std::atomic<bool>                     want_hist_{false}; // ship every proc's cpu ring
+    std::atomic<bool>                     want_disk_{false}; // users pane open → scan homes
 
     // ── Wall-clock throttles for SLOW-CHANGING collectors ──
     // These metrics (disk capacity, hardware temps, battery, PSI) move on the
