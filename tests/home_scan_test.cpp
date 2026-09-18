@@ -18,6 +18,10 @@ void expect(bool ok, const char* what) {
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : "/tmp";
     std::atomic<bool> cancel{false};
+    // Captured by the full walk below and used to size the cap test, so that
+    // test states a property of the CODE rather than an assumption about how
+    // many files the fixture tree happens to have.
+    std::uint64_t total_files = 0;
 
     // 1. Generous budget: should complete and match du.
     {
@@ -30,6 +34,7 @@ int main(int argc, char** argv) {
                     (unsigned long long)r.files, (int)r.complete, (long long)ms);
         expect(r.complete, "a generous budget runs to completion");
         expect(r.files > 0, "a real tree yields files");
+        total_files = r.files;
     }
 
     // 2. Tight deadline: must return EARLY rather than overrun it.
@@ -49,15 +54,31 @@ int main(int argc, char** argv) {
         expect(ms < 2000, "a tight deadline bounds the walk");
     }
 
-    // 3. File cap: must stop at the cap.
+    // 3. File cap: must stop at the cap, and SAY it stopped.
+    //
+    // The cap is derived from the tree rather than hardcoded. A fixed 1000
+    // assumed the root has more than 1000 files, which is true for Linux /etc
+    // (~1750) and false for macOS /etc (~245) — so on macOS the walk finished
+    // legitimately, `complete` was correctly true, and the test failed for
+    // stating something about the fixture instead of about the code.
+    //
+    // Half the real count is guaranteed to truncate on any tree big enough to
+    // test with, and `total` comes from step 1's full walk.
     {
-        Result r = scan_tree(root, std::chrono::steady_clock::now() + std::chrono::seconds(60),
-                             1000, cancel);
-        std::printf("1000 cap    : %llu files, complete=%d  %s\n",
-                    (unsigned long long)r.files, (int)r.complete,
-                    r.files <= 1600 ? "[CAPPED OK]" : "[!! BLEW CAP]");
-        expect(r.files <= 1600, "the file cap bounds the walk");
-        expect(!r.complete, "a truncated walk reports itself incomplete");
+        const std::uint64_t cap = total_files / 2;
+        if (cap < 2) {
+            std::printf("cap test    : SKIPPED (%llu files is too few to halve)\n",
+                        (unsigned long long)total_files);
+        } else {
+            Result r = scan_tree(root, std::chrono::steady_clock::now() + std::chrono::seconds(60),
+                                 cap, cancel);
+            std::printf("%llu cap    : %llu files, complete=%d  %s\n",
+                        (unsigned long long)cap,
+                        (unsigned long long)r.files, (int)r.complete,
+                        r.files <= cap + 600 ? "[CAPPED OK]" : "[!! BLEW CAP]");
+            expect(r.files <= cap + 600, "the file cap bounds the walk");
+            expect(!r.complete, "a truncated walk reports itself incomplete");
+        }
     }
 
     // 4. Cancellation: pre-cancelled scan must return instantly.

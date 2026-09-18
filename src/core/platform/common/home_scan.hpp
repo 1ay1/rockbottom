@@ -93,11 +93,20 @@ inline Result scan_tree(const std::string& root,
             const char* n = e->d_name;
             if (n[0] == '.' && (n[1] == '\0' || (n[1] == '.' && n[2] == '\0'))) continue;
 
-            // Budget check every 512 entries: steady_clock::now() in the inner
-            // loop is itself a measurable cost on a million-file tree.
+            // The FILE CAP is checked every entry: it is a plain integer
+            // compare, costs nothing, and folding it into the 512-entry batch
+            // below meant a tree smaller than 512 files never checked it at
+            // all. Such a walk blew straight past its cap and then reported
+            // complete=true -- a truncated result claiming to be exact, which
+            // is the one failure mode `complete` exists to prevent.
+            if (r.files >= file_cap) { ::closedir(d); return r; }
+
+            // The CLOCK and the cancel flag stay batched every 512 entries:
+            // steady_clock::now() in the inner loop is itself a measurable
+            // cost on a million-file tree, and both are time-based bounds
+            // where 512 entries of slack is immaterial.
             if ((++checked & 511u) == 0) {
-                if (r.files >= file_cap ||
-                    std::chrono::steady_clock::now() > deadline ||
+                if (std::chrono::steady_clock::now() > deadline ||
                     cancel.load(std::memory_order_relaxed)) {
                     ::closedir(d);
                     return r;
