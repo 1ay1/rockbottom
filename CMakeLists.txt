@@ -294,6 +294,29 @@ if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_link_options(rockbottom PRIVATE -static -no-pie)
     else()
         target_link_options(rockbottom PRIVATE -static-libstdc++ -static-libgcc)
+        # Stamp the deployment floor EXPLICITLY.
+        #
+        # CMAKE_OSX_DEPLOYMENT_TARGET is set to 11.0 at the top of this file,
+        # but CMake only translates it into a -mmacosx-version-min flag when it
+        # also resolved CMAKE_OSX_SYSROOT — and Homebrew GCC finds the SDK via
+        # its own -isysroot autodetection, legitimately leaving that variable
+        # empty. The result: no version-min flag on the link line, so the
+        # linker stamps the BUILDER's SDK instead (LC_BUILD_VERSION minos 14.0
+        # on the macos-14 runner), and dyld then refuses the published binary
+        # on macOS 12/13 with "built for newer version of macOS" — before
+        # main(), which is exactly the build-host leak the standalone story
+        # exists to prevent.
+        #
+        # assert_standalone.cmake catches it post-link (that is how this was
+        # found), but catching it is not fixing it. Passing the flag directly
+        # removes the dependency on a variable that a valid toolchain is
+        # entitled to leave empty.
+        if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET)
+            target_compile_options(rockbottom PRIVATE
+                -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
+            target_link_options(rockbottom PRIVATE
+                -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
+        endif()
     endif()
 elseif(RB_STANDALONE AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # RB_STANDALONE is ON but the compiler is not GCC, so NONE of the static
