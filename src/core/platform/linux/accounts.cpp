@@ -51,7 +51,33 @@
 
 #if defined(__linux__)
 #include <sys/quota.h>
-#include <linux/quota.h>
+// <sys/quota.h> gives us quotactl() and struct dqblk on both glibc and musl,
+// but the three CONSTANTS below live in <linux/quota.h> — a KERNEL header,
+// present on glibc distros and absent on Alpine (and any musl sysroot without
+// linux-headers). Including it unconditionally broke the static musl build,
+// which is exactly how the release binaries are produced, so CI went red at
+// tag time.
+//
+// These values are a stable part of the quotactl(2) ABI — they encode the
+// syscall's wire format, so the kernel cannot change them without breaking
+// every binary ever built. Defining them when the header is missing is what
+// quota-tools itself does, and the #ifndef guards defer to the real header
+// wherever it exists.
+#ifndef USRQUOTA
+#define USRQUOTA 0
+#endif
+#ifndef SUBCMDSHIFT
+#define SUBCMDSHIFT 8
+#endif
+#ifndef SUBCMDMASK
+#define SUBCMDMASK 0x00ff
+#endif
+#ifndef QCMD
+#define QCMD(cmd, type) (((cmd) << SUBCMDSHIFT) | ((type) & SUBCMDMASK))
+#endif
+#ifndef Q_GETQUOTA
+#define Q_GETQUOTA 0x800007
+#endif
 #endif
 
 namespace rockbottom {
@@ -78,10 +104,18 @@ bool is_nologin(std::string_view sh) {
 #if defined(__linux__)
 bool quota_usage(const std::string& dev, unsigned uid,
                  std::uint64_t& bytes, std::uint64_t& limit, std::uint64_t& files) {
-    struct if_dqblk d;
+    // struct dqblk, not if_dqblk: `dqblk` is declared by <sys/quota.h> on BOTH
+    // glibc and musl with the identical field layout (it IS the quotactl wire
+    // struct), whereas `if_dqblk` is only reachable via the kernel headers.
+    // Using it means this file needs no kernel headers at all.
+    struct dqblk d;
     std::memset(&d, 0, sizeof d);
+    // char*, not caddr_t: glibc's prototype takes __caddr_t (a typedef for
+    // char*) while musl's takes char* directly and never defines caddr_t at
+    // all. char* converts implicitly to both, so this compiles on either
+    // libc — and the release binaries are built against musl.
     if (::quotactl(QCMD(Q_GETQUOTA, USRQUOTA), dev.c_str(),
-                   static_cast<int>(uid), reinterpret_cast<caddr_t>(&d)) != 0)
+                   static_cast<int>(uid), reinterpret_cast<char*>(&d)) != 0)
         return false;
     // dqb_curspace is bytes; the limits are in 1 KiB blocks (quota(3) ABI).
     bytes = d.dqb_curspace;

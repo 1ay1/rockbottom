@@ -85,6 +85,14 @@ inline std::vector<maya::ColumnDef> user_columns(bool wide) {
 // the meters, BUSIEST).
 inline std::vector<std::optional<UserSort>> user_column_sorts(bool wide) {
     std::vector<std::optional<UserSort>> s;
+    // Reserve up front. This is the exact column count below, so the vector
+    // never reallocates — and GCC 14 at -O3 otherwise emits a bogus
+    // "writing 1 byte into a region of size 0" -Wstringop-overflow on the
+    // grow path, because it can't prove the fresh allocation is big enough
+    // for an optional<enum>. Reserving is the honest fix rather than pragma
+    // -ing the warning away: it removes the reallocation the warning is
+    // about. (Local GCC 16 doesn't emit it; CI's GCC 14 does.)
+    s.reserve(wide ? 13 : 10);
     s.push_back(std::nullopt);              // pane indent
     s.push_back(UserSort::Name);            // USER
     s.push_back(UserSort::Cpu);             // CPU%
