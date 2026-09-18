@@ -134,7 +134,7 @@ public:
                 const double f = core.usage.v;
                 // Idle cores show a dim groove block so the strip stays a
                 // continuous rail; active ones glow through the gradient.
-                Color cc = f < 0.03 ? pal::track : load_color(f);
+                LitColor cc = f < 0.03 ? pal::track : load_color(f);
                 // E-core blocks sit one notch back so the cluster reads as
                 // texture, without hiding a genuinely hot E core.
                 if (hetero && core.kind == CoreKind::Eff)
@@ -188,7 +188,7 @@ public:
         struct CoreCell {
             std::string id;
             double f = 0;
-            Color id_c{}, spark_c{};
+            LitColor id_c{}, spark_c{};
             std::array<float, 48> hist{};
             int hl = 0;
         };

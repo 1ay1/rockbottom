@@ -39,8 +39,8 @@ public:
 
     // One responsive row: label + (% if room) + fill meter + (bytes if room).
     static maya::Element row(std::string label, double frac, std::string bytes,
-                             maya::Color label_c, maya::Color pct_c,
-                             std::optional<maya::Color> meter_c) {
+                             maya::LitColor label_c, maya::LitColor pct_c,
+                             std::optional<maya::LitColor> meter_c) {
         using namespace maya;
         using namespace maya::dsl;
         return Element{ComponentElement{
@@ -134,8 +134,8 @@ public:
             // by the live swap traffic: quiet mauve when idle, escalating
             // through warn/hot/crit as pages start moving.
             const double traffic = mem_.swap_in.per_sec + mem_.swap_out.per_sec;
-            Color sc  = pal::mauve;   // bar
-            Color pc  = pal::dim;     // % figure
+            LitColor sc  = pal::mauve;   // bar
+            LitColor pc  = pal::dim;     // % figure
             if      (traffic > 8.0 * 1024 * 1024) { sc = pal::crit; pc = sc; }  // thrashing
             else if (traffic > 1.0 * 1024 * 1024) { sc = pal::hot;  pc = sc; }  // straining
             else if (traffic > 64.0 * 1024)       { sc = pal::warn; pc = sc; }  // trickle

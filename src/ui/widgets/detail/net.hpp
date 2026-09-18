@@ -294,7 +294,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         }
         const bool bursting = nb >= 8 && busy > 512.0 * 1024 && busy > base * 4;
 
-        std::string msg; maya::Color vc;
+        std::string msg; maya::LitColor vc;
         if (up == 0) {
             msg = "○ every link is down \u2014 the machine is offline"; vc = pal::dim;
         } else if (bursting) {
@@ -337,7 +337,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 const char* qual = w.wifi_rssi == 0 ? ""
                                  : w.wifi_rssi >= -60 ? "strong"
                                  : w.wifi_rssi >= -75 ? "ok" : "weak";
-                maya::Color qc = w.wifi_rssi >= -60 ? pal::good
+                maya::LitColor qc = w.wifi_rssi >= -60 ? pal::good
                                : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
                 const char* band = w.wifi_freq >= 5000 ? "5 GHz"
                                  : w.wifi_freq >= 2400 ? "2.4 GHz" : "";
@@ -434,7 +434,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             "dropped in", fmt::count(static_cast<double>(ni.drops)),
             ni.drops ? pal::crit : pal::good));
         if (bad_ps >= 0.5) {
-            const maya::Color rc = bad_ps > 100 ? pal::crit : pal::hot;
+            const maya::LitColor rc = bad_ps > 100 ? pal::crit : pal::hot;
             std::string live = "  \xe2\x96\xb2 ";
             if (ni.drop_ps >= 0.5) live += fmt::count(ni.drop_ps) + " drops/s";
             if (ni.err_ps >= 0.5) live += (ni.drop_ps >= 0.5 ? "  " : "") +

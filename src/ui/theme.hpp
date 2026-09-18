@@ -41,25 +41,32 @@
 namespace rockbottom::ui {
 
 // ── the semantic palette ────────────────────────────────────────────────────
-// Every field is a maya::Color. RGB themes fill these with truecolor; the
-// "native" theme fills them with ANSI-16 named slots so the terminal owns the
-// hues. maya degrades RGB → 256 → 16 automatically on lesser terminals.
+// Every field is a maya::LitColor — a RESOLVED colour. maya 0.5 split the
+// colour type in two: `Color` (BasicColor<Res::Sym>) may carry a symbolic
+// theme slot that still needs resolving, while `LitColor` is a literal value
+// whose channels are real and safe to do arithmetic on. rockbottom authors
+// its own palette from concrete RGB/ANSI values, so every slot here is
+// literal by construction, and saying so in the type is what lets mix() and
+// brighten() read .r()/.g()/.b() at all — those accessors are Lit-only now,
+// precisely so nobody can blend an unresolved slot and paint a near-black
+// triple. LitColor widens to Color implicitly, so every call site that hands
+// one to maya keeps working untouched.
 struct Theme {
     const char* name;
 
     // Surfaces / structure.
-    maya::Color bg, bg_panel, border, track, rail, sel_bg;
+    maya::LitColor bg, bg_panel, border, track, rail, sel_bg;
     // Ink tiers.
-    maya::Color white, text, label, dim, faint;
+    maya::LitColor white, text, label, dim, faint;
     // Semantic ramp + spectral accents.
-    maya::Color good, warn, hot, crit;
-    maya::Color blue, mauve, teal, sky, pink, amber;
+    maya::LitColor good, warn, hot, crit;
+    maya::LitColor blue, mauve, teal, sky, pink, amber;
     // Per-domain signature accents.
-    maya::Color cpu_ac, mem_ac, disk_ac, net_ac, gpu_ac, proc_ac;
+    maya::LitColor cpu_ac, mem_ac, disk_ac, net_ac, gpu_ac, proc_ac;
 };
 
 namespace detail {
-using C = maya::Color;
+using C = maya::LitColor;
 
 // ── RGB helpers (host-side, so they can use float math freely) ───────────────
 struct Rgb { double r, g, b; };  // channels in 0..255
@@ -462,7 +469,7 @@ inline void set_theme(std::size_t idx) {
 // theme (index 0) defers to the terminal, so it paints nothing.
 [[nodiscard]] inline bool theme_paints_canvas() { return g_active_idx != 0; }
 // The color to fill the root canvas with when theme_paints_canvas().
-[[nodiscard]] inline maya::Color theme_canvas() { return g_active.bg_panel; }
+[[nodiscard]] inline maya::LitColor theme_canvas() { return g_active.bg_panel; }
 // Cycle to the next/previous theme (T) — returns the new name for a toast.
 inline const char* cycle_theme(int dir = +1) {
     const std::size_t n = detail::theme_table().size();
@@ -482,70 +489,75 @@ namespace pal {
 // Every name below is a REFERENCE into g_active. Reading `pal::dim` reads the
 // active theme's current `dim`; set_theme() mutates g_active in place, so the
 // references never dangle and every call site tracks the live theme.
-inline maya::Color& bg       = g_active.bg;
-inline maya::Color& bg_panel = g_active.bg_panel;
-inline maya::Color& border   = g_active.border;
-inline maya::Color& track    = g_active.track;   // meter groove
-inline maya::Color& rail     = g_active.rail;    // table header band
-inline maya::Color& sel_bg   = g_active.sel_bg;  // selected-row strip
+inline maya::LitColor& bg       = g_active.bg;
+inline maya::LitColor& bg_panel = g_active.bg_panel;
+inline maya::LitColor& border   = g_active.border;
+inline maya::LitColor& track    = g_active.track;   // meter groove
+inline maya::LitColor& rail     = g_active.rail;    // table header band
+inline maya::LitColor& sel_bg   = g_active.sel_bg;  // selected-row strip
 
-inline maya::Color& white    = g_active.white;
-inline maya::Color& text     = g_active.text;    // normal fg
-inline maya::Color& label    = g_active.label;
-inline maya::Color& dim      = g_active.dim;
-inline maya::Color& faint    = g_active.faint;
+inline maya::LitColor& white    = g_active.white;
+inline maya::LitColor& text     = g_active.text;    // normal fg
+inline maya::LitColor& label    = g_active.label;
+inline maya::LitColor& dim      = g_active.dim;
+inline maya::LitColor& faint    = g_active.faint;
 
-inline maya::Color& good     = g_active.good;
-inline maya::Color& warn     = g_active.warn;
-inline maya::Color& hot      = g_active.hot;     // orange rung
-inline maya::Color& crit     = g_active.crit;
-inline maya::Color& blue     = g_active.blue;
-inline maya::Color& mauve    = g_active.mauve;
-inline maya::Color& teal     = g_active.teal;
-inline maya::Color& sky      = g_active.sky;
-inline maya::Color& pink     = g_active.pink;
-inline maya::Color& amber    = g_active.amber;
+inline maya::LitColor& good     = g_active.good;
+inline maya::LitColor& warn     = g_active.warn;
+inline maya::LitColor& hot      = g_active.hot;     // orange rung
+inline maya::LitColor& crit     = g_active.crit;
+inline maya::LitColor& blue     = g_active.blue;
+inline maya::LitColor& mauve    = g_active.mauve;
+inline maya::LitColor& teal     = g_active.teal;
+inline maya::LitColor& sky      = g_active.sky;
+inline maya::LitColor& pink     = g_active.pink;
+inline maya::LitColor& amber    = g_active.amber;
 
-inline maya::Color& cpu_ac   = g_active.cpu_ac;
-inline maya::Color& mem_ac   = g_active.mem_ac;
-inline maya::Color& disk_ac  = g_active.disk_ac;
-inline maya::Color& net_ac   = g_active.net_ac;
-inline maya::Color& gpu_ac   = g_active.gpu_ac;
-inline maya::Color& proc_ac  = g_active.proc_ac;
+inline maya::LitColor& cpu_ac   = g_active.cpu_ac;
+inline maya::LitColor& mem_ac   = g_active.mem_ac;
+inline maya::LitColor& disk_ac  = g_active.disk_ac;
+inline maya::LitColor& net_ac   = g_active.net_ac;
+inline maya::LitColor& gpu_ac   = g_active.gpu_ac;
+inline maya::LitColor& proc_ac  = g_active.proc_ac;
 }  // namespace pal
 
 // A "blend" picks one endpoint by which side of the midpoint t falls on — but
 // when BOTH colors are truecolor (the RGB themes), interpolate for real so
 // subtle tints (mix(dim, bg, 0.35)) read as intended instead of snapping.
-[[nodiscard]] inline maya::Color mix(maya::Color a, maya::Color b, double t) {
-    t = std::clamp(t, 0.0, 1.0);
-    if (a.kind() == maya::Color::Kind::Rgb && b.kind() == maya::Color::Kind::Rgb) {
-        auto lerp = [t](std::uint8_t x, std::uint8_t y) {
-            return static_cast<std::uint8_t>(x + (static_cast<double>(y) - x) * t + 0.5);
-        };
-        return maya::Color::rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()));
-    }
-    return t < 0.5 ? a : b;
+// Blend two palette colors. Delegates to maya's anim::lerp, which is the same
+// componentwise interpolation this used to hand-roll PLUS one guard we were
+// missing: it blends only when BOTH endpoints have real channels, and snaps to
+// the nearer endpoint otherwise.
+//
+// That guard matters. On a Named color, r() is the palette INDEX and g()/b()
+// are zero, so the old arithmetic turned bright_black (Named 8) into
+// rgb(8,0,0) — a near-black triple, invisible on a dark terminal. Under the
+// `native` theme, where every slot is deliberately Named so the user's own
+// palette reaches the screen, every mix() was producing exactly that. An
+// effect that cannot be computed has to become no effect, never a computed
+// wrong answer.
+[[nodiscard]] inline maya::LitColor mix(maya::LitColor a, maya::LitColor b, double t) {
+    return maya::anim::lerp(a, b, std::clamp(t, 0.0, 1.0));
 }
 
 // Lift a color toward white. For truecolor themes that's a real lighten; for
 // named ANSI slots it promotes to the bright counterpart (green → bright green)
 // exactly as before. bright_black lifts to white so it stays visible on a
 // selection strip that is also bright_black.
-[[nodiscard]] inline maya::Color brighten(maya::Color c) {
-    if (c.kind() == maya::Color::Kind::Rgb) return c.lighten(0.35f);
-    if (c.kind() == maya::Color::Kind::Named) {
+[[nodiscard]] inline maya::LitColor brighten(maya::LitColor c) {
+    if (c.kind() == maya::ColorKind::Rgb) return c.lighten(0.35f);
+    if (c.kind() == maya::ColorKind::Named) {
         if (c.index() < 8)
-            return maya::Color{static_cast<maya::AnsiColor>(c.index() + 8)};
+            return maya::LitColor{static_cast<maya::AnsiColor>(c.index() + 8)};
         if (c.index() == 8)   // bright_black → white: visible on the strip
-            return maya::Color::white();
+            return maya::LitColor::white();
     }
     return c;
 }
 
 // Load ramp — steps through the theme's semantic slots (no gradient: the
 // four rungs are chosen to stay distinct in every theme).
-[[nodiscard]] inline maya::Color load_color(double f) {
+[[nodiscard]] inline maya::LitColor load_color(double f) {
     f = std::clamp(f, 0.0, 1.0);
     if (f < 0.55) return pal::good;   // green
     if (f < 0.80) return pal::warn;   // yellow
@@ -553,7 +565,7 @@ inline maya::Color& proc_ac  = g_active.proc_ac;
     return pal::crit;                 // red
 }
 
-[[nodiscard]] inline maya::Color health_color(Health h) {
+[[nodiscard]] inline maya::LitColor health_color(Health h) {
     switch (h) {
         case Health::Calm:     return pal::good;
         case Health::Busy:     return pal::blue;

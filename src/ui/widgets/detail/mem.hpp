@@ -51,7 +51,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         std::vector<Seg> segs;
         std::vector<LegendItem> leg;
         std::uint64_t seg_sum = 0;
-        auto add = [&](Bytes v, const char* name, maya::Color c) {
+        auto add = [&](Bytes v, const char* name, maya::LitColor c) {
             if (!v.value) return;
             segs.push_back({static_cast<double>(v.value) / t, c});
             leg.push_back({name, humanize_bytes(v), c});
@@ -95,7 +95,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
                    : avail_f > 0.2 ? "● getting tight — cache would shrink before you swap"
                    : avail_f > 0.1 ? "▲ low — new allocations may start pushing to swap"
                    :                 "▲ critical — the machine is nearly out of RAM";
-    const maya::Color avc = avail_f > 0.4 ? pal::good : avail_f > 0.2 ? pal::teal
+    const maya::LitColor avc = avail_f > 0.4 ? pal::good : avail_f > 0.2 ? pal::teal
                           : avail_f > 0.1 ? pal::hot : pal::crit;
     L.push_back(kv3(
         "available", humanize_bytes(m.available), avc,
@@ -169,7 +169,7 @@ inline std::vector<Element> mem_body(const Snapshot& s, const Ctx& cx) {
         }
         if (m.numa_on) {
             const double khz = m.numa_hint_faults_ps / 1000.0;
-            const maya::Color nc = m.numa_hint_faults_ps > 20000 ? pal::hot
+            const maya::LitColor nc = m.numa_hint_faults_ps > 20000 ? pal::hot
                                  : m.numa_hint_faults_ps > 2000 ? pal::teal : pal::good;
             L.push_back(kv3(
                 "numa balancing", "on", pal::teal,

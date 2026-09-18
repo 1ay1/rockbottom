@@ -273,7 +273,7 @@ private:
         // "kill" tint or verb — only TERM/KILL are destructive-by-intent.
         const bool lethal = p.sig == SIGKILL || p.sig == SIGTERM ||
                             p.sig == SIGQUIT || p.sig == SIGABRT || p.sig == SIGINT;
-        Color c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
+        LitColor c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
         std::string what = group
             ? "ALL " + std::to_string(p.pids.size()) + " × " + p.name
             : p.name + " (" + std::to_string(p.pid) + ")";
@@ -328,10 +328,10 @@ private:
         // lightweight "pre-selection" so the row under the mouse stands out
         // before you click, without stealing the cursor's bg strip.
         const bool lit = selected || hovered;
-        auto lift = [&](Color c) { return lit ? brighten(c) : c; };
-        auto cell_st = [&](Color c) { return Style{}.with_fg(lift(c)); };
-        const Color quiet  = lit ? pal::text  : pal::dim;    // dim ink, lifted
-        const Color hushed = lit ? pal::label : pal::faint;  // faint ink, lifted
+        auto lift = [&](LitColor c) { return lit ? brighten(c) : c; };
+        auto cell_st = [&](LitColor c) { return Style{}.with_fg(lift(c)); };
+        const LitColor quiet  = lit ? pal::text  : pal::dim;    // dim ink, lifted
+        const LitColor hushed = lit ? pal::label : pal::faint;  // faint ink, lifted
 
         Style name_st = Style{}.with_fg(culprit ? pal::crit : selected ? pal::white : pal::text);
         if (culprit || selected) name_st = name_st.with_bold();
@@ -345,7 +345,7 @@ private:
         if (cpu_zero) cpu_st = cell_st(hushed);
 
         const char* dot = p.state == 'R' ? "●" : p.state == 'D' ? "◆" : "·";
-        Color dot_c = lift(p.state == 'R' ? pal::good
+        LitColor dot_c = lift(p.state == 'R' ? pal::good
                      : p.state == 'D' ? pal::crit : pal::faint);
 
         // The active sort column's values get brighter ink so the column the
@@ -355,7 +355,7 @@ private:
         // root-owned rows wear the caution yellow — privileged processes pop
         // without shouting; everyone else gets the classic htop teal so the
         // USER column reads as its own colored band, distinct from NAME.
-        Color user_c = p.user == "root" ? pal::warn : pal::teal;
+        LitColor user_c = p.user == "root" ? pal::warn : pal::teal;
 
         char cpu_txt[16];
         std::snprintf(cpu_txt, sizeof cpu_txt, "%5.1f", disp_cpu);
@@ -365,7 +365,7 @@ private:
         const bool memp_zero = memp < 0.05;
         // Memory ramp: hogs wear escalating heat so the MEM pair carries
         // color even when sorting by CPU. ≥5% warn · ≥10% hot · ≥20% crit.
-        const Color mem_heat = memp >= 20 ? pal::crit
+        const LitColor mem_heat = memp >= 20 ? pal::crit
                              : memp >= 10 ? pal::hot
                              : memp >= 5  ? pal::warn : pal::text;
 
@@ -382,7 +382,7 @@ private:
         // actually touching the platter so a thrasher pops out.
         const double iorate = p.io_read.per_sec + p.io_write.per_sec;
         std::string io_txt = iorate > 512 ? humanize_rate(ByteRate{iorate}) : "·";
-        Color io_c = iorate > 512 ? pal::sky : hushed;
+        LitColor io_c = iorate > 512 ? pal::sky : hushed;
 
         TableRow row;
         row.cells.reserve(CThr + 1);
@@ -445,7 +445,7 @@ private:
     // Per-process CPU ramp. load_color() is calibrated for SYSTEM load
     // (green until 55%); for a single process 55% is already heavy, so the
     // table uses tighter stops — a hog turns warm long before it pegs a core.
-    [[nodiscard]] static maya::Color cpu_color(double pct) {
+    [[nodiscard]] static maya::LitColor cpu_color(double pct) {
         if (pct < 25) return pal::good;
         if (pct < 60) return pal::warn;
         if (pct < 85) return pal::hot;
@@ -468,7 +468,7 @@ private:
         // Same bright-slot lift as the data cells — mix() can't tint on the
         // native palette, and dim ink (bright_black) VANISHES on the
         // bright_black selection strip, so brighten() lifts it to white.
-        auto lift = [&](Color c) { return selected ? brighten(c) : c; };
+        auto lift = [&](LitColor c) { return selected ? brighten(c) : c; };
 
         // ── assemble the FIXED furniture (gutter + chevron) and the ELASTIC
         // rail prefix separately. The gutter and chevron are irreducible
@@ -478,7 +478,7 @@ private:
         std::string furniture;              // gutter + trailing chevron
         std::vector<StyledRun> fruns;
         std::string prefix;                 // the elastic rail run
-        Color prefix_c = lift(pal::dim);
+        LitColor prefix_c = lift(pal::dim);
         // The rail run is emitted between the gutter and the chevron, so we
         // record where in `furniture` the chevron begins to stitch them back
         // in order inside the builder.
@@ -507,12 +507,12 @@ private:
             const double scpu = idx < static_cast<int>(view_.sub_cpu.size())
                                 ? view_.sub_cpu[I] : 0.0;
             const bool warm = scpu >= 0.5;
-            Color heat = warm ? lift(cpu_color(scpu)) : lift(pal::dim);
+            LitColor heat = warm ? lift(cpu_color(scpu)) : lift(pal::dim);
             prefix_c = heat;
 
             static const char* kW[] = {"▁","▂","▃","▄","▅","▆","▇","█"};
             int wl = std::clamp(static_cast<int>(share * 7.999), 0, 7);
-            Color gut_c = warm ? heat : lift(pal::dim);
+            LitColor gut_c = warm ? heat : lift(pal::dim);
             push(kW[wl], warm && scpu > 40 ? Style{}.with_fg(gut_c).with_bold()
                                            : Style{}.with_fg(gut_c));
             push(" ", Style{});
@@ -536,8 +536,8 @@ private:
         const std::string name = std::string(fmt::clip(p.name, 64));
         const std::string trail = (!p.cmd.empty() && p.cmd != p.name)
             ? "  " + p.cmd : std::string{};
-        const Color badge_c = lift(pal::dim);
-        const Color trail_c = selected ? pal::text : pal::dim;
+        const LitColor badge_c = lift(pal::dim);
+        const LitColor trail_c = selected ? pal::text : pal::dim;
 
         // Build AT the solved width. Priority order: the NAME must always be
         // readable, so the elastic rail prefix yields to it. Steps:

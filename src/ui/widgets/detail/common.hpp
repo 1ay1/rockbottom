@@ -87,7 +87,7 @@ struct Ctx {
 // A label : value row — label dim + fixed width, value bold + colored.
 // Same 14-col label rail + 2-col gutter as bar() and kv3, so single rows
 // and stat strips share their left edge.
-inline Element kv(const std::string& k, const std::string& v, maya::Color vc,
+inline Element kv(const std::string& k, const std::string& v, maya::LitColor vc,
                   int kw = 14) {
     using namespace maya; using namespace maya::dsl;
     return (h(
@@ -107,11 +107,11 @@ inline Element kv(const std::string& k, const std::string& v, maya::Color vc,
 // when truly cramped (the scroller measures real heights, so the extra rows
 // are windowed correctly). Values are clip-truncated either way: a
 // pathological value ellipsizes instead of colliding with its neighbour.
-inline Element kv3(std::string k1, std::string v1, maya::Color c1,
-                   std::string k2 = "", std::string v2 = "", maya::Color c2 = pal::dim,
-                   std::string k3 = "", std::string v3 = "", maya::Color c3 = pal::dim) {
+inline Element kv3(std::string k1, std::string v1, maya::LitColor c1,
+                   std::string k2 = "", std::string v2 = "", maya::LitColor c2 = pal::dim,
+                   std::string k3 = "", std::string v3 = "", maya::LitColor c3 = pal::dim) {
     using namespace maya;
-    struct Cell { std::string k, v; maya::Color c; };
+    struct Cell { std::string k, v; maya::LitColor c; };
     std::array<Cell, 3> cells{Cell{std::move(k1), std::move(v1), c1},
                               Cell{std::move(k2), std::move(v2), c2},
                               Cell{std::move(k3), std::move(v3), c3}};
@@ -181,7 +181,7 @@ inline Element kv3(std::string k1, std::string v1, maya::Color c1,
 // A full-width labelled meter row: "label  ██████░░  42%  <tail>".
 // `tail_w` shrinks on narrow terminals (caller passes ctx.wide ? 34 : 0).
 inline Element bar(const std::string& label, double frac,
-                   const std::string& tail, maya::Color c, int tail_w = 34) {
+                   const std::string& tail, maya::LitColor c, int tail_w = 34) {
     using namespace maya; using namespace maya::dsl;
     std::vector<Element> row;
     row.push_back((text(label) | nowrap | fgc(pal::label) | width(14)).build());
@@ -197,13 +197,13 @@ inline Element bar(const std::string& label, double frac,
 // off to the right edge so the heading both READS as a title and separates
 // the block below. An optional right-aligned chip carries a stat for the
 // section ("TOP MEMORY CONSUMERS   8 shown") without a second line.
-inline Element section(std::string title, maya::Color ac, std::string chip = "") {
+inline Element section(std::string title, maya::LitColor ac, std::string chip = "") {
     using namespace maya; using namespace maya::dsl;
     std::string t = std::move(title);
     std::string ch = std::move(chip);
     return Element{ComponentElement{
         .render = [t, ac, ch](int w, int) -> Element {
-            const maya::Color rule = mix(pal::border, ac, 0.35);
+            const maya::LitColor rule = mix(pal::border, ac, 0.35);
             // The chip is the priority on the right; the rule fills whatever
             // is left between the name and the chip. A 1-cell right inset
             // keeps the rule from kissing the panel border.
@@ -250,7 +250,7 @@ inline Element section(std::string title, maya::Color ac, std::string chip = "")
 // A colored ▌ gutter bar marks it as the pane's editorial voice, distinct
 // from the data rows around it. The message clip-truncates with … on narrow
 // terminals instead of hard-cutting at the frame.
-inline Element verdict(const std::string& msg, maya::Color c) {
+inline Element verdict(const std::string& msg, maya::LitColor c) {
     using namespace maya; using namespace maya::dsl;
     return (h(
         text(" ▌") | nowrap | fgc(c),
@@ -267,9 +267,9 @@ inline Element verdict(const std::string& msg, maya::Color c) {
 // — numbers that lie. Instead shed by priority: v2 → shrink name → meter →
 // pid; the rank, a readable name, and the primary value always survive.
 inline Element rank_row(int rank, const std::string& pid, const std::string& name,
-                        double frac, maya::Color ac,
-                        const std::string& v1, maya::Color c1, int v1w,
-                        const std::string& v2 = "", maya::Color c2 = pal::label, int v2w = 0) {
+                        double frac, maya::LitColor ac,
+                        const std::string& v1, maya::LitColor c1, int v1w,
+                        const std::string& v2 = "", maya::LitColor c2 = pal::label, int v2w = 0) {
     using namespace maya;
     return Element{maya::ComponentElement{
         .render = [=](int w, int) -> Element {
@@ -372,7 +372,7 @@ inline std::pair<std::string, std::string> split_unit(const std::string& s) {
 // is normalised against `scale_top`, so every figure is multiplied back up
 // and humanized ("1.2 M/s") — which is what makes the card meaningful on the
 // NET and DISK panes, where a percentage would answer no question at all.
-inline Element stat_card(double frac, maya::Color c, const std::string& label,
+inline Element stat_card(double frac, maya::LitColor c, const std::string& label,
                          const float* hist, int len, int rows_avail,
                          double scale_top = 0.0) {
     using namespace maya; using namespace maya::dsl;
@@ -410,7 +410,7 @@ inline Element stat_card(double frac, maya::Color c, const std::string& label,
     if (pn) prior /= pn;
     const double d = pn ? recent - prior : 0;
     const char* arrow = d > 0.03 ? "\u2197 rising" : d < -0.03 ? "\u2198 falling" : "\u2192 steady";
-    const maya::Color ac = d > 0.03 ? pal::hot : d < -0.03 ? pal::good : pal::dim;
+    const maya::LitColor ac = d > 0.03 ? pal::hot : d < -0.03 ? pal::good : pal::dim;
 
     // The avg/pk figures are the widest strings a rate card prints, so size
     // the column to them — a hardcoded 16 would clip "pk  1.2M/s".
@@ -441,11 +441,11 @@ inline Element stat_card(double frac, maya::Color c, const std::string& label,
 // ~16 cols, so on a thin pane it's DROPPED and the trace (with its labelled
 // y-axis) owns the full width instead of being crushed to a 6-cell sliver.
 // Optional overlay draws a second series (RAM over CPU, VRAM over GPU).
-inline Element hero_graph(double frac, maya::Color card_c, const char* label,
+inline Element hero_graph(double frac, maya::LitColor card_c, const char* label,
                           const float* hist, int hist_len, int gh,
-                          std::optional<maya::Color> graph_c = std::nullopt,
+                          std::optional<maya::LitColor> graph_c = std::nullopt,
                           const float* overlay = nullptr, int overlay_len = 0,
-                          maya::Color overlay_c = pal::mem_ac,
+                          maya::LitColor overlay_c = pal::mem_ac,
                           double axis_top = 100.0, bool axis_pct = true,
                           int axis_w = 3) {
     using namespace maya;
@@ -497,10 +497,10 @@ inline Element hero_graph(double frac, maya::Color card_c, const char* label,
 // callers can pass transient locals safely. The card reads an owned copy too,
 // so it cannot dangle either.
 inline Element traffic_hero(const float* fill, const float* over, int len,
-                            double axis_top, maya::Color fill_c,
-                            maya::Color over_c, int gh, float gamma = 0.5f,
+                            double axis_top, maya::LitColor fill_c,
+                            maya::LitColor over_c, int gh, float gamma = 0.5f,
                             int axis_w = 5, const char* card_label = "",
-                            maya::Color card_c = pal::dim) {
+                            maya::LitColor card_c = pal::dim) {
     auto f = std::make_shared<std::array<float, 48>>();
     auto o = std::make_shared<std::array<float, 48>>();
     auto sum = std::make_shared<std::array<float, 48>>();
@@ -538,7 +538,7 @@ inline Element traffic_hero(const float* fill, const float* over, int len,
 // One full-width bar whose colored segments show HOW a total is composed
 // (the Activity-Monitor / htop memory idiom) — far more legible than a
 // stack of near-identical meters. Free space renders as a quiet ░ tail.
-struct Seg { double frac; maya::Color c; };
+struct Seg { double frac; maya::LitColor c; };
 
 inline Element comp_bar(std::vector<Seg> segs) {
     using namespace maya;
@@ -573,7 +573,7 @@ inline Element comp_bar(std::vector<Seg> segs) {
 // hold every item, the legend wraps onto extra rows (2 items per row) —
 // letting flex shrink the nowrap cells instead would eat interior spaces
 // ("■ buffers24K").
-struct LegendItem { std::string label, value; maya::Color c; };
+struct LegendItem { std::string label, value; maya::LitColor c; };
 
 inline Element comp_legend(std::vector<LegendItem> items) {
     using namespace maya;
@@ -678,11 +678,11 @@ inline Element gap_row() {
 // then pps — so the rate and spark stay readable instead of every column
 // truncating into stubs ("pk 6", "↓ 9.", "0 p/"). Built as a component so
 // the shed decision runs against the real solved width every frame.
-struct FlowTail { std::string text; maya::Color color; int min_w; };
+struct FlowTail { std::string text; maya::LitColor color; int min_w; };
 
-inline Element flow_row(const std::string& arrow_label, maya::Color label_c,
-                        const float* hist, int hist_len, maya::Color spark_c,
-                        const std::string& rate, maya::Color rate_c,
+inline Element flow_row(const std::string& arrow_label, maya::LitColor label_c,
+                        const float* hist, int hist_len, maya::LitColor spark_c,
+                        const std::string& rate, maya::LitColor rate_c,
                         std::vector<FlowTail> tails = {}) {
     using namespace maya;
     std::array<float, 48> hn{};
@@ -811,7 +811,7 @@ inline std::vector<Element> hero_split(std::vector<Element> hero,
 // the right gutter. Heights come from measure_element at the SAME width we
 // paint at, so window math and paint can never disagree.
 inline Element scroller(std::vector<Element> body, int scroll, int /*view_h*/,
-                        maya::Color ac, bool cap_width = true, int design_w = 104,
+                        maya::LitColor ac, bool cap_width = true, int design_w = 104,
                         int full_width_prefix = 0) {
     using namespace maya; using namespace maya::dsl;
     auto shared = std::make_shared<const std::vector<Element>>(std::move(body));

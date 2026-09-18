@@ -24,12 +24,12 @@ namespace rockbottom::ui {
 
 class Panel {
     std::string glyph_, title_, chip_;
-    maya::Color accent_;
+    maya::LitColor accent_;
     float grow_ = 0;
     double tint_ = 0.25;   // how much accent bleeds into the border line
 
 public:
-    Panel(std::string glyph, std::string title, maya::Color accent)
+    Panel(std::string glyph, std::string title, maya::LitColor accent)
         : glyph_(std::move(glyph)), title_(std::move(title)), accent_(accent) {}
 
     Panel& grow(float g)              { grow_ = g; return *this; }

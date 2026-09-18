@@ -35,7 +35,7 @@ class Spark {
     std::vector<float> data_;
     int len_ = 0;
     int cells_ = 12;
-    std::optional<maya::Color> color_;   // nullopt → per-value load gradient
+    std::optional<maya::LitColor> color_;   // nullopt → per-value load gradient
     bool dim_low_ = true;                // fade near-zero columns into the bg
     bool baseline_ = false;              // quiet samples ink a faint floor ▁
 
@@ -45,7 +45,7 @@ public:
     }
 
     Spark& cells(int n)             { cells_ = n; return *this; }   // <=0 → fill
-    Spark& color(maya::Color c)     { color_ = c; return *this; }
+    Spark& color(maya::LitColor c)     { color_ = c; return *this; }
     Spark& dim_low(bool b)          { dim_low_ = b; return *this; }
     Spark& baseline(bool b)         { baseline_ = b; return *this; }
     Spark& fill()                   { cells_ = 0; return *this; }
@@ -86,7 +86,7 @@ public:
         std::vector<maya::StyledRun> runs;
         content.reserve(static_cast<std::size_t>(cells_) * 3);
 
-        auto push = [&](const char* glyph, maya::Color c) {
+        auto push = [&](const char* glyph, maya::LitColor c) {
             std::size_t off = content.size();
             content += glyph;
             runs.push_back({off, content.size() - off, maya::Style{}.with_fg(c)});
@@ -134,7 +134,7 @@ public:
             // asked for a persistent baseline, then it's a faint floor tick.
             if (dim_low_ && v < 0.03f) {
                 if (baseline_) {
-                    maya::Color base = color_ ? *color_ : pal::dim;
+                    maya::LitColor base = color_ ? *color_ : pal::dim;
                     push(kBars[0], mix(base, pal::bg_panel, 0.7));
                 } else {
                     push_blank();
@@ -142,7 +142,7 @@ public:
                 continue;
             }
             int idx = std::clamp(static_cast<int>(v * 7.0f + 0.5f), 0, 7);
-            maya::Color c2 = color_ ? *color_ : load_color(v);
+            maya::LitColor c2 = color_ ? *color_ : load_color(v);
             push(kBars[idx], c2);
         }
 

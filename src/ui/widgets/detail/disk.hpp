@@ -18,11 +18,11 @@ namespace rockbottom::ui::detail {
 // narrows, so a thin DISK pane reads "/home ███ 27%" cleanly instead of
 // crushing every column into an unreadable stub. `meter` is nullopt on the
 // header row (its slot becomes the "usage" label spanning the groove).
-struct FsTail { std::string text; maya::Color color; int min_w; };
+struct FsTail { std::string text; maya::LitColor color; int min_w; };
 
-inline Element build_fs_line(std::string mount, maya::Color mount_c,
+inline Element build_fs_line(std::string mount, maya::LitColor mount_c,
                              std::optional<double> meter, std::string pct,
-                             maya::Color pct_c, std::vector<FsTail> tails,
+                             maya::LitColor pct_c, std::vector<FsTail> tails,
                              bool header) {
     using namespace maya;
     return Element{maya::ComponentElement{
@@ -172,7 +172,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         const std::uint64_t freeb = d.total.value > d.used.value ? d.total.value - d.used.value : 0;
         if (!worst || f > worst->usage().v) worst = &d;
         std::string ino = "\xc2\xb7";
-        maya::Color ino_c = pal::faint;
+        maya::LitColor ino_c = pal::faint;
         if (d.inodes_total > 0) {
             const double iused = 1.0 - static_cast<double>(d.inodes_free) /
                                           static_cast<double>(d.inodes_total);
@@ -246,8 +246,8 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
             if (shown++ >= lat_cap) break;
             // Latency color ramps green→hot→crit; the busy meter shows how hard
             // the device is working, which contextualizes the latency.
-            const maya::Color lc = lat > 100 ? pal::crit : lat > 20 ? pal::hot : pal::good;
-            const maya::Color bc = load_color(d.busy);
+            const maya::LitColor lc = lat > 100 ? pal::crit : lat > 20 ? pal::hot : pal::good;
+            const maya::LitColor bc = load_color(d.busy);
             R.push_back((h(
                 text(maya::truncate_end(d.name, 12)) | nowrap | Bold | fgc(pal::text) | width(13),
                 Element{Meter{d.busy}.fill().groove(false).color(bc)} | grow(1),
@@ -286,7 +286,7 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         }
         for (const auto& hlt : s.ssd_health) {
             const double wear = std::min(1.5, hlt.pct_used / 100.0);
-            const maya::Color wc = hlt.pct_used >= 100 ? pal::crit
+            const maya::LitColor wc = hlt.pct_used >= 100 ? pal::crit
                                  : hlt.pct_used >= 80 ? pal::hot : pal::good;
             const std::string tc = hlt.temp_c > 0
                 ? std::to_string(static_cast<int>(hlt.temp_c)) + " \xc2\xb0" "C" : std::string();

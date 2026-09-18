@@ -84,7 +84,7 @@ public:
                 using namespace maya::dsl;
                 if (ah < 2) return blank().build();
                 static thread_local std::array<float, 48> tot{};
-                static thread_local std::array<Color, 48> col{};
+                static thread_local std::array<LitColor, 48> col{};
                 for (int i = 0; i < hl && i < 48; ++i) {
                     const float rv = rh[static_cast<std::size_t>(i)];
                     const float wv = wh[static_cast<std::size_t>(i)];
@@ -122,7 +122,7 @@ public:
                                 io_.read_history[static_cast<std::size_t>(i)] +
                                 io_.write_history[static_cast<std::size_t>(i)]);
             static thread_local std::array<float, 48> tot{};
-            static thread_local std::array<Color, 48> col{};
+            static thread_local std::array<LitColor, 48> col{};
             for (int i = 0; i < io_.hist_len; ++i) {
                 const float rv = io_.read_history[static_cast<std::size_t>(i)];
                 const float wv = io_.write_history[static_cast<std::size_t>(i)];

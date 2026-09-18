@@ -32,10 +32,10 @@ public:
         using namespace maya::dsl;
 
         const Verdict& v = snap_.verdict;
-        Color c = health_color(v.level);
+        LitColor c = health_color(v.level);
         // Pulse: on a health degrade the border flares toward white, then
         // fades back over the next ticks (3→2→1→0).
-        Color frame = pulse_ > 0 ? mix(c, pal::white, 0.25 * pulse_) : c;
+        LitColor frame = pulse_ > 0 ? mix(c, pal::white, 0.25 * pulse_) : c;
 
         // load trend: comparing 1m to 15m tells you if things are heating up.
         const auto& la = snap_.cpu.loadavg;

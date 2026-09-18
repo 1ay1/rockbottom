@@ -118,7 +118,7 @@ public:
         // Toast overrides the live indicator on the right.
         Element status;
         if (toast_) {
-            Color c = toast_->error ? pal::crit : pal::good;
+            LitColor c = toast_->error ? pal::crit : pal::good;
             status = (text(" " + toast_->text + " ")
                       | nowrap | Bold | fgc(pal::bg) | bgc(c)).build();
         } else if (paused_) {

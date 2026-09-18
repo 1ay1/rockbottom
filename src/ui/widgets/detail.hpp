@@ -120,7 +120,7 @@ public:
         using namespace maya;
         using namespace maya::dsl;
 
-        const char* glyph; std::string title; maya::Color ac;
+        const char* glyph; std::string title; maya::LitColor ac;
         meta(glyph, title, ac);
 
         detail::Ctx cx = detail::Ctx::make(w_, h_, scroll_);
@@ -164,7 +164,7 @@ public:
 private:
     using Element = maya::Element;
 
-    void meta(const char*& glyph, std::string& title, maya::Color& ac) const {
+    void meta(const char*& glyph, std::string& title, maya::LitColor& ac) const {
         switch (which_) {
             case Detail::Cpu:  glyph = "◈"; title = "CPU · " + fmt::short_model(s_.cpu.model); ac = pal::cpu_ac; break;
             case Detail::Mem:  glyph = "▤"; title = "MEMORY";  ac = pal::mem_ac;  break;
@@ -214,7 +214,7 @@ private:
         // lie). fit_row sheds whole clusters lowest-rank-first instead:
         // threads go first, then running; procs and the zombie/blocked
         // warnings always survive.
-        auto cluster = [](const std::string& n, const char* unit, maya::Color c,
+        auto cluster = [](const std::string& n, const char* unit, maya::LitColor c,
                           bool lead_dot) -> Element {
             std::vector<Element> cc;
             if (lead_dot) cc.push_back((text("  ·  ") | nowrap | fgc(pal::faint)).build());
@@ -291,7 +291,7 @@ private:
         // three densities — glyph chips + labels, keys + labels tightened,
         // keys only — and the first whose MEASURED width fits the pane
         // renders. No breakpoints; a renamed tab re-decides by itself.
-        struct Tab { Detail d; const char* key; const char* glyph; const char* label; maya::Color ac; };
+        struct Tab { Detail d; const char* key; const char* glyph; const char* label; maya::LitColor ac; };
         const Tab tabs[] = {
             {Detail::Cpu,  "1", "◈", "cpu",  pal::cpu_ac},
             {Detail::Mem,  "2", "▤", "mem",  pal::mem_ac},
@@ -380,7 +380,7 @@ private:
         const bool group = p.pids.size() > 1;
         const bool lethal = p.sig == SIGKILL || p.sig == SIGTERM ||
                             p.sig == SIGQUIT || p.sig == SIGABRT || p.sig == SIGINT;
-        maya::Color c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
+        maya::LitColor c = hard ? pal::crit : lethal ? pal::warn : pal::sky;
         std::string what = group
             ? std::to_string(p.pids.size()) + " procs · " + p.name
             : p.name + " (" + std::to_string(p.pid) + ")";

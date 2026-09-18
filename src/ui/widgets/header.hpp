@@ -70,7 +70,7 @@ public:
         Element bat = blank();
         if (snap_.battery.present) {
             const auto& b = snap_.battery;
-            Color bc = b.charging ? pal::good : b.percent < 20 ? pal::crit
+            LitColor bc = b.charging ? pal::good : b.percent < 20 ? pal::crit
                      : b.percent < 40 ? pal::warn : pal::label;
             std::string icon = b.charging ? "\u26a1" : "\u25a0";
             std::string s = "  " + icon + " " + std::to_string(b.percent) + "%";
@@ -88,7 +88,7 @@ public:
             const auto& w = snap_.wireless;
             if (w.wifi_present) {
                 // RSSI (dBm) → coarse bars. -50 great, -80 poor.
-                Color wc = w.wifi_rssi >= -60 ? pal::good
+                LitColor wc = w.wifi_rssi >= -60 ? pal::good
                          : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
                 std::string s = "  \xf0\x9f\x93\xb6 " + w.ssid;
                 if (w.wifi_rssi != 0) s += " " + std::to_string(w.wifi_rssi) + "dBm";

@@ -113,7 +113,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
 
         // ── telemetry strip — only rows that carry at least one live figure ──
         {
-            struct Cell { std::string k, v; maya::Color c; };
+            struct Cell { std::string k, v; maya::LitColor c; };
             std::vector<Cell> cells;
             if (g.temp_c > 1)
                 cells.push_back({"temp", std::to_string(static_cast<int>(g.temp_c)) + " °C",
@@ -158,7 +158,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // Verdict: read the numbers for you.
         {
             const double u = g.usage.v, mu = g.mem_usage.v;
-            std::string msg; maya::Color c;
+            std::string msg; maya::LitColor c;
             if (!g.unified && mu > 0.95) { msg = "▲ VRAM is nearly full — the next allocation may fail or spill to system RAM (slow)"; c = pal::crit; }
             else if (g.unified && mu > 0.5) { msg = "▲ the GPU holds over half of system RAM — apps and GPU are fighting for memory"; c = pal::hot; }
             else if (u > 0.9) { msg = "▲ pinned at full load — this is your bottleneck right now"; c = pal::hot; }

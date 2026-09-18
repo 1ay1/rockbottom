@@ -67,7 +67,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
                             "% of one core · peak " + fmt::fixed1(peak_pct) + "%"));
         // Keep the selected-process history at the shared compact hero height.
         const int gh = cx.graph_h;
-        const maya::Color gc = load_color(cpuf);
+        const maya::LitColor gc = load_color(cpuf);
         // A SECOND owned buffer holding the ring as real cpu%-of-core fractions
         // (0..1, NOT axis-relative), so the stat card's avg / peak / trend
         // arrow are honest — the same genuine trend the CPU pane's card shows,
@@ -322,7 +322,7 @@ inline std::vector<Element> proc_body(const Snapshot& s, const Ctx& cx, const Pr
                    : p.state == 'Z' ? "zombie — dead but its parent hasn't reaped it"
                    : p.state == 'T' ? "stopped — suspended (SIGSTOP)"
                    : "unknown";
-    const maya::Color sc = p.state == 'R' ? pal::good : p.state == 'D' ? pal::crit
+    const maya::LitColor sc = p.state == 'R' ? pal::good : p.state == 'D' ? pal::crit
                          : p.state == 'Z' ? pal::hot : pal::dim;
     b.push_back(kv("run state", st, sc, 14));
     if (p.start_sec > 0) {

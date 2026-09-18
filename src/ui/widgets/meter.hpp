@@ -31,16 +31,16 @@ namespace rockbottom::ui {
 class Meter {
     double value_ = 0;                       // 0..1
     int    width_ = 16;
-    std::optional<maya::Color> color_;       // nullopt → load gradient
-    maya::Color track_ = pal::track;
+    std::optional<maya::LitColor> color_;       // nullopt → load gradient
+    maya::LitColor track_ = pal::track;
     bool groove_ = true;                     // paint the empty remainder slab
 
 public:
     constexpr explicit Meter(double value) : value_(std::clamp(value, 0.0, 1.0)) {}
 
     Meter& width(int w)              { width_ = w; return *this; }   // <=0 → fill
-    Meter& color(maya::Color c)      { color_ = c; return *this; }
-    Meter& track(maya::Color c)      { track_ = c; return *this; }
+    Meter& color(maya::LitColor c)      { color_ = c; return *this; }
+    Meter& track(maya::LitColor c)      { track_ = c; return *this; }
     Meter& fill()                    { width_ = 0; return *this; }
     Meter& groove(bool on)           { groove_ = on; return *this; }   // off = no bg slab
 
@@ -123,7 +123,7 @@ private:
         // live edge (mix() can't tint with a native palette).
         const int tip = (full < width_ && frac8 > 0) ? full : full - 1;
         for (int i = 0; i < full && i < width_; ++i) {
-            maya::Color c = color_ ? *color_
+            maya::LitColor c = color_ ? *color_
                                    : load_color((i + 0.5) / width_);
             if (i == tip) c = brighten(c);
             std::size_t off = content.size();
@@ -136,7 +136,7 @@ private:
         // leading edge it carries the glossy tip.
         int used = full;
         if (full < width_ && frac8 > 0) {
-            maya::Color c = color_ ? *color_ : load_color((full + 0.5) / width_);
+            maya::LitColor c = color_ ? *color_ : load_color((full + 0.5) / width_);
             c = brighten(c);
             std::size_t off = content.size();
             content += kEighths[frac8];

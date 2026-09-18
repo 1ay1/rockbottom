@@ -85,11 +85,11 @@ inline CoreCols core_cols(int w, const CoreTableCfg& cfg) {
 // snapshot that may have been resampled by paint time).
 struct CoreRow {
     std::string        id;
-    maya::Color        id_c = pal::cpu_ac;
+    maya::LitColor        id_c = pal::cpu_ac;
     double             load = 0;
     std::vector<float> hist;
     std::string        freq, temp;
-    maya::Color        temp_c = pal::dim;
+    maya::LitColor        temp_c = pal::dim;
     bool               anchor = false;   // the ALL row: brighter ink, no dimming
 };
 
@@ -99,7 +99,7 @@ inline Element core_row_el(CoreRow d, CoreTableCfg cfg) {
         .render = [d, cfg](int w, int) -> Element {
             using namespace maya; using namespace maya::dsl;
             const CoreCols cc = core_cols(w, cfg);
-            const maya::Color lc = load_color(d.load);
+            const maya::LitColor lc = load_color(d.load);
             std::vector<Element> row;
             row.push_back((text(d.id) | nowrap | Bold | fgc(d.id_c)
                            | width(cc.id_w)).build());
@@ -244,7 +244,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
       : sat < 1.0 ? "\xe2\x97\x8f comfortably busy \xe2\x80\x94 cores keeping up with demand"
       : sat < 2.0 ? "\xe2\x96\xb2 oversubscribed \xe2\x80\x94 tasks are waiting for a free core"
       :             "\xe2\x96\xb2 heavily saturated \xe2\x80\x94 the run queue is deep, things will feel slow";
-    const maya::Color vc = sat < 0.7 ? pal::good : sat < 1.0 ? pal::teal
+    const maya::LitColor vc = sat < 0.7 ? pal::good : sat < 1.0 ? pal::teal
                          : sat < 2.0 ? pal::hot : pal::crit;
     B.push_back(kv3(
         "load 1m", fmt::fixed2(c.loadavg[0]), load_color(std::min(1.0, sat)),
@@ -439,7 +439,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             for (int i : idx) sum += c.cores[static_cast<std::size_t>(i)].usage.v;
             return sum / static_cast<double>(idx.size());
         };
-        auto heading = [&](const std::string& name, const std::vector<int>& idx, maya::Color ac) {
+        auto heading = [&](const std::string& name, const std::vector<int>& idx, maya::LitColor ac) {
             const double av = cluster_avg(idx);
             R.push_back(gap_row());
             R.push_back((h(
@@ -525,7 +525,7 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
             // label; the meter + temperature always survive.
             const std::string label = sn.label;
             const std::string temp = t;
-            const maya::Color tc = load_color(frac);
+            const maya::LitColor tc = load_color(frac);
             L.push_back(Element{maya::ComponentElement{
                 .render = [label, tail, temp, frac, tc](int w, int) -> Element {
                     using namespace maya; using namespace maya::dsl;

@@ -33,12 +33,12 @@ class Graph {
     int len_ = 0;
     int cells_ = 40;
     int rows_ = 4;
-    std::optional<maya::Color> color_;   // nullopt → gradient by latest value
+    std::optional<maya::LitColor> color_;   // nullopt → gradient by latest value
     // Optional second series drawn as a plain line (no fill glow) on the same
     // grid — e.g. RAM over the CPU graph, VRAM over the GPU graph.
     const float* overlay_ = nullptr;
     int overlay_len_ = 0;
-    maya::Color overlay_color_ = pal::mem_ac;
+    maya::LitColor overlay_color_ = pal::mem_ac;
     // Perceptual height curve. Byte-rate traffic is bursty: one old spike
     // sets the peak and every quieter sample crushes to a floor line. A sqrt
     // curve lifts low values off the floor so a 2 KB/s trickle still reads as
@@ -56,7 +56,7 @@ public:
 
     Graph& cells(int n)         { cells_ = n; return *this; }   // <=0 → fill
     Graph& rows(int n)          { rows_ = std::max(1, n); return *this; }
-    Graph& color(maya::Color c) { color_ = c; return *this; }
+    Graph& color(maya::LitColor c) { color_ = c; return *this; }
     Graph& fill()               { cells_ = 0; return *this; }
     // gamma<1 compresses the top / expands the bottom (0.5 = sqrt).
     Graph& gamma(float g)       { gamma_ = std::max(0.05f, g); return *this; }
@@ -65,7 +65,7 @@ public:
     // A faint sparse rain under the line instead of the solid dither wall.
     Graph& light_fill()         { fillmode_ = Fill::Light; return *this; }
     // Overlay a second history series (drawn as a thin line in `c`).
-    Graph& overlay(const float* data, int len, maya::Color c) {
+    Graph& overlay(const float* data, int len, maya::LitColor c) {
         overlay_ = data; overlay_len_ = std::max(0, len); overlay_color_ = c; return *this;
     }
 
@@ -311,10 +311,10 @@ public:
                     // The trace hue tracks the value at THIS cell (gradient
                     // graphs glow amber/red at a spike); fixed-color graphs
                     // use their color throughout.
-                    const Color bright = color_ ? *color_
+                    const LitColor bright = color_ ? *color_
                         : load_color(1.0 - line[static_cast<std::size_t>(c * 2)]
                                             / double(std::max(1, gh - 1)));
-                    Color cc;
+                    LitColor cc;
                     if (line_bits && over_bits) {
                         cc = mix(bright, overlay_color_, 0.5);
                     } else if (line_bits) {

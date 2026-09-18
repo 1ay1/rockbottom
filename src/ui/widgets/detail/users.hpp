@@ -182,7 +182,7 @@ inline maya::TableRow user_row(const UserStat& u, double total_cpu,
     //                       nobody has walked is a lie an admin would act on.
     {
         std::string txt;
-        maya::Color dc = pal::dim;
+        maya::LitColor dc = pal::dim;
         if (!u.disk_known) {
             txt = "\xe2\x80\x94";
         } else {
@@ -205,7 +205,7 @@ inline maya::TableRow user_row(const UserStat& u, double total_cpu,
     // silently mixing two denominators in one column.
     {
         const bool known = u.disk_known && (u.disk_quota || u.disk_share > 0);
-        const maya::Color pc = !known ? pal::dim : load_color(u.disk_share);
+        const maya::LitColor pc = !known ? pal::dim : load_color(u.disk_share);
         row.cells.push_back(TableCell{}.span(
             known ? fmt::pct1(u.disk_share) + (u.disk_share_of_quota ? "q" : "")
                   : "\xe2\x80\x94",
@@ -320,8 +320,8 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
     std::vector<Element> b;
 
     const double cpu_share = share_of(u.cpu, total_cpu);
-    const maya::Color cpu_c = load_color(cpu_share);
-    const maya::Color mem_c = load_color(u.mem_share);
+    const maya::LitColor cpu_c = load_color(cpu_share);
+    const maya::LitColor mem_c = load_color(u.mem_share);
 
     // ── title ──
     {
@@ -595,7 +595,7 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
 
     // ── read the room, for this one user ──
     {
-        std::string msg; maya::Color vc;
+        std::string msg; maya::LitColor vc;
         if (u.zombies > 10) {
             msg = "\xe2\x96\xb2 " + std::to_string(u.zombies) + " zombies \xe2\x80\x94 one of "
                 + u.user + "'s parents is not reaping its children";
@@ -754,7 +754,7 @@ inline std::vector<Element> users_body(const Snapshot& s, const Ctx& cx,
         const UserStat& top = us[0];
         const double top_share = share_of(top.cpu, total_cpu);
         const double top_mem = top.mem_share;
-        std::string msg; maya::Color vc;
+        std::string msg; maya::LitColor vc;
         if (sum_zombies > 20) {
             msg = "\xe2\x96\xb2 " + std::to_string(sum_zombies) +
                   " zombie processes \xe2\x80\x94 a parent somewhere is not reaping its children";

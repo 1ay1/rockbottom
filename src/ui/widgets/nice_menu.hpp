@@ -34,7 +34,7 @@ public:
     operator maya::Element() const { return build(); }
 
 private:
-    static maya::Color band(int v) {
+    static maya::LitColor band(int v) {
         // Greedy (negative) reads hot; nice (positive) reads calm/teal.
         if (v < 0)  return pal::hot;
         if (v == 0) return pal::label;

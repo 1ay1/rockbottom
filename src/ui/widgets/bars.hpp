@@ -34,9 +34,9 @@ class BarChart {
     int len_ = 0;
     int cells_ = 12;
     int rows_ = 4;
-    std::optional<maya::Color> color_;   // nullopt → per-value load gradient
+    std::optional<maya::LitColor> color_;   // nullopt → per-value load gradient
     float gamma_ = 1.0f;                 // perceptual curve for bursty rates
-    std::vector<maya::Color> col_colors_; // optional per-sample color (index-aligned to data_)
+    std::vector<maya::LitColor> col_colors_; // optional per-sample color (index-aligned to data_)
 
 public:
     BarChart(const float* data, int len) : len_(std::max(0, len)) {
@@ -45,12 +45,12 @@ public:
 
     BarChart& cells(int n)         { cells_ = n; return *this; }   // <=0 → fill
     BarChart& rows(int n)          { rows_ = std::max(1, n); return *this; }
-    BarChart& color(maya::Color c) { color_ = c; return *this; }
+    BarChart& color(maya::LitColor c) { color_ = c; return *this; }
     // Per-sample colors, index-aligned to the data passed in. Overrides color()
     // per column when present (falls back to color()/gradient for any column
     // beyond the array). Lets one histogram tint each bar by which series
     // dominated that sample (e.g. read vs write).
-    BarChart& colors(const maya::Color* c, int n) {
+    BarChart& colors(const maya::LitColor* c, int n) {
         col_colors_.assign(c, c + std::max(0, n)); return *this;
     }
     BarChart& fill()               { cells_ = 0; return *this; }
@@ -157,7 +157,7 @@ public:
                     // else the per-value load gradient. Tint by the sample
                     // that supplied this column's peak, so the color reflects
                     // the burst you actually see.
-                    Color cc;
+                    LitColor cc;
                     const int s = peak_sample[static_cast<std::size_t>(c)];
                     if (!col_colors_.empty() && s >= 0 &&
                         s < static_cast<int>(col_colors_.size())) {
