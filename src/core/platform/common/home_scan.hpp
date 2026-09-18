@@ -60,7 +60,20 @@ inline Result scan_tree(const std::string& root,
                         const std::atomic<bool>& cancel) {
     Result r;
     struct stat rst;
-    if (::lstat(root.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return r;
+    // stat(), not lstat(), for the ROOT only.
+    //
+    // The walk uses lstat() everywhere INSIDE the tree on purpose: a symlink
+    // must be counted as the link itself and never followed, or a link to /
+    // turns a home scan into a filesystem scan (and du -sx agrees). But the
+    // root the caller named is different — they are telling us WHICH TREE to
+    // measure, so following that one link is the whole request.
+    //
+    // On macOS /etc is a symlink to private/etc, and a home can legitimately
+    // be one too (/home/x -> /Volumes/data/x is a normal setup). lstat() says
+    // "not a directory" for those and the scan returned zero bytes: not an
+    // error, just a silently empty answer, which is the worst shape a disk
+    // figure can have. Caught by rb_home_scan on the macOS runner.
+    if (::stat(root.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return r;
     const dev_t root_dev = rst.st_dev;
 
     // Only MULTIPLY-linked inodes need tracking; the common nlink==1 case
