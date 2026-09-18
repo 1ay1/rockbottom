@@ -37,7 +37,7 @@ endif()
 # The ONE place the version is written. `rb --version`, the generated
 # core/version.hpp, the release asset names and the git tag all derive from it;
 # nothing else hardcodes a version string.
-project(rockbottom VERSION 0.3.0 LANGUAGES CXX)
+project(rockbottom VERSION 0.4.0 LANGUAGES CXX)
 
 # NOTE on the macOS deployment floor: the CMAKE_OSX_DEPLOYMENT_TARGET default
 # above is what makes the linker stamp a -mmacosx-version-min load command, so a
