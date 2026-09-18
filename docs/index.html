@@ -219,7 +219,7 @@
 
   <div class="keyhint">
     poke it:
-    <kbd data-k="1">1</kbd><kbd data-k="4">4</kbd> panes ·
+    <kbd data-k="1">1</kbd><kbd data-k="4">4</kbd><kbd data-k="7">7</kbd> panes ·
     <kbd data-k="spike">spike</kbd> stress it ·
     <kbd data-k="x">x</kbd> kill the hog ·
     <kbd data-k="t">t</kbd> tree ·
@@ -263,6 +263,7 @@
     <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Opens in ~7ms.</b> Real load, every process, every core — painted before anything slow runs. The expensive probes defer to a background tick.</div></div>
     <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>One static binary, zero dependencies.</b> Built against musl, not glibc. No loader, no shared libs, no version floor. One ELF for any Linux kernel of its arch, plus native Apple Silicon.</div></div>
     <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Won't spin your fans.</b> Fully event-driven, near-zero idle CPU. Reads files instead of forking on the hot path. A monitor shouldn't be the thing that needs monitoring.</div></div>
+    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Answers &quot;which <i>person</i>&quot;, not just &quot;which process&quot;.</b> The USERS pane rolls every process up by owner, joins it to the passwd database and live logins, and tells you who is filling <span class="tl">/home</span> — from quotas where they exist, a budgeted background scan where they don't. Press enter on anyone for their full dashboard: cpu, ram against the rest of the box, i/o, storage vs quota, live sessions, bound ports, and their heaviest processes by both cpu <i>and</i> memory. <span class="tl">/</span> finds a user by name, uid, real name, home or shell.</div></div>
     <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>One-handed keys + a tiny query language.</b> Filter, sort, tree, renice, kill. <span class="tl">cpu:&gt;50</span> · <span class="tl">user:root</span> · <span class="tl">!chrome</span>. The other hand is holding a snack; we know.</div></div>
   </div>
 </div></section>
@@ -277,6 +278,7 @@
       <tr><td>plain-english verdict</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
       <tr><td>names the culprit process</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
       <tr><td>gpu monitoring built in</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td></tr>
+      <tr><td>per-user rollup + who is filling the disk</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
       <tr><td>single static binary</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
       <tr><td>zero dependencies</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
       <tr><td>reads them <em>for</em> you</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y usc">✓</td></tr>
@@ -433,7 +435,7 @@
         if(killed===p.name) line+=span('r',' [ending…]');
         out+= isSel? `<span class="row-sel">${line}</span>\n` : line+'\n';
       });
-      out+='\n'+span('ft','  press 1-6 for panes · s sort · t tree · / filter · x end · ? help');
+      out+='\n'+span('ft','  press 1-7 for panes · s sort · t tree · / filter · x end · ? help');
 
     } else if(mode==='cpu'){
       out+=span('tl','  ┌─ CPU ')+span('ft','─'.repeat(60))+'\n';
@@ -466,6 +468,33 @@
       out+='  '+ljust('8801',7)+ljust('1.4G',9)+span('w','node (webgl)')+'\n';
       out+='  '+ljust('1201',7)+ljust('0.9G',9)+span('w','WindowServer')+'\n\n';
       out+=span('ft','  yes, it replaces nvtop. yes, it was already installed.\n  press 6 or esc to go back');
+    } else if(mode==='users'){
+      // The admin pane. Mirrors the real one: cpu as a share of the whole
+      // box (not a meaningless 1179%), daemon accounts marked ·svc and
+      // sorted below people, and the three honest disk states.
+      const rows=[
+        {u:'ayush', s:2,  cpu:0.61, mem:'6.1G', pr:42, disk:'242G',    dc:'a',  svc:false},
+        {u:'build', s:0,  cpu:0.22, mem:'2.4G', pr:18, disk:'48G/50G', dc:'r',  svc:false},
+        {u:'nobody',s:0,  cpu:0.01, mem:'120M', pr:3,  disk:'\u2014',  dc:'dm', svc:true},
+        {u:'root',  s:0,  cpu:0.09, mem:'890M', pr:64, disk:'\u226512G',dc:'dm',svc:true},
+      ];
+      out+=span('pr','  \u250c\u2500 USERS ')+span('ft','\u2500'.repeat(58))+'\n';
+      out+='  '+span('ft','\u2502 ')+span('w','4 users')+span('dm','  \u00b7  127 procs  \u00b7  ')+span('a','93% cpu in use')+'\n';
+      out+='  '+span('ft','\u2502 ')+span('dm','selected  ')+span('w','ayush')+span('dm','  uid 1000  \u00b7  /bin/fish  \u00b7  /home/ayush  \u00b7  disk via scan')+'\n';
+      out+='  '+span('ft','\u2514'+'\u2500'.repeat(62))+'\n\n';
+      out+='  '+span('dm',ljust('USER',11)+rjust('CPU',5)+'  '+ljust('',10)+'  '+ljust('MEM',7)+rjust('PROC',5)+'  '+ljust('DISK',9))+'\n';
+      rows.forEach((r,i)=>{
+        const badge = r.s>0 ? ' \u25cf'+r.s : (r.svc? ' \u00b7svc' : '');
+        const nm = r.u+badge;
+        const cc = r.cpu>0.5?'o':(r.cpu>0.15?'a':'g');
+        let line='  '+(r.svc?span('dm',ljust(nm,11)):span('w',ljust(nm,11)))
+          +span(cc,rjust(Math.round(r.cpu*100)+'%',5))+'  '
+          +meter(r.cpu*100,cc,10)+'  '
+          +ljust(r.mem,7)+rjust(r.pr,5)+'  '+span(r.dc,ljust(r.disk,9));
+        out+= i===0? `<span class="row-sel">${line}</span>\n` : line+'\n';
+      });
+      out+='\n'+span('ft','  \u25b2 build is at 96% of its disk quota \u2014 that is the thing to look at\n');
+      out+=span('ft','  f filters the list to one user \u00b7 X ends everything they own\n  press 6 or esc to go back');
     }
 
     screen.innerHTML=out;
@@ -475,6 +504,7 @@
   function setMode(k){
     if(k==='1'||k==='cpu') mode='cpu';
     else if(k==='4'||k==='gpu') mode='gpu';
+    else if(k==='7'||k==='users') mode='users';
     else if(k==='6'||k==='esc') mode='hero';
     else if(k==='t') mode = (mode==='tree'?'hero':'tree');
     else if(k==='spike'){ stress=Math.min(1,stress+0.55); }
@@ -493,7 +523,7 @@
     b.addEventListener('click',()=>{ setMode(b.dataset.k); screen.focus(); });
   });
   screen.addEventListener('keydown',e=>{
-    const map={'1':'1','4':'4','6':'6','t':'t','x':'x','j':'j','k':'k','ArrowDown':'j','ArrowUp':'k','Escape':'esc'};
+    const map={'1':'1','4':'4','6':'6','7':'7','t':'t','x':'x','j':'j','k':'k','ArrowDown':'j','ArrowUp':'k','Escape':'esc'};
     if(map[e.key]){ e.preventDefault(); setMode(map[e.key]); }
   });
 

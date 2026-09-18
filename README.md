@@ -230,12 +230,42 @@ going *"…so what?"*
   with their **total** CPU (as a share of the whole box, with a bar, not a
   meaningless `1179%`), total RAM, process and thread counts, I/O rate, a zombie
   tally (`12 (3Z)` — someone's orphaned mess), and the single busiest thing they're
-  running. Sort by `c`·`m`·`p`·`i`·`d`·`n`. Then act on it: **`Enter`/`f`** drops you back
+  running. Sort by `c`·`m`·`u`·`i`·`D`·`n` (cpu, mem, procs, i/o, disk, name — lowercase
+  `d` stays "open the disk pane" like it does everywhere else, and `u` takes procs
+  because `p` is pause). Pressing the same key again — or clicking an already-active
+  column header — reverses the order, and the header arrow tracks it (`▼` biggest-first,
+  `▲` reversed). Re-sorting keeps your cursor on the **same user** rather
+  than dumping it back on row 0.
+
+  Press **`Enter`** on anyone and you get their **whole dashboard**: a CPU trace
+  scaled to the machine (not peak-normalised — the question is how much of the
+  *box* they are), a composition bar showing their RAM against everyone else's and
+  the free space, a process-state breakdown that separates *busy* from *stuck*
+  (`D`-state is waiting on storage, and no amount of CPU will help it), read/write
+  I/O split apart, storage against quota, every live login session with where it
+  came from, every port they have bound, and their heaviest processes ranked **both
+  by CPU and by memory** — because those two disagree more often than not, and
+  showing only one of them is how you blame the wrong process.
+
+  On a box with sixty accounts, scrolling until you spot someone is not a way to
+  find them — so **`/`** filters the roster itself, matching name, uid, real name,
+  home or shell. It's a safety feature as much as a convenience: the destructive
+  keys target whatever the cursor is on, and a short list is one you can actually
+  verify. `esc` unwinds one layer at a time — dashboard, then filter, then the pane
+  — so you never lose more context than you asked to.
+
+  Then act on it: **`f`** drops you back
   to the process list already filtered to that user, and **`X`** arms a SIGTERM
   against *every process they own* (`K` for SIGKILL) behind the same `y`/`n` confirm
   and the same pid-reuse revalidation as every other kill in the program. `root` is
   refused outright — "kill every root process" isn't a recovery action, it's an
   unbootable machine — and your own `rb` is never in the blast radius.
+
+  The cursor is anchored to the **user**, not to a row number. The table re-sorts
+  under you every second, so a bare index means `alice` at row 3 quietly becomes
+  `bob` at row 3 the moment her build finishes — and `X` would then reap bob while
+  you were looking at alice. The selection tracks the name across every re-sort,
+  and if it somehow can't, the kill is **refused** rather than retargeted.
 
   It also answers the other half of user management. A **`●2`** badge means that
   person has two live login sessions *right now* (from logind, or utmp) — the
@@ -253,16 +283,38 @@ going *"…so what?"*
   blocks a frame for twelve seconds has become the problem). While a walk is still
   running the cell reads **`≥112G`** — a floor, not a guess. And if nothing has
   measured that user yet it reads **`—`**, *not* `0`: a confident zero for an
-  unmeasured home is a lie an admin would act on. The scanner matches `du -sx`
+  unmeasured home is a lie an admin would act on. Where a quota exists you get
+  **`48G/50G`** — the cap is the whole story, since a bare red `48G` can't tell you
+  whether the limit is 50G or 500G. The scanner matches `du -sx`
   byte-for-byte (same `st_blocks` accounting, same hardlink dedup, same
   don't-cross-mounts rule) — verified against four real trees.
+
+  A raw **145G** still can't be ranked, though — it depends entirely on whether the
+  disk is 200G or 2T. So there's a **`DISK%`** column with its own meter: the user's
+  share of the filesystem their home actually lives on (resolved by longest
+  matching mount, the same rule the kernel uses — `/home` is its own volume on some
+  boxes and a directory on `/` on others, and picking wrong turns 50% into 250%).
+  Where a quota exists it becomes the denominator instead, marked **`31.5%q`**,
+  because the cap is the limit that actually bites. Sorting by disk ranks on this
+  share, so 40G of a 50G quota correctly outranks 200G on a 4T array. Unmeasured
+  stays **`—`** — never a fabricated percentage.
+
+  Daemon accounts are marked **`·svc`**, dimmed, and sorted *below* real people — on
+  a normal box forty service accounts otherwise bury the three humans. The
+  unknown-owner bucket (**`?`**) sorts last for the same reason: it can't be filtered
+  to and can't be signalled, so it has no business holding the row your cursor
+  starts on. Selecting a row also prints that account's uid, shell, home, and
+  *where the disk figure came from* — `quota` and a walk that gave up halfway are
+  very different numbers and shouldn't look alike.
 
 Every pane is **responsive** (it reflows to your terminal — more core columns on a
 wide screen, tighter on a small one) and **scrollable** (`↑↓` / `PgUp` / `PgDn` /
 `g` / `G` / the wheel, with a live scrollbar), so no matter how dense the data or
 how cramped the window, nothing clips off the edge into the void — the way it does
-in, and we cannot stress this enough, *you know exactly what.* `Esc` (or a click)
-closes; number keys switch panes without backing out. It's the "okay, tell me
+in, and we cannot stress this enough, *you know exactly what.* `Esc` closes (or
+backs out one layer, if you've drilled into something); number keys switch panes
+without backing out. Clicking **inside** a pane works the pane — it doesn't slam
+the door on you — and a click outside it dismisses. It's the "okay, tell me
 *everything*" button — gorgeous, exhaustive, and it *still* tells you what it means.
 
 ## Everything else (for your brave days)
@@ -339,15 +391,15 @@ part of the problem it's describing — a smoke detector that's on fire. So rb i
 
 | At 1s refresh, idle desktop | steady-state CPU | RSS |
 |-----------------------------|:----------------:|:---:|
-| **rb** | **~1.8% of one core** | **9 MB** |
+| **rb** | **~0.3% of one core** | **9 MB** |
 | btop | ~1.6% | 38 MB |
 | htop | ~0.7% (no GPU) | 6 MB |
 
-Dead even with btop on CPU at **a quarter of the memory**, and it's reading your
-GPU the whole time — htop isn't. Two things buy that:
+**Five times cheaper than btop on CPU at a quarter of the memory**, and it's
+reading your GPU the whole time — htop isn't. Three things buy that:
 
 - **The render is basically free.** `view()` is a pure function and maya only
-  repaints the cells that actually changed, so a frame costs **~1.4ms** and — the
+  repaints the cells that actually changed, so a frame costs **~0.95ms** and — the
   part every *other* monitor gets wrong — that cost is **flat as your terminal
   grows**. Stretch rb across a 300-column ultrawide and it does *not* quietly start
   eating a core the way a certain gorgeous braille-fireworks monitor does; the
@@ -362,6 +414,16 @@ GPU the whole time — htop isn't. Two things buy that:
   instead of the naive three-forks-every-frame that used to quietly cost ~15% of a
   core all by itself. (btop wins the last hair here because it links NVML and never
   forks at all. We see you, btop. We're coming for that too.)
+- **Expensive work only happens when you're looking at it.** A tick is
+  *syscall*-bound, not compute-bound, so the wins come from not making the call at
+  all: `/proc/pid/io` is 0600 and about three of every four processes deny it, so a
+  refusal is latched and never retried (permission can't change without an exec,
+  and an exec invalidates the cache entry anyway). Per-process CPU history ships
+  only while something is graphing it. And the per-user disk walk — by far the most
+  expensive thing in the program, hundreds of thousands of `lstat` calls — runs
+  *only* while the USERS pane is actually open. Profiling with `perf` + `strace`
+  rather than guessing took a sample from 632k syscalls to 112k, and system time
+  from 1.03s to 0.22s.
 
 Want to check it yourself instead of trusting a README that has, admittedly, been
 unreliable about tone? `rb --bench` times the sampler alone with no UI and prints
@@ -465,8 +527,10 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | `y` / `n` | yes, commit the crime / no, I panicked, put it back |
 | `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
 | `1`–`7` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process · users) |
+| `7` then `Enter` | open that user's full dashboard — cpu, ram, i/o, disk, sessions, ports |
+| `7` then `/` | find a user by name, uid, real name, home or shell |
 | `7` then `f` | see who's eating the box, then filter the list to that one user |
-| `7` then `d` | sort users by DISK — who is filling `/home` (quota, or a budgeted scan) |
+| `7` then `D` | sort users by DISK — who is filling `/home` (quota, or a budgeted scan) |
 | `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |
@@ -481,6 +545,9 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | **double-click a process** | opens its detail pane |
 | **click a column header** | sorts by it (CPU, MEM, DISK, PORT, NAME) |
 | **click a panel** | opens its detail pane |
+| **click inside a detail pane** | works the pane (selects a row, drags the scrollbar) — it does **not** close it; `esc` or a click outside does |
+| **click a user row** | selects that user · **double-click** opens their full dashboard |
+| **click a users column header** | sorts the roster by it — including `DISK%`; click again to reverse (▼ / ▲) |
 | **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
 | **drag a scrollbar** | slides that list or pane to any position — the process list, every detail pane, and this help all grab-and-slide |
