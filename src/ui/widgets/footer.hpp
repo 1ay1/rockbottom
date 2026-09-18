@@ -86,12 +86,17 @@ public:
             parts.push_back({hint("esc", "clear"), 2});
         } else {
             // Groups: app │ navigate │ act on process │ view. Only the hints
-            // with a real action get a hit id; ↑↓ / 1-6 are labels only.
-            // Drop order (first → last): rails · r · ↑↓ · 1-6 · l · t · s ·
+            // with a real action get a hit id; g / 1-7 are labels only.
+            // Drop order (first → last): rails · r · g · 1-7 · l · t · s ·
             // K · space · / · ? — q·quit and x·end never shed.
             parts.push_back({act_hint("q", "quit", FooterAct::Quit)});          // essential
             parts.push_back({sep(), 1});
-            parts.push_back({hint("↑↓", "select"), 2});
+            // g·top over ↑↓·select: the arrows are self-evident in a list
+            // (nobody needs telling they move the cursor), whereas jumping
+            // back to the busiest process is the thing you actually want
+            // after scrolling and can't guess. G is its mirror, documented
+            // in `?`.
+            parts.push_back({hint("g", "top"), 2});
             parts.push_back({act_hint("/", "filter", FooterAct::Filter), 7});
             parts.push_back({sep(), 1});
             parts.push_back({act_hint("x", "end", FooterAct::End)});            // essential
@@ -101,7 +106,11 @@ public:
             parts.push_back({hint("t", "tree"), 4});
             parts.push_back({act_hint("s", "sort", FooterAct::Sort), 4});
             parts.push_back({sep(), 1});
-            parts.push_back({hint("1-6", "detail"), 3});
+            // 1-7, not 1-6: the USERS pane is the seventh and was left out
+            // of this label when it shipped, so the only way to find it was
+            // the help screen. A pane nobody can discover may as well not
+            // exist.
+            parts.push_back({hint("1-7", "detail"), 3});
             parts.push_back({act_hint("space", "pause", FooterAct::Pause), 5});
             parts.push_back({act_hint("?", "help", FooterAct::Help), 6});
         }

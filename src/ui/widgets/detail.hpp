@@ -49,14 +49,22 @@ class DetailPane {
     const PendingKill* pending_ = nullptr;  // in-pane kill confirmation
     UserSort user_sort_ = UserSort::Cpu;    // for Detail::Users
     int user_sel_ = 0;                      // selected row in the users table
+    std::string user_zoom_;                 // non-empty = that user's dashboard
+    std::string user_filter_;               // roster narrowing query
+    bool user_filtering_ = false;           // typing into it right now
+    bool user_desc_ = true;                 // roster sort direction
 
 public:
     DetailPane(const Snapshot& s, Detail which, const ProcInfo* proc = nullptr,
                int w = 100, int h = 40, int scroll = 0,
                const PendingKill* pending = nullptr,
-               UserSort usort = UserSort::Cpu, int usel = 0)
+               UserSort usort = UserSort::Cpu, int usel = 0,
+               std::string uzoom = "", std::string ufilter = "",
+               bool ufiltering = false, bool udesc = true)
         : s_(s), which_(which), proc_(proc), w_(w), h_(h), scroll_(scroll),
-          pending_(pending), user_sort_(usort), user_sel_(usel) {}
+          pending_(pending), user_sort_(usort), user_sel_(usel),
+          user_zoom_(std::move(uzoom)), user_filter_(std::move(ufilter)),
+          user_filtering_(ufiltering), user_desc_(udesc) {}
 
     operator maya::Element() const { return build(); }
 
@@ -144,7 +152,13 @@ public:
         framed.push_back(pending_ ? confirm_strip() : hint());
 
         Element card = Panel(glyph, title, ac).grow(1)(std::move(framed));
-        return (v(std::move(card) | grow(1)) | grow(1)).build();
+        // Tag the whole card as HK_DetailBody so a click INSIDE the pane is
+        // distinguishable from a click outside it. Without this every stray
+        // click closed the pane, which made the panes unusable as working
+        // surfaces — you could not click a row or grab the scrollbar. More
+        // specific tags inside (tabs, user rows, the scroll gutter) still win,
+        // because maya's hit registry resolves the innermost match first.
+        return (v(std::move(card) | grow(1) | hit(hit_detail_body())) | grow(1)).build();
     }
 
 private:
@@ -181,7 +195,9 @@ private:
             case Detail::Gpu:  return detail::gpu_body(s_, cx);
             case Detail::Disk: return detail::disk_body(s_, cx);
             case Detail::Proc: return detail::proc_body(s_, cx, proc_);
-            case Detail::Users: return detail::users_body(s_, cx, user_sort_, user_sel_);
+            case Detail::Users: return detail::users_body(s_, cx, user_sort_, user_sel_,
+                                                          user_zoom_, user_filter_,
+                                                          user_filtering_, user_desc_);
             default:           return {};
         }
     }
@@ -326,8 +342,27 @@ private:
                 // scrolls with the wheel or PgUp/PgDn. Every other pane
                 // scrolls with ↑↓ directly.
                 const bool proc = which_ == Detail::Proc;
-                row.push_back((text(proc ? "⇞⇟" : "↑↓") | nowrap | Bold | fgc(pal::sky)).build());
-                row.push_back((text("·scroll") | nowrap | fgc(pal::dim)).build());
+                row.push_back((text(proc ? "\xe2\x87\x9e\xe2\x87\x9f" : "\xe2\x86\x91\xe2\x86\x93") | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text("\xc2\xb7scroll") | nowrap | fgc(pal::dim)).build());
+            }
+            // The USERS pane's two payoff gestures are f (filter to this
+            // user) and X (end everything they own), and until now BOTH were
+            // documented only in `?`. A destructive key nobody discovers is
+            // dead weight; one discovered by accident is worse. Surface them
+            // where the hand already is — and colour X like the danger it is.
+            if (which_ == Detail::Users && density == 2) {
+                // NOTE the string breaks: "\xc2\xb7open" would parse as ONE
+                // hex escape \xc2b7o (hex keeps eating valid digits), which is
+                // out of range and silently mangles the glyph. Splitting the
+                // literal ends the escape at the right byte.
+                row.push_back((text("  \xe2\x86\xb5") | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text("\xc2\xb7" "open ") | nowrap | fgc(pal::dim)).build());
+                row.push_back((text("/") | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text("\xc2\xb7" "find ") | nowrap | fgc(pal::dim)).build());
+                row.push_back((text("f") | nowrap | Bold | fgc(pal::sky)).build());
+                row.push_back((text("\xc2\xb7" "filter ") | nowrap | fgc(pal::dim)).build());
+                row.push_back((text("X") | nowrap | Bold | fgc(pal::crit)).build());
+                row.push_back((text("\xc2\xb7" "end all") | nowrap | fgc(pal::dim)).build());
             }
             return (h(std::move(row))).build();
         };

@@ -74,7 +74,31 @@ struct App {
         int      detail_scroll = 0;              // scroll offset within a pane
         int      detail_pid = 0;                 // PID the Proc pane is pinned to
         ui::UserSort user_sort = ui::UserSort::Cpu;  // USERS pane ordering
+        bool     user_desc = true;               // ▼ biggest-first, ▲ reversed
         int      user_sel = 0;                   // selected row in the USERS table
+        // The NAME under the users cursor. user_sel is a row INDEX and the
+        // table re-sorts under it every sample, so the index alone is not an
+        // identity: alice at row 3 becomes bob at row 3 the moment her build
+        // finishes, and X would then signal every process bob owns while the
+        // admin was looking at alice. This is the same bug the process table
+        // fixed by anchoring to a pid (see the Sampled handler); users anchor
+        // to the name because that IS the user's identity. Empty = no anchor
+        // yet (cursor still on row 0, which intentionally floats to whoever
+        // is busiest).
+        std::string user_anchor;
+        // Non-empty = the USERS pane is showing THIS user's full dashboard
+        // instead of the roster. Held as a name for the same reason
+        // user_anchor is: an index would drift onto a different person while
+        // you were reading their page.
+        std::string user_zoom;
+        // Live substring filter over the ROSTER itself (the `/` key inside the
+        // pane). Distinct from `filter`, which filters the PROCESS table: on a
+        // box with 60 accounts, "scroll until you spot them" is not a way to
+        // find a user, and the destructive keys target whatever the cursor is
+        // on — so narrowing the list is a safety feature, not just a
+        // convenience. Matches name, uid, gecos, home and shell.
+        std::string user_filter;
+        bool        user_filtering = false;   // typing into user_filter
         int      width = 100, height = 40;
         int      ticks = 0;
         // Monotonic generation bumped every time a new Snapshot is folded in
@@ -425,16 +449,82 @@ struct App {
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {std::move(m), C{}}; }
         if (m.detail != ui::Detail::None) {
-            // A click on a detail tab switches domain; anywhere else closes.
+            // A click on a detail tab switches domain.
             if (me.button == MouseButton::Left && hit
                 && maya::hit_kind(*hit) == ui::HK_DetailTab) {
                 m.detail = static_cast<ui::Detail>(maya::hit_index(*hit));
                 m.detail_scroll = 0;
+                m.user_anchor.clear();
                 if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
                 return {std::move(m), C{}};
             }
+            // A click on a USERS column header sorts by it — same gesture as
+            // the process table's headers. Which column maps to which key
+            // comes from user_column_sorts(), built beside the column list so
+            // the two can't drift.
+            if (me.button == MouseButton::Left && hit
+                && maya::hit_kind(*hit) == ui::HK_UserSortCol
+                && m.detail == ui::Detail::Users && m.user_zoom.empty()) {
+                const ui::detail::Ctx cx =
+                    ui::detail::Ctx::make(m.width, m.height, m.detail_scroll);
+                const auto keys = ui::detail::user_column_sorts(cx.wide);
+                const std::size_t ci = maya::hit_index(*hit);
+                if (ci < keys.size() && keys[ci]) {
+                    // Clicking the ACTIVE column flips direction, exactly like
+                    // the process table's headers.
+                    return set_user_sort(std::move(m), *keys[ci]);
+                }
+                return {std::move(m), C{}};
+            }
+            // A click on the USERS table SELECTS that row rather than
+            // closing the pane — the pane is a dashboard you work inside, and
+            // clicking a user to inspect them is the obvious gesture.
+            if (me.button == MouseButton::Left && hit
+                && maya::hit_kind(*hit) == ui::HK_UserRow
+                && m.detail == ui::Detail::Users) {
+                const std::vector<ui::UserStat> us = users_rows(m);
+                const int idx = static_cast<int>(maya::hit_index(*hit));
+                if (idx >= 0 && idx < static_cast<int>(us.size())) {
+                    // Same synthesised double-click the process table uses
+                    // (maya has no native click-count): stash the row +
+                    // timestamp, and a second click on the SAME row within
+                    // kDblClickMs opens that user's dashboard. Reuses
+                    // last_click_pid as the row slot — the two can't be live
+                    // at once, since one only fires with the pane closed and
+                    // the other only with it open. +1 so row 0 is not the
+                    // "nothing stashed" sentinel.
+                    const auto now = std::chrono::steady_clock::now();
+                    const bool dbl = (idx + 1) == m.last_click_pid
+                        && now - m.last_click_at
+                               <= std::chrono::milliseconds(kDblClickMs);
+                    m.user_sel = idx;
+                    // Clicking IS deliberate selection, so it anchors — same
+                    // contract as ↑↓, which is what keeps X on target.
+                    m.user_anchor = us[static_cast<std::size_t>(idx)].user;
+                    if (dbl && m.user_zoom.empty()) {
+                        m.last_click_pid = 0;   // consume; a 3rd click is fresh
+                        return zoom_selected_user(std::move(m));
+                    }
+                    m.last_click_pid = idx + 1;
+                    m.last_click_at = now;
+                }
+                return {std::move(m), C{}};
+            }
+            // A click on the pane's own chrome/body does NOTHING. Closing on
+            // any stray click made the panes hostile to actually USE: you
+            // could not click a row, drag a scrollbar, or even click to focus
+            // the terminal without the pane vanishing. Esc / Enter / q and
+            // the tab you came from still close it.
+            if (hit && (maya::hit_kind(*hit) == ui::HK_DetailBody
+                     || maya::hit_kind(*hit) == ui::HK_DetailScroll
+                     || maya::hit_kind(*hit) == ui::HK_UserRow
+                     || maya::hit_kind(*hit) == ui::HK_UserSortCol))
+                return {std::move(m), C{}};
+            // A click genuinely OUTSIDE the pane card still dismisses it,
+            // which is the normal modal contract.
             m.detail = ui::Detail::None;
             m.detail_pid = 0;
+            m.user_anchor.clear();
             return {std::move(m), C{}};
         }
         if (m.pending) {
@@ -612,6 +702,14 @@ struct App {
         // per-proc status/fd reads; tell the sampler which pid (if any) is
         // open so it reads those files for that ONE process instead of all.
         sampler->set_detail_pid(m.detail == ui::Detail::Proc ? m.detail_pid : 0);
+        // The users pane's per-user trace sums every process's ring, so it
+        // needs them shipped; nothing else does. Scoped to the pane being
+        // open so the steady-state tick keeps its current cost.
+        sampler->set_want_histories(m.detail == ui::Detail::Users);
+        // Same gate for the home-directory walk, which only feeds the users
+        // pane's DISK column. Left off, the most expensive work in the program
+        // never happens at all.
+        sampler->set_want_disk_usage(m.detail == ui::Detail::Users);
         return maya::Cmd<Msg>::task_isolated(
             [sampler, sort, epoch](std::function<void(Msg)> dispatch) {
                 dispatch(Sampled{sampler->sample(sort), epoch});
@@ -685,6 +783,11 @@ struct App {
                 // clamps at paint time too, so this only fixes a one-frame
                 // scrollbar snap — but it keeps the model self-consistent so
                 // detail_scroll_max()-driven drag math stays correct.
+                // Same treatment for the USERS pane: its cursor is a row
+                // index into a table that just re-sorted, and X/K signal
+                // whatever it lands on. Re-point it at the anchored NAME
+                // before anything can act on the new order.
+                if (m.detail == ui::Detail::Users) sync_user_sel(m);
                 if (m.detail != ui::Detail::None) clamp_detail_scroll(m);
                 return {std::move(m), C{}};
             },
@@ -865,7 +968,27 @@ struct App {
         // number keys switch domain, and in the process view x/K still work.
         if (m.detail != ui::Detail::None) {
             if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
+                // Esc is a one-level BACK, not a hard close. It unwinds the
+                // pane's state one layer at a time — dashboard, then roster
+                // filter, then the pane — so you never lose more context than
+                // you asked to. A hard close would make drilling in feel like
+                // a trapdoor.
+                if (m.detail == ui::Detail::Users && !m.user_zoom.empty()) {
+                    m.user_zoom.clear();
+                    m.detail_scroll = 0;
+                    sync_user_sel(m);
+                    return {std::move(m), C{}};
+                }
+                if (m.detail == ui::Detail::Users && !m.user_filter.empty()) {
+                    m.user_filter.clear();
+                    m.user_filtering = false;
+                    m.detail_scroll = 0;
+                    sync_user_sel(m);
+                    return {std::move(m), C{}};
+                }
                 m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
+                m.user_zoom.clear(); m.user_anchor.clear();
+                m.user_filter.clear(); m.user_filtering = false;
                 return {std::move(m), C{}};
             }
             if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
@@ -874,41 +997,118 @@ struct App {
             if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
             if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m); return {std::move(m), C{}}; }
-            if (key(ev, '7')) { m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0; return {std::move(m), C{}}; }
+            if (key(ev, '7')) { m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0; m.user_anchor.clear(); m.user_zoom.clear(); m.user_filter.clear(); m.user_filtering = false; m.user_desc = true; return {std::move(m), C{}}; }
             if (m.detail == ui::Detail::Users) {
+                // TYPING MODE comes first: while the roster filter is open
+                // every printable key is TEXT, not a command. Otherwise
+                // typing a name containing 'd' or 'n' would silently re-sort
+                // the table under the cursor — and 'X' would be a mass kill.
+                if (m.user_filtering) {
+                    if (key(ev, maya::SpecialKey::Escape)) {
+                        m.user_filtering = false; m.user_filter.clear();
+                        m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
+                        return {std::move(m), C{}};
+                    }
+                    if (key(ev, maya::SpecialKey::Enter)) {
+                        // Commit: the filter stays applied, keys go back to
+                        // being commands so you can act on what you found.
+                        m.user_filtering = false;
+                        sync_user_sel(m);
+                        return {std::move(m), C{}};
+                    }
+                    if (key(ev, maya::SpecialKey::Backspace)) {
+                        if (!m.user_filter.empty()) m.user_filter.pop_back();
+                        m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
+                        return {std::move(m), C{}};
+                    }
+                    if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
+                        ck && ck->codepoint >= 0x20 && ck->codepoint < 0x7f) {
+                        m.user_filter += static_cast<char>(ck->codepoint);
+                        // Every keystroke re-narrows the list, so the cursor
+                        // goes home rather than pointing at a stale row.
+                        m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
+                        return {std::move(m), C{}};
+                    }
+                    return {std::move(m), C{}};
+                }
+                // '/' opens it — the same key that filters the process list,
+                // because "narrow this list" is the same idea in both places.
+                if (key(ev, '/') && m.user_zoom.empty()) {
+                    m.user_filtering = true;
+                    m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
+                    return {std::move(m), C{}};
+                }
                 // ↑↓ move the row cursor (and drag the scroll window with it),
                 // because the selection is what the destructive keys target —
                 // scrolling a selection off-screen and then pressing X would
                 // signal a user you can no longer see.
-                const int nusers = static_cast<int>(
-                    ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
-                                   &m.snap.accounts, &m.snap.sessions, true).size());
+                // The roster is rebuilt from the snapshot on demand. Compute
+                // it AT MOST ONCE per keystroke, and only for the keys that
+                // actually need it: it was previously built eagerly for every
+                // key in the pane (including ones that just scroll) and then
+                // built a SECOND time inside clamp_usel — two full rollups of
+                // every process, per keypress, to answer "how many rows".
+                std::optional<std::vector<ui::UserStat>> rows_cache;
+                auto rows = [&]() -> const std::vector<ui::UserStat>& {
+                    if (!rows_cache) rows_cache = users_rows(m);
+                    return *rows_cache;
+                };
                 auto clamp_usel = [&](Model& mm) {
-                    mm.user_sel = std::clamp(mm.user_sel, 0, std::max(0, nusers - 1));
+                    const std::vector<ui::UserStat>& us = rows();
+                    mm.user_sel = std::clamp(mm.user_sel, 0,
+                                             std::max(0, static_cast<int>(us.size()) - 1));
+                    // Deliberate cursor movement sets the anchor, so the row
+                    // survives the next re-sort. Moving to row 0 CLEARS it:
+                    // the top slot floats to whoever is busiest, matching the
+                    // process table's rule.
+                    if (mm.user_sel > 0 && mm.user_sel < static_cast<int>(us.size()))
+                        mm.user_anchor = us[static_cast<std::size_t>(mm.user_sel)].user;
+                    else
+                        mm.user_anchor.clear();
                     if (mm.user_sel < mm.detail_scroll) mm.detail_scroll = mm.user_sel;
                     const int view = std::max(1, users_view_rows(mm));
                     if (mm.user_sel >= mm.detail_scroll + view)
                         mm.detail_scroll = mm.user_sel - view + 1;
                     clamp_detail_scroll(mm);
                 };
+                // Re-sort, then pull the cursor back onto the SAME user it was
+                // on. Resetting to row 0 (what this used to do) hands the
+                // cursor to a stranger mid-investigation — you press 'D' to
+                // check someone's disk and the selection silently moves to
+                // someone else, with X still armed. Pressing the SAME key
+                // again reverses the order, matching the headers and the
+                // process table.
+                auto resort = [&](Model& mm, ui::UserSort k) {
+                    auto [nm, _] = set_user_sort(std::move(mm), k);
+                    mm = std::move(nm);
+                };
                 if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
                 if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.user_sel = 0; clamp_usel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.user_sel = nusers - 1; clamp_usel(m); return {std::move(m), C{}}; }
-                // Re-sort the table. Same letters the process table uses, so
-                // the muscle memory carries over.
-                if (key(ev, 'c')) { m.user_sort = ui::UserSort::Cpu;   m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, 'm')) { m.user_sort = ui::UserSort::Mem;   m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, 'p')) { m.user_sort = ui::UserSort::Procs; m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, 'i')) { m.user_sort = ui::UserSort::Io;    m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, 'd')) { m.user_sort = ui::UserSort::Disk;  m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, 'n')) { m.user_sort = ui::UserSort::Name;  m.user_sel = 0; m.detail_scroll = 0; return {std::move(m), C{}}; }
-                // Enter / f: leave the pane with the process list FILTERED to
-                // this user. This is the gesture that makes the pane useful
-                // rather than merely informative — "who is eating the box"
-                // straight into "show me exactly what they're running".
-                if (key(ev, maya::SpecialKey::Enter) || key(ev, 'f'))
-                    return filter_to_selected_user(std::move(m));
+                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.user_sel = static_cast<int>(rows().size()) - 1; clamp_usel(m); return {std::move(m), C{}}; }
+                // Re-sort. 'c'/'m'/'i'/'n' match the process table so the
+                // muscle memory carries. Two deliberate departures:
+                //   'u' (not 'p') for procs — 'p' is PAUSE everywhere else in
+                //       the app, and a pane that silently redefines the global
+                //       pause key is a trap.
+                //   'D' (not 'd') for disk — lowercase 'd' means "disk PANE"
+                //       in every other context; reusing it here for a sort
+                //       taught two meanings for one key. Lowercase 'd' now
+                //       does the expected thing and opens the disk pane.
+                if (key(ev, 'c')) { resort(m, ui::UserSort::Cpu);   return {std::move(m), C{}}; }
+                if (key(ev, 'm')) { resort(m, ui::UserSort::Mem);   return {std::move(m), C{}}; }
+                if (key(ev, 'u')) { resort(m, ui::UserSort::Procs); return {std::move(m), C{}}; }
+                if (key(ev, 'i')) { resort(m, ui::UserSort::Io);    return {std::move(m), C{}}; }
+                if (key(ev, 'D')) { resort(m, ui::UserSort::Disk);  return {std::move(m), C{}}; }
+                if (key(ev, 'n')) { resort(m, ui::UserSort::Name);  return {std::move(m), C{}}; }
+                if (key(ev, 'd')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                // Enter: open THIS user's full dashboard — every resource
+                // they're using, in detail. Esc backs out to the roster.
+                // 'f' keeps the other half of the gesture: leave the pane with
+                // the process list FILTERED to this user, turning "who is
+                // eating the box" straight into "show me what they're running".
+                if (key(ev, maya::SpecialKey::Enter)) return zoom_selected_user(std::move(m));
+                if (key(ev, 'f'))  return filter_to_selected_user(std::move(m));
                 // The destructive one. Deliberately capital-X only (no lone
                 // 'x'): every other pane's lowercase x kills ONE process, and
                 // reusing it for "signal everything this person owns" would be
@@ -1009,6 +1209,11 @@ struct App {
         }
         if (key(ev, '7')) {
             m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0;
+            m.user_anchor.clear();
+            m.user_zoom.clear();
+            m.user_filter.clear();
+            m.user_filtering = false;
+            m.user_desc = true;   // open biggest-first, not however you left it
             return {std::move(m), C{}};
         }
 
@@ -1295,7 +1500,12 @@ struct App {
             if (cmax >= 0) return cmax;
         }
         const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
-        ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll};
+        // The zoom MUST be passed here too: the dashboard is far longer than
+        // the roster, so a scroll ceiling computed from the wrong body would
+        // either strand content below the fold or allow scrolling past the end.
+        ui::DetailPane pane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
+                            nullptr, m.user_sort, m.user_sel, m.user_zoom,
+                            m.user_filter, m.user_filtering, m.user_desc};
         return pane.max_scroll();
     }
 
@@ -1378,15 +1588,25 @@ struct App {
     //    revalidated against start_sec, so the pid-reuse race is covered by
     //    exactly the same guard as every other kill path.
     static std::pair<Model, maya::Cmd<Msg>> arm_kill_user(Model m, int sig) {
-        // MUST use the same arguments as the pane renders with, or `user_sel`
-        // would index a different list than the one on screen — and this one
-        // ends in kill(2).
-        const std::vector<ui::UserStat> us =
-            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
-                           &m.snap.accounts, &m.snap.sessions, true);
+        // MUST use the same list the pane renders, or `user_sel` would index
+        // a different table than the one on screen — and this one ends in
+        // kill(2). users_rows() is that single source of truth.
+        const std::vector<ui::UserStat> us = users_rows(m);
         if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;
+
+        // Last line of defence on the stale-index bug: if the cursor was
+        // anchored to a name and the row under it is now someone ELSE, refuse
+        // and resync rather than mass-signalling whoever slid into the slot.
+        // sync_user_sel() on every Sampled should make this unreachable; it
+        // stays because "should be unreachable" is not a property you want
+        // guarding a mass kill.
+        if (!m.user_anchor.empty() && m.user_anchor != user) {
+            sync_user_sel(m);
+            m.toast = Toast{"the list moved under the cursor \xe2\x80\x94 nothing was signalled, try again", true};
+            return {std::move(m), maya::Cmd<Msg>{}};
+        }
 
         if (user == "root") {
             m.toast = Toast{"refusing to mass-signal root \xe2\x80\x94 that's not a recovery action",
@@ -1408,13 +1628,39 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
+    // Pick a roster column, or flip direction if it's already active — the
+    // same contract set_sort() gives the process table, so clicking a header
+    // twice reverses it in both places. Routing BOTH the mouse and the
+    // keyboard through here is what keeps them in lockstep; setting
+    // m.user_sort directly anywhere else would leave the arrow lying about
+    // the order, or strand the table ascending forever.
+    static std::pair<Model, maya::Cmd<Msg>> set_user_sort(Model m, ui::UserSort k) {
+        if (m.user_sort == k) m.user_desc = !m.user_desc;
+        else { m.user_sort = k; m.user_desc = true; }
+        // Re-point the cursor at the same PERSON after the reorder, rather
+        // than leaving it on a row index that now names someone else — X is
+        // armed against whatever this lands on.
+        sync_user_sel(m);
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
+    // Open the selected user's full dashboard. Stores the NAME, so the view
+    // can't drift onto a different person when the roster re-sorts underneath.
+    static std::pair<Model, maya::Cmd<Msg>> zoom_selected_user(Model m) {
+        const std::vector<ui::UserStat> us = users_rows(m);
+        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
+        m.user_zoom = us[static_cast<std::size_t>(idx)].user;
+        m.user_anchor = m.user_zoom;   // backing out lands on the same row
+        m.detail_scroll = 0;
+        return {std::move(m), maya::Cmd<Msg>{}};
+    }
+
     // Leave the USERS pane with the process table filtered to that user. The
     // pane answers "who", this turns it straight into "show me what" without
     // making the admin retype a filter they just read off the screen.
     static std::pair<Model, maya::Cmd<Msg>> filter_to_selected_user(Model m) {
-        const std::vector<ui::UserStat> us =
-            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
-                           &m.snap.accounts, &m.snap.sessions, true);
+        const std::vector<ui::UserStat> us = users_rows(m);
         if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;
@@ -1432,13 +1678,52 @@ struct App {
         return {std::move(m), maya::Cmd<Msg>{}};
     }
 
-    // How many USERS rows the table can show. Mirrors the pane's own budget
-    // (chrome + headline block) so cursor-follows-scroll math agrees with what
-    // is actually painted.
+    // How many USERS rows the table can show. Delegates to the PANE's own
+    // budget so cursor-follow math and what's actually painted can't drift —
+    // they used to be two hardcoded numbers that disagreed by 2 rows.
     static int users_view_rows(const Model& m) {
         const ui::detail::Ctx cx =
             ui::detail::Ctx::make(m.width, m.height, m.detail_scroll);
-        return std::max(1, cx.body_h - 10);
+        return ui::detail::users_view_rows(cx);
+    }
+
+    // The users table exactly as the pane renders it. Every caller that maps
+    // user_sel → a user MUST go through this: same procs, same sort, same
+    // include_idle flag, AND the same roster filter. A caller that passes
+    // different arguments is indexing a different list than the one on
+    // screen, and one of those callers ends in kill(2).
+    static std::vector<ui::UserStat> users_rows(const Model& m) {
+        return ui::filter_users(
+            ui::user_stats(m.snap.procs, m.snap.mem.total.value, m.user_sort,
+                           &m.snap.accounts, &m.snap.sessions, true,
+                           ui::home_fs_size(m.snap.disks, m.snap.accounts),
+                           m.user_desc),
+            m.user_filter);
+    }
+
+    // Re-point user_sel at the anchored NAME after the list re-sorts. If that
+    // user is gone (logged out, last process exited) we hold the row index and
+    // re-anchor to whoever is there now, which keeps the cursor on-screen —
+    // but the anchor is refreshed, so the next X targets what's under it.
+    static void sync_user_sel(Model& m) {
+        const std::vector<ui::UserStat> us = users_rows(m);
+        if (us.empty()) { m.user_sel = 0; m.user_anchor.clear(); return; }
+        if (!m.user_anchor.empty()) {
+            for (std::size_t i = 0; i < us.size(); ++i) {
+                if (us[i].user == m.user_anchor) { m.user_sel = static_cast<int>(i); break; }
+            }
+        }
+        m.user_sel = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
+        // Re-anchor: either confirms the found row, or adopts the row we fell
+        // back to. Row 0 with no prior anchor stays unanchored on purpose so
+        // the top slot keeps floating to the busiest user (htop's default).
+        if (!m.user_anchor.empty() || m.user_sel > 0)
+            m.user_anchor = us[static_cast<std::size_t>(m.user_sel)].user;
+        const int view = std::max(1, users_view_rows(m));
+        if (m.user_sel < m.detail_scroll) m.detail_scroll = m.user_sel;
+        if (m.user_sel >= m.detail_scroll + view)
+            m.detail_scroll = m.user_sel - view + 1;
+        m.detail_scroll = std::max(0, m.detail_scroll);
     }
 
     // Arm a kill of the WHOLE subtree under the pinned process (this + every
@@ -1559,6 +1844,17 @@ struct App {
         fold(static_cast<std::uint64_t>(m.detail));
         fold(static_cast<std::uint64_t>(m.detail_scroll));
         fold(static_cast<std::uint64_t>(m.detail_pid));
+        // USERS pane state. Without these a re-sort or a cursor move inside the
+        // pane produced an IDENTICAL hash, so the frame was skipped and the
+        // change only appeared on the next sample tick — keys felt dead for up
+        // to a second. user_zoom picks an entirely different body, so it
+        // matters most of all.
+        fold(static_cast<std::uint64_t>(m.user_sort));
+        fold(m.user_desc ? 1 : 0);
+        fold(static_cast<std::uint64_t>(m.user_sel));
+        fold_str(m.user_zoom);
+        fold_str(m.user_filter);
+        fold(m.user_filtering ? 1 : 0);
         fold(m.show_help ? 1 : 0);
         fold(static_cast<std::uint64_t>(m.help_scroll));
         fold(static_cast<std::uint64_t>(m.verdict_pulse));
@@ -1647,7 +1943,8 @@ struct App {
             const ProcInfo* p = m.detail == ui::Detail::Proc ? pinned_proc(m) : nullptr;
             return canvas(DetailPane{m.snap, m.detail, p, m.width, m.height, m.detail_scroll,
                               m.pending ? &*m.pending : nullptr,
-                              m.user_sort, m.user_sel});
+                              m.user_sort, m.user_sel, m.user_zoom,
+                              m.user_filter, m.user_filtering, m.user_desc});
         }
 
         const Snapshot& s = m.snap;

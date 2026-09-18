@@ -27,6 +27,8 @@ enum HitKind : std::uint32_t {
     HK_DetailBody,   // the drill-down pane body (click closes)
     HK_DetailScroll, // the detail/help pane scrollbar gutter (drag to scroll)
     HK_ProcScroll,   // the process-list scrollbar gutter (drag to scroll)
+    HK_UserRow,      // index = row index in the USERS table (click selects)
+    HK_UserSortCol,  // index = COLUMN index in the USERS table (click sorts)
 };
 
 // Footer actions that a click can trigger. Kept here (not nested in App) so
@@ -56,6 +58,9 @@ enum class FooterAct : std::uint32_t { Quit, Filter, End, Kill, Sort, Pause, Hel
 }
 [[nodiscard]] inline maya::HitId hit_proc_scroll() {
     return maya::hit_id(HK_ProcScroll, 0);
+}
+[[nodiscard]] inline maya::HitId hit_user_row(int row) {
+    return maya::hit_id(HK_UserRow, static_cast<std::uint32_t>(row));
 }
 
 }  // namespace rockbottom::ui

@@ -30,6 +30,7 @@
 #include "../src/ui/widgets/detail/mem.hpp"
 #include "../src/ui/widgets/detail/net.hpp"
 #include "../src/ui/widgets/detail/disk.hpp"
+#include "../src/ui/widgets/detail/users.hpp"
 #include "../src/ui/proc_order.hpp"
 
 #include <cctype>
@@ -1009,6 +1010,59 @@ int main() {
             std::printf("       → %s\n", table_faults[i].c_str());
         if (table_faults.size() > 12)
             std::printf("       → … and %zu more\n", table_faults.size() - 12);
+    }
+
+    // ── USERS pane: the row budget must match what is actually painted ──
+    //
+    // users_view_rows() tells the app how many rows fit, and the app uses it
+    // to keep the SELECTED row on screen. The selected row is what X and K
+    // signal, so an over-estimate here means signalling a user who has
+    // scrolled under the fold. This used to be three hand-written constants
+    // that disagreed by 2; pin the survivor against a real render.
+    {
+        using namespace rockbottom::ui;
+        Snapshot s;
+        s.mem.total = Bytes{16ull << 30};
+        for (int i = 0; i < 40; ++i) {
+            ProcInfo p;
+            p.pid = 100 + i; p.name = "p"; p.cpu = i;
+            p.user = i < 20 ? "alice" : "bob";
+            s.procs.push_back(p);
+        }
+        int budget_faults = 0, budget_cases = 0;
+        for (int w : {60, 78, 100, 160}) {
+            for (int h : {24, 30, 40, 60}) {
+                ++budget_cases;
+                detail::Ctx cx = detail::Ctx::make(w, h, 0);
+                std::vector<maya::Element> body =
+                    detail::users_body(s, cx, UserSort::Cpu, 0);
+                // Everything before the last element is chrome; the last IS
+                // the table. Measure the chrome's real painted height.
+                int painted = 0;
+                for (std::size_t i = 0; i + 1 < body.size(); ++i) {
+                    std::vector<std::string> rows = render_rows(body[i], w, 60);
+                    int used = 0;
+                    for (int y = 0; y < static_cast<int>(rows.size()); ++y)
+                        if (!rows[static_cast<std::size_t>(y)].empty()) used = y + 1;
+                    painted += used;
+                }
+                // +1 for the table's own header row.
+                const int actual_chrome = painted + 1;
+                const int claimed = cx.body_h - detail::users_view_rows(cx);
+                // The budget may be conservative (claim MORE chrome than is
+                // painted, costing a row) but must never be optimistic, which
+                // is what pushes the selection off-screen.
+                if (claimed < actual_chrome && detail::users_view_rows(cx) > 1) {
+                    ++budget_faults;
+                    if (budget_faults <= 4)
+                        std::printf("       \xe2\x86\x92 w=%d h=%d: budget claims %d chrome rows, "
+                                    "render paints %d\n", w, h, claimed, actual_chrome);
+                }
+            }
+        }
+        check(budget_faults == 0,
+              std::to_string(budget_cases) +
+              " sizes: the users row budget never over-estimates the viewport");
     }
 
     std::printf("\n%s\n\n", failures ? ("\x1b[31m" + std::to_string(failures) +

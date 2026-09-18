@@ -57,12 +57,111 @@ struct UserStat {
     bool          disk_known = false;    // false = not measured, NOT "zero"
     bool          disk_partial = false;  // a budgeted scan is still running
     const char*   disk_source = "";
+    // Disk usage as a FRACTION, so the roster can rank people against a
+    // common scale. Against a quota it's bytes/quota (that's the limit that
+    // actually bites); with no quota it's bytes/filesystem-size. 0 when
+    // unknown — read disk_known first, since 0 also means "genuinely empty".
+    double        disk_share = 0;
+    bool          disk_share_of_quota = false;   // which denominator was used
     int           sessions = 0;          // live logins right now
+
+    // ── dashboard aggregates ───────────────────────────────────────
+    // Everything below is for the per-user drill-down, not the table. Kept on
+    // the same struct so ONE pass over the process list feeds both — the
+    // alternative (re-walking procs in the renderer) would run on the paint
+    // path for a number the rollup already had in hand.
+    std::uint64_t virt = 0;         // summed virtual size
+    double        io_read = 0;       // split r/w, because "is this a reader or
+    double        io_write = 0;      // a writer" changes what you do about it
+    double        faults_ps = 0;     // page faults/sec — memory pressure tell
+    double        csw_ps = 0;        // context switches/sec — thrash tell
+    int           sleeping = 0;      // S
+    int           dstate = 0;        // D — stuck on I/O, the herd that hangs a box
+    int           stopped = 0;       // T
+    std::uint64_t oldest_start = 0;  // earliest start_sec (0 = unknown)
+    int           nice_min = 0;      // scheduling spread: someone running a
+    int           nice_max = 0;      // whole build at nice 19 reads differently
+    int           fds = 0;           // summed open descriptors (-1s ignored)
+    int           port_count = 0;    // distinct listening ports owned
+    std::vector<std::uint16_t> ports;      // sorted, deduped — what they expose
+    // Per-user CPU history, summed from each process's ring. Gives the
+    // dashboard a real sparkline instead of a single instantaneous number.
+    std::array<float, 48> cpu_history{};
+    int           hist_len = 0;
+    // The user's heaviest processes by cpu and by rss, for the dashboard's
+    // two top-N lists. pid+name+value only: the Snapshot these came from is
+    // replaced every tick and a ProcInfo* would dangle at paint time.
+    struct TopProc {
+        int pid = 0; std::string name; double cpu = 0; std::uint64_t rss = 0;
+        char state = '?'; int threads = 0;
+    };
+    std::vector<TopProc> heaviest_cpu;   // desc by cpu, capped
+    std::vector<TopProc> heaviest_mem;   // desc by rss, capped
+    // Live sessions belonging to this user, for the dashboard's session list.
+    std::vector<LoginSession> session_list;
 };
 
 // Sort key for the users table. Mirrors the process table's idea of "the
 // interesting column first" — admins land on this pane asking about load.
 enum class UserSort { Cpu, Mem, Procs, Io, Disk, Name };
+
+// Does this user match a roster query? Case-insensitive substring over every
+// field an admin might actually remember: the name, the uid, the real name
+// (gecos), the home path and the login shell. Deliberately NOT the process
+// query language — this is "find the person", and a plain substring is what
+// people type for that. An empty query matches everything.
+inline bool user_matches(const UserStat& u, const std::string& q) {
+    if (q.empty()) return true;
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string needle = lower(q);
+    auto has = [&](const std::string& hay) {
+        return lower(hay).find(needle) != std::string::npos;
+    };
+    if (has(u.user) || has(u.gecos) || has(u.home) || has(u.shell)) return true;
+    if (u.has_account && has(std::to_string(u.uid))) return true;
+    return false;
+}
+
+// Apply a roster query to an already-built list, preserving order.
+inline std::vector<UserStat> filter_users(const std::vector<UserStat>& us,
+                                          const std::string& q) {
+    if (q.empty()) return us;
+    std::vector<UserStat> out;
+    out.reserve(us.size());
+    for (const UserStat& u : us)
+        if (user_matches(u, q)) out.push_back(u);
+    return out;
+}
+
+// Size of the filesystem the home directories live on — the denominator for
+// "what % of the disk is this user" when no quota exists.
+//
+// Picked by LONGEST MATCHING MOUNT POINT, the same rule the kernel uses to
+// resolve a path to a filesystem: /home is its own mount on many boxes and
+// just a directory on / on others, and using the wrong one turns a 40% figure
+// into a 4% one. Falls back to / and then to 0 (which renders "—", never a
+// made-up percentage).
+inline std::uint64_t home_fs_size(const std::vector<DiskInfo>& disks,
+                                  const std::vector<UserAccount>& accounts) {
+    std::string home;
+    for (const UserAccount& a : accounts)
+        if (!a.system && !a.home.empty() && a.home != "/") { home = a.home; break; }
+    if (home.empty()) home = "/home";
+
+    const DiskInfo* best = nullptr;
+    for (const DiskInfo& d : disks) {
+        if (d.mount.empty() || d.total.value == 0) continue;
+        const bool prefix = home.compare(0, d.mount.size(), d.mount) == 0
+            && (d.mount == "/" || home.size() == d.mount.size()
+                || home[d.mount.size()] == '/');
+        if (!prefix) continue;
+        if (!best || d.mount.size() > best->mount.size()) best = &d;
+    }
+    return best ? best->total.value : 0;
+}
 
 // Roll the process list up by owner.
 //
@@ -77,7 +176,9 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
                                        UserSort sort = UserSort::Cpu,
                                        const std::vector<UserAccount>* accounts = nullptr,
                                        const std::vector<LoginSession>* sessions = nullptr,
-                                       bool include_idle_accounts = false) {
+                                       bool include_idle_accounts = false,
+                                       std::uint64_t home_fs_bytes = 0,
+                                       bool desc = true) {
     std::unordered_map<std::string, UserStat> by_user;
     by_user.reserve(32);
 
@@ -91,6 +192,43 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
         u.io      += p.io_read.per_sec + p.io_write.per_sec;
         if (p.state == 'R') ++u.running;
         if (p.state == 'Z') ++u.zombies;
+        // Dashboard aggregates, same single pass.
+        u.virt      += p.virt.value;
+        u.io_read   += p.io_read.per_sec;
+        u.io_write  += p.io_write.per_sec;
+        u.faults_ps += p.faults_ps;
+        u.csw_ps    += p.csw_ps;
+        if (p.state == 'S') ++u.sleeping;
+        if (p.state == 'D') ++u.dstate;
+        if (p.state == 'T') ++u.stopped;
+        if (p.fds > 0) u.fds += p.fds;
+        // Oldest process = roughly "since when has this user been busy".
+        if (p.start_sec && (u.oldest_start == 0 || p.start_sec < u.oldest_start))
+            u.oldest_start = p.start_sec;
+        // Nice spread. Seed both bounds off the FIRST process rather than
+        // leaving them at 0, or a user running everything at nice 19 would
+        // report a min of 0 they never had.
+        if (u.procs == 1) { u.nice_min = u.nice_max = p.nice; }
+        else { u.nice_min = std::min(u.nice_min, p.nice); u.nice_max = std::max(u.nice_max, p.nice); }
+        u.ports.insert(u.ports.end(), p.ports.begin(), p.ports.end());
+        // Sum the per-process CPU rings into one per-user ring.
+        //
+        // ALIGNMENT IS THE WHOLE DIFFICULTY. push_hist() fills LEFT (index 0
+        // first, shifting once full), so a process alive for 3 ticks holds its
+        // samples at [0,3) while a long-lived one holds 48 at [0,48) — index i
+        // means a DIFFERENT moment in each. Summing index-wise would add a
+        // newborn's first sample to an old process's ancient one. So stage
+        // right-aligned (newest always in the last slot), which time-aligns
+        // newest-to-newest, and un-shift once at the end.
+        {
+            const int cap = static_cast<int>(p.cpu_history.size());
+            const int n = std::clamp(p.hist_len, 0, cap);
+            for (int i = 0; i < n; ++i)
+                u.cpu_history[static_cast<std::size_t>(cap - n + i)] +=
+                    p.cpu_history[static_cast<std::size_t>(i)];
+            u.hist_len = std::max(u.hist_len, n);
+        }
+        u.heaviest_cpu.push_back({p.pid, p.name, p.cpu, p.rss.value, p.state, p.threads});
         // "Biggest" means CPU — the column an admin is scanning when they
         // open this pane. The `top_pid == 0` arm matters more than it looks:
         // without it a user whose processes are ALL idle never claims the
@@ -139,11 +277,58 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
     }
     if (sessions)
         for (const LoginSession& s : *sessions)
-            if (auto it = by_user.find(s.user); it != by_user.end())
+            if (auto it = by_user.find(s.user); it != by_user.end()) {
                 ++it->second.sessions;
+                it->second.session_list.push_back(s);
+            }
 
     for (auto& [k, v] : by_user) {
         v.mem_share = total_ram ? static_cast<double>(v.rss) / static_cast<double>(total_ram) : 0.0;
+        // Ports: dedupe across the user's processes. Two workers of the same
+        // server both reporting :443 is one exposed port, not two.
+        std::sort(v.ports.begin(), v.ports.end());
+        v.ports.erase(std::unique(v.ports.begin(), v.ports.end()), v.ports.end());
+        v.port_count = static_cast<int>(v.ports.size());
+        // Disk as a fraction. A quota is the denominator that MATTERS when
+        // one exists — 48G is fine on a 500G filesystem and an emergency
+        // under a 50G cap — so it wins over the filesystem size.
+        if (v.disk_known) {
+            if (v.disk_quota) {
+                v.disk_share = std::clamp(static_cast<double>(v.disk_bytes)
+                                        / static_cast<double>(v.disk_quota), 0.0, 1.0);
+                v.disk_share_of_quota = true;
+            } else if (home_fs_bytes) {
+                v.disk_share = std::clamp(static_cast<double>(v.disk_bytes)
+                                        / static_cast<double>(home_fs_bytes), 0.0, 1.0);
+            }
+        }
+        // Un-shift the staged right-aligned CPU ring back to push_hist()'s
+        // left-aligned convention, so every consumer can read [0, hist_len)
+        // oldest→newest like they do for every other ring in the codebase.
+        if (v.hist_len > 0 && v.hist_len < static_cast<int>(v.cpu_history.size())) {
+            const int cap = static_cast<int>(v.cpu_history.size());
+            std::move(v.cpu_history.begin() + (cap - v.hist_len),
+                      v.cpu_history.end(), v.cpu_history.begin());
+            std::fill(v.cpu_history.begin() + v.hist_len, v.cpu_history.end(), 0.0f);
+        }
+        // Top-N by cpu and by rss. Built from one collected list rather than
+        // two passes; capped at kTopN because the dashboard shows a handful
+        // and a user with 400 processes shouldn't cost 400 strings per tick.
+        constexpr std::size_t kTopN = 8;
+        v.heaviest_mem = v.heaviest_cpu;   // same source, different order
+        auto nth = [](std::vector<UserStat::TopProc>& vec, auto cmp) {
+            if (vec.size() > kTopN) {
+                std::partial_sort(vec.begin(), vec.begin() + kTopN, vec.end(), cmp);
+                vec.resize(kTopN);
+            } else {
+                std::sort(vec.begin(), vec.end(), cmp);
+            }
+        };
+        // Ties break on pid so the lists don't flicker between equal rows.
+        nth(v.heaviest_cpu, [](const UserStat::TopProc& a, const UserStat::TopProc& b) {
+            return a.cpu != b.cpu ? a.cpu > b.cpu : a.pid < b.pid; });
+        nth(v.heaviest_mem, [](const UserStat::TopProc& a, const UserStat::TopProc& b) {
+            return a.rss != b.rss ? a.rss > b.rss : a.pid < b.pid; });
         out.push_back(std::move(v));
     }
 
@@ -152,14 +337,46 @@ inline std::vector<UserStat> user_stats(const std::vector<ProcInfo>& procs,
     // is unreadable, and worse, you can select the wrong row).
     auto by_name = [](const UserStat& a, const UserStat& b) { return a.user < b.user; };
     std::sort(out.begin(), out.end(), [&](const UserStat& a, const UserStat& b) {
+        // TIERING is NOT reversed by `desc`. It answers "is this row even
+        // actionable", not "which is bigger" — flipping it would float the
+        // unkillable "?" bucket to row 0 on every ascending sort, which is
+        // exactly the state the tiering exists to prevent.
+        auto tier = [](const UserStat& u) {
+            if (u.user == "?") return 2;
+            return u.system ? 1 : 0;
+        };
+        if (tier(a) != tier(b)) return tier(a) < tier(b);
+        // Each arm answers "does a come before b in DESCENDING order?", and
+        // `desc` flips that answer once at the end. Doing it per-arm would be
+        // six chances to get a comparison backwards; doing it once cannot be
+        // inconsistent. Returning early only on INEQUALITY keeps the relation
+        // a strict weak ordering — equal values fall through to the name
+        // tiebreak rather than reporting both a<b and b<a.
+        auto flip = [desc](bool descending_answer) {
+            return desc ? descending_answer : !descending_answer;
+        };
         switch (sort) {
-            case UserSort::Cpu:   if (a.cpu != b.cpu)     return a.cpu > b.cpu;     break;
-            case UserSort::Mem:   if (a.rss != b.rss)     return a.rss > b.rss;     break;
-            case UserSort::Procs: if (a.procs != b.procs) return a.procs > b.procs; break;
-            case UserSort::Io:    if (a.io != b.io)       return a.io > b.io;       break;
-            case UserSort::Disk:  if (a.disk_bytes != b.disk_bytes)
-                                      return a.disk_bytes > b.disk_bytes;  break;
-            case UserSort::Name:  break;
+            case UserSort::Cpu:   if (a.cpu != b.cpu)     return flip(a.cpu > b.cpu);     break;
+            case UserSort::Mem:   if (a.rss != b.rss)     return flip(a.rss > b.rss);     break;
+            case UserSort::Procs: if (a.procs != b.procs) return flip(a.procs > b.procs); break;
+            case UserSort::Io:    if (a.io != b.io)       return flip(a.io > b.io);       break;
+            case UserSort::Disk:
+                // Rank by SHARE, not raw bytes: 40G of a 50G quota outranks
+                // 200G on a 4T array, and that ordering is the whole reason
+                // the column exists. Users with no measurement sort last
+                // (share 0) rather than interleaving on a figure we don't
+                // have. Ties fall through to bytes so two people at 0% still
+                // order sensibly.
+                if (a.disk_share != b.disk_share) return flip(a.disk_share > b.disk_share);
+                if (a.disk_bytes != b.disk_bytes) return flip(a.disk_bytes > b.disk_bytes);
+                break;
+            case UserSort::Name:
+                // Name's "descending" is alphabetical (A→Z), because that's
+                // what a reader means by sorting a name column; reversed is
+                // Z→A. The generic tiebreak below is always A→Z, so this arm
+                // has to handle its own direction rather than fall through.
+                if (a.user != b.user) return flip(a.user < b.user);
+                break;
         }
         return by_name(a, b);
     });

@@ -869,6 +869,191 @@ void test_user_stats() {
         eq_str(u[0].top_name, "sleepy", "all-idle ties resolve to the lowest pid");
     }
 
+    // ── tiering: "?" and system accounts must never outrank a person ──
+    {
+        // The unknown-owner bucket cannot be filtered to and cannot be
+        // signalled, so it landing on row 0 — where the cursor starts and
+        // where X points — was a dead first row on every sort. Same for idle
+        // daemon accounts, which otherwise tie at zero and win on name.
+        std::vector<ProcInfo> mixed = {
+            mkproc(30, 1, "ghost",  99.0, 900 * kMiB, ""),       // "?", busiest
+            mkproc(31, 1, "human",   5.0,  10 * kMiB, "zoe"),    // last alphabetically
+        };
+        const std::vector<UserStat> u = user_stats(mixed, kGiB, UserSort::Cpu);
+        check(u.size() == 2, "both buckets produce rows");
+        eq_str(u[0].user, "zoe", "a real user outranks ? even when ? is busier");
+        eq_str(u[1].user, "?", "the unknown-owner bucket sorts last");
+
+        const std::vector<UserStat> n = user_stats(mixed, kGiB, UserSort::Name);
+        eq_str(n[0].user, "zoe", "tiering beats the name sort too (? would win on '?' < 'z')");
+    }
+    {
+        // A system account is tiered below a human, but only against humans:
+        // within the system tier the chosen sort still decides.
+        std::vector<ProcInfo> procs2 = {
+            mkproc(40, 1, "daemon1", 80.0, kMiB, "svc"),
+            mkproc(41, 1, "user1",    2.0, kMiB, "carol"),
+            mkproc(42, 1, "daemon2", 90.0, kMiB, "svc2"),
+        };
+        std::vector<UserAccount> accts(2);
+        accts[0].name = "svc";  accts[0].system = true;  accts[0].uid = 4;
+        accts[1].name = "svc2"; accts[1].system = true;  accts[1].uid = 5;
+        const std::vector<UserStat> u =
+            user_stats(procs2, kGiB, UserSort::Cpu, &accts, nullptr, false);
+        check(u.size() == 3, "three rows");
+        eq_str(u[0].user, "carol", "the human leads even at 2% against a 90% daemon");
+        eq_str(u[1].user, "svc2", "within the system tier the cpu sort still applies");
+        eq_str(u[2].user, "svc", "… busiest daemon first");
+    }
+
+    // ── roster filter: every user must be findable ──
+    {
+        std::vector<ProcInfo> procs3 = {
+            mkproc(50, 1, "a", 1.0, kMiB, "alice"),
+            mkproc(51, 1, "b", 1.0, kMiB, "bob"),
+            mkproc(52, 1, "c", 1.0, kMiB, "carol"),
+        };
+        std::vector<UserAccount> accts(1);
+        accts[0].name = "alice"; accts[0].uid = 1007;
+        accts[0].home = "/home/alice"; accts[0].shell = "/bin/fish";
+        accts[0].gecos = "Alice Bhat"; accts[0].can_login = true;
+        const std::vector<UserStat> all =
+            user_stats(procs3, kGiB, UserSort::Name, &accts, nullptr, false);
+        check(all.size() == 3, "three users before filtering");
+
+        check(filter_users(all, "").size() == 3, "an empty query matches everyone");
+        check(filter_users(all, "bo").size() == 1, "substring narrows to one user");
+        eq_str(filter_users(all, "bo")[0].user, "bob", "… and it's the right one");
+        check(filter_users(all, "ALICE").size() == 1, "matching is case-insensitive");
+        check(filter_users(all, "1007").size() == 1, "a uid finds its user");
+        check(filter_users(all, "Bhat").size() == 1, "the real name (gecos) is searchable");
+        check(filter_users(all, "fish").size() == 1, "the login shell is searchable");
+        check(filter_users(all, "/home/").size() == 1, "the home path is searchable");
+        check(filter_users(all, "zzz").empty(), "no match yields an empty list, not everyone");
+        // Order must survive filtering, or the cursor index would mean
+        // something different in the filtered view than in the painted one.
+        const std::vector<UserStat> ab = filter_users(all, "a");
+        for (std::size_t i = 1; i < ab.size(); ++i)
+            check(ab[i - 1].user <= ab[i].user, "filtering preserves sort order");
+    }
+
+    // ── cpu history rings must be TIME-aligned when summed ──
+    {
+        // push_hist() fills left, so a young process holds its samples at
+        // [0,n) and an old one at [0,48) — index i is a different MOMENT in
+        // each. Summing index-wise would blend a newborn's first tick into an
+        // old process's ancient one, and the dashboard graph would show load
+        // that never happened.
+        std::vector<ProcInfo> procs4;
+        ProcInfo old_p = mkproc(60, 1, "old", 1.0, kMiB, "dana");
+        old_p.hist_len = 48;
+        for (int k = 0; k < 48; ++k) old_p.cpu_history[static_cast<std::size_t>(k)] = 0.25f;
+        procs4.push_back(old_p);
+        ProcInfo young = mkproc(61, 1, "new", 1.0, kMiB, "dana");
+        young.hist_len = 2;              // just started: two samples only
+        young.cpu_history[0] = 0.5f;
+        young.cpu_history[1] = 0.5f;
+        procs4.push_back(young);
+
+        const std::vector<UserStat> u = user_stats(procs4, kGiB, UserSort::Cpu);
+        check(u.size() == 1 && u[0].hist_len == 48, "the user ring spans the longest process");
+        // Newest sample (last valid slot) must carry BOTH processes.
+        check(std::abs(u[0].cpu_history[47] - 0.75f) < 1e-5f,
+              "the newest sample sums every live process (0.25 + 0.5)");
+        // An old slot predates the young process, so it carries only the old one.
+        check(std::abs(u[0].cpu_history[0] - 0.25f) < 1e-5f,
+              "an older sample carries only the process that existed then");
+    }
+
+    // ── disk share: the rankable form of "who is filling the disk" ──
+    {
+        std::vector<DiskInfo> disks;
+        DiskInfo root; root.mount = "/"; root.total = Bytes{100ull << 30};
+        DiskInfo home; home.mount = "/home"; home.total = Bytes{500ull << 30};
+        disks.push_back(root);
+        disks.push_back(home);
+
+        std::vector<UserAccount> accts(1);
+        accts[0].name = "dana"; accts[0].uid = 1000;
+        accts[0].home = "/home/dana"; accts[0].can_login = true;
+        accts[0].disk_bytes = 250ull << 30; accts[0].disk_known = true;
+
+        // LONGEST matching mount wins: /home/dana lives on /home (500G), not
+        // on / (100G). Picking the wrong one turns 50% into 250%.
+        check(home_fs_size(disks, accts) == 500ull << 30,
+              "the home filesystem is the longest matching mount, not /");
+
+        std::vector<ProcInfo> p = {mkproc(70, 1, "x", 1.0, kMiB, "dana")};
+        const std::vector<UserStat> u =
+            user_stats(p, kGiB, UserSort::Disk, &accts, nullptr, false,
+                       home_fs_size(disks, accts));
+        check(u.size() == 1, "one user");
+        check(std::abs(u[0].disk_share - 0.5) < 1e-9,
+              "disk share is bytes / filesystem size");
+        check(!u[0].disk_share_of_quota, "… and it's flagged as a filesystem share");
+
+        // A QUOTA outranks the filesystem: it's the limit that actually bites.
+        accts[0].disk_quota = 500ull << 30;   // 250G of a 500G quota = 50%
+        accts[0].disk_bytes = 400ull << 30;   // now 80% of quota
+        const std::vector<UserStat> q =
+            user_stats(p, kGiB, UserSort::Disk, &accts, nullptr, false,
+                       home_fs_size(disks, accts));
+        check(std::abs(q[0].disk_share - 0.8) < 1e-9,
+              "with a quota, share is bytes / quota");
+        check(q[0].disk_share_of_quota, "… flagged as a quota share");
+
+        // No measurement must stay 0 AND unknown — never a made-up percentage.
+        std::vector<UserAccount> none(1);
+        none[0].name = "dana"; none[0].home = "/home/dana"; none[0].can_login = true;
+        const std::vector<UserStat> n =
+            user_stats(p, kGiB, UserSort::Disk, &none, nullptr, false,
+                       home_fs_size(disks, none));
+        check(n[0].disk_share == 0.0 && !n[0].disk_known,
+              "an unmeasured home reports no share and stays unknown");
+
+        // A filesystem we can't size must not fabricate a share either.
+        const std::vector<UserStat> z =
+            user_stats(p, kGiB, UserSort::Disk, &accts, nullptr, false, 0);
+        check(z[0].disk_share > 0, "a quota still gives a share with no fs size");
+    }
+
+    // ── sort direction: clicking an active header reverses it ──
+    {
+        std::vector<ProcInfo> p3 = {
+            mkproc(80, 1, "a", 90.0, 100 * kMiB, "alice"),
+            mkproc(81, 1, "b",  5.0, 900 * kMiB, "bob"),
+            mkproc(82, 1, "c", 40.0, 400 * kMiB, "carl"),
+        };
+        const std::vector<UserStat> d =
+            user_stats(p3, kGiB, UserSort::Cpu, nullptr, nullptr, false, 0, true);
+        eq_str(d[0].user, "alice", "descending cpu puts the busiest first");
+        eq_str(d[2].user, "bob", "… and the idlest last");
+
+        const std::vector<UserStat> a =
+            user_stats(p3, kGiB, UserSort::Cpu, nullptr, nullptr, false, 0, false);
+        eq_str(a[0].user, "bob", "ascending cpu puts the idlest first");
+        eq_str(a[2].user, "alice", "… and the busiest last");
+
+        // Name reverses too, and its "descending" is A→Z (what a reader means
+        // by sorting a name column) rather than the numeric convention.
+        const std::vector<UserStat> n1 =
+            user_stats(p3, kGiB, UserSort::Name, nullptr, nullptr, false, 0, true);
+        eq_str(n1[0].user, "alice", "name descending is alphabetical");
+        const std::vector<UserStat> n2 =
+            user_stats(p3, kGiB, UserSort::Name, nullptr, nullptr, false, 0, false);
+        eq_str(n2[0].user, "carl", "name reversed is Z→A");
+
+        // TIERING MUST NOT FLIP. "?" can't be filtered to or signalled, so it
+        // has no business at row 0 — where the cursor starts and X points —
+        // no matter which direction the user asked for.
+        std::vector<ProcInfo> withq = p3;
+        withq.push_back(mkproc(83, 1, "ghost", 0.0, kMiB, ""));
+        const std::vector<UserStat> qa =
+            user_stats(withq, kGiB, UserSort::Cpu, nullptr, nullptr, false, 0, false);
+        eq_str(qa.back().user, "?",
+               "the unknown bucket stays last even when the sort is reversed");
+    }
+
     // ── plan_by_user: this list goes to kill(2) ──
     {
         const std::vector<int> pids = plan_by_user(procs, "bob");
