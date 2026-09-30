@@ -137,8 +137,10 @@ struct Config {
                 "  --flat            open in the flat list view (default)\n"
                 "  --refresh=MS      sample cadence 250..5000ms  (default: 1000)\n"
                 "  --filter=QUERY    startup filter, e.g. --filter='cpu:>5'\n"
-                "  --theme=NAME      color theme — 35 total (native, mocha, tokyo,\n"
-                "                    dracula, gruvbox, nord, synthwave, matrix, …)\n"
+                "  --theme=NAME      color theme, 616 from maya's registry (native,\n"
+                "                    Catppuccin Mocha, Gruvbox Dark, TokyoNight, Nord,\n"
+                "                    Dracula, …). Matched loosely: --theme=cmocha works.\n"
+                "  --themes          list every theme name, one per line\n"
                 "  --no-config       ignore ~/.config/rockbottom/config this run\n"
                 "  --topology        print the detected CPU topology and exit\n"
 

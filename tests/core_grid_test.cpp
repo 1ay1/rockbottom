@@ -1065,6 +1065,123 @@ int main() {
               " sizes: the users row budget never over-estimates the viewport");
     }
 
+    // ── THEME PROJECTION: every one of maya's schemes must stay readable ──
+    //
+    // rb no longer authors palettes; it PROJECTS maya's 600+ schemes onto its
+    // own slots. That trades 35 hand-tuned palettes for a lot of input we do
+    // not control, so the properties that used to hold by construction now
+    // need asserting — and they caught real problems when first written:
+    // "HaX0R Blue" sets success/warning/error to one identical colour, and ~45
+    // other schemes separate them by only a few units. Straight through, rb's
+    // load ramp would be one colour and a full disk would look like an idle
+    // one.
+    //
+    // The ramp is the load-bearing one: good → warn → hot → crit IS the
+    // reading, so adjacent rungs have to be distinguishable on every scheme.
+    {
+        using namespace rockbottom::ui;
+        auto rgb = [](maya::LitColor c) {
+            const maya::LitColor l = c.to_rgb();
+            return detail::Rgb{static_cast<double>(l.r()),
+                               static_cast<double>(l.g()),
+                               static_cast<double>(l.b())};
+        };
+        // Weighted channel distance; approximates "can the eye tell these
+        // apart" far better than comparing luma alone (two hues can share a
+        // luma and look nothing like each other, and vice versa).
+        auto sep = [&](maya::LitColor a, maya::LitColor b) {
+            const detail::Rgb x = rgb(a), y = rgb(b);
+            const double dr = x.r - y.r, dg = x.g - y.g, db = x.b - y.b;
+            return std::sqrt(2 * dr * dr + 4 * dg * dg + 3 * db * db);
+        };
+
+        int flat_ramp = 0, low_ink = 0, invisible_border = 0, worst_name_i = 0;
+        double worst = 1e9;
+        // Skip index 0 (native): every slot there is a named ANSI colour the
+        // TERMINAL owns, so its contrast is the user's business, not ours.
+        for (std::size_t i = 1; i < theme_count(); ++i) {
+            const Theme& t = theme_at(i);
+            const double ramp = std::min({sep(t.good, t.warn),
+                                          sep(t.warn, t.hot),
+                                          sep(t.hot,  t.crit)});
+            if (ramp < worst) { worst = ramp; worst_name_i = static_cast<int>(i); }
+            // 20 is deliberately below the 45 the projection aims for: this
+            // asserts "never degenerate", not "always ideal". A handful of
+            // schemes are genuinely monochrome by design and land in the 20s;
+            // failing those would mean dropping them, which is worse than
+            // showing them slightly flat.
+            if (ramp < 20.0) {
+                ++flat_ramp;
+                if (flat_ramp <= 4)
+                    std::printf("       \xe2\x86\x92 %s: ramp rungs collapse (sep %.0f)\n",
+                                t.name, ramp);
+            }
+            // Text on the canvas, and a panel border you can actually see.
+            if (sep(t.text, t.bg_panel) < 45.0) {
+                ++low_ink;
+                if (low_ink <= 4)
+                    std::printf("       \xe2\x86\x92 %s: text unreadable on canvas\n", t.name);
+            }
+            if (sep(t.border, t.bg_panel) < 5.0) {
+                ++invisible_border;
+                if (invisible_border <= 4)
+                    std::printf("       \xe2\x86\x92 %s: border invisible on canvas\n", t.name);
+            }
+        }
+        check(flat_ramp == 0,
+              std::to_string(theme_count() - 1) +
+              " projected themes: the load ramp is ordinal on every one (worst " +
+              std::to_string(static_cast<int>(worst)) + " on \"" +
+              theme_name(static_cast<std::size_t>(worst_name_i)) + "\")");
+        check(low_ink == 0, "every projected theme keeps text legible on its canvas");
+        check(invisible_border == 0, "every projected theme has a visible panel border");
+
+        // The six domain accents label six panels; if two collide you cannot
+        // tell the cpu graph from the mem graph at a glance.
+        int accent_clash = 0;
+        for (std::size_t i = 1; i < theme_count(); ++i) {
+            const Theme& t = theme_at(i);
+            const maya::LitColor ac[6] = {t.cpu_ac, t.mem_ac, t.disk_ac,
+                                          t.net_ac, t.gpu_ac, t.proc_ac};
+            int same = 0;
+            for (int a = 0; a < 6; ++a)
+                for (int b = a + 1; b < 6; ++b)
+                    if (sep(ac[a], ac[b]) < 1.0) ++same;
+            // Up to a couple of coincidences is tolerable (some schemes really
+            // do reuse a hue); all six being one colour is not.
+            if (same >= 8) ++accent_clash;
+        }
+        check(accent_clash == 0,
+              "no projected theme collapses its six domain accents into one colour");
+
+        // Name resolution is what a config file and --theme= depend on, and a
+        // silent miss there is how a saved theme turns into "native" on
+        // upgrade. Exact, loose and unique-prefix must all resolve; ambiguous
+        // must be REJECTED rather than guessed.
+        check(theme_resolve("native") == 0, "native resolves to index 0");
+        const int mocha = theme_resolve("Catppuccin Mocha");
+        check(mocha > 0, "an exact maya scheme name resolves");
+        check(theme_resolve("catppuccin-mocha") == mocha,
+              "separator/case-insensitive name resolves to the same theme");
+        check(theme_resolve("cmocha") == mocha,
+              "an unambiguous subsequence resolves (cmocha -> Catppuccin Mocha)");
+        check(theme_resolve("gruv") < 0,
+              "an AMBIGUOUS name is rejected, not silently guessed");
+        check(!theme_suggestions("gruv", 4).empty(),
+              "an ambiguous name still offers suggestions");
+        check(!theme_suggestions("mocah", 4).empty(),
+              "a transposed typo still offers suggestions");
+        check(theme_resolve("") < 0, "an empty theme name resolves to nothing");
+
+        // set_theme must be total: no index can leave the palette half-applied,
+        // and every one must publish to maya so widgets we don't paint agree.
+        const std::size_t before = active_theme_index();
+        for (std::size_t i = 0; i < theme_count(); ++i) set_theme(i);
+        set_theme(before);
+        check(active_theme_index() == before,
+              "set_theme over the whole deck round-trips back to where it started");
+    }
+
     std::printf("\n%s\n\n", failures ? ("\x1b[31m" + std::to_string(failures) +
                                         " check(s) failed\x1b[0m").c_str()
                                      : "\x1b[32mall checks passed\x1b[0m");

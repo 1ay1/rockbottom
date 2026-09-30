@@ -27,12 +27,23 @@ int main(int argc, char** argv) {
     bool bench     = false;
     bool selfcheck = false;
     bool doctor    = false;
+    bool list_themes = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-config") == 0) no_config = true;
         if (std::strcmp(argv[i], "--topology") == 0) topology = true;
         if (std::strcmp(argv[i], "--bench") == 0) bench = true;
         if (std::strcmp(argv[i], "--selfcheck") == 0) selfcheck = true;
         if (std::strcmp(argv[i], "--doctor") == 0) doctor = true;
+        if (std::strcmp(argv[i], "--themes") == 0) list_themes = true;
+    }
+
+    // --themes: the full deck, one per line, so it pipes into grep/fzf. The
+    // unknown-theme error deliberately prints only near-matches (600+ names
+    // would bury it), so this is where you go for the whole list.
+    if (list_themes) {
+        for (std::size_t i = 0; i < ui::theme_count(); ++i)
+            std::printf("%s\n", ui::theme_name(i));
+        return 0;
     }
 
     // Precedence: defaults < config file < CLI flags.
@@ -55,12 +66,21 @@ int main(int argc, char** argv) {
         bool theme_from_cli = false;
         for (int i = 1; i < argc; ++i)
             if (std::strncmp(argv[i], "--theme=", 8) == 0) theme_from_cli = true;
-        if (theme_from_cli && ui::theme_index_by_name(cfg.theme) < 0) {
-            std::string names;
-            for (std::size_t i = 0; i < ui::theme_count(); ++i)
-                names += (i ? ", " : "") + std::string(ui::theme_name(i));
-            std::fprintf(stderr, "unknown theme: %s\navailable: %s\n",
-                         cfg.theme.c_str(), names.c_str());
+        if (theme_from_cli && ui::theme_resolve(cfg.theme) < 0) {
+            // Do NOT list every theme. There are 600+ now (maya's registry),
+            // and a wall of names scrolls the actual error off screen — which
+            // is what this code used to do when the deck was 35. Suggest the
+            // close ones instead, and point at --themes for the full list.
+            std::fprintf(stderr, "unknown theme: %s\n", cfg.theme.c_str());
+            const std::vector<std::string> near = ui::theme_suggestions(cfg.theme, 8);
+            if (!near.empty()) {
+                std::fprintf(stderr, "did you mean: ");
+                for (std::size_t i = 0; i < near.size(); ++i)
+                    std::fprintf(stderr, "%s%s", i ? ", " : "", near[i].c_str());
+                std::fprintf(stderr, "\n");
+            }
+            std::fprintf(stderr, "run `rb --themes` for all %zu, or press T in-app to browse them.\n",
+                         ui::theme_count());
             return 2;
         }
     }

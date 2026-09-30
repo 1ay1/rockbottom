@@ -559,8 +559,42 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |
+| `T` | theme picker — **type to search 616 themes**, live-previewed as you move |
 | `?` / `h` | help, for when every key you just read immediately evaporates from your brain |
 | `q` / `Esc` | leave. go outside. the grass misses you. |
+
+### Themes
+
+There are **616**, and we wrote none of them. They come from
+[maya](https://github.com/1ay1/maya)'s theme registry — Catppuccin, Gruvbox,
+Nord, Tokyo Night, Dracula, Solarized, Everforest, the Alacritty / iTerm /
+Windows Terminal collections, and a long tail of the deeply weird (`Hot Dog
+Stand` is in there, and we are not going to discuss it).
+
+rb used to ship 35 hand-tuned palettes. Maintaining those meant re-tuning 35
+things by hand every time anything moved, so they're gone.
+
+Press `T` and start typing. The list narrows as you type and the whole UI
+repaints behind the card in whatever the cursor is on, so you are always
+looking at the real thing rather than a swatch. `cmocha` finds Catppuccin
+Mocha, `tnsto` finds TokyoNight Storm. Enter keeps it, Esc puts back what you
+had, and your choice survives a restart.
+
+From the shell, `--theme=NAME` takes the same loose matching
+(`--theme=cmocha` works) and `rb --themes` prints all 616 one per line, so it
+pipes into `grep` or `fzf`.
+
+**What rb adds on top.** A maya theme is a vocabulary for an *app*: primary,
+surface, border, error, selection. A monitor needs something else — a four-rung
+load ramp (`good → warn → hot → crit`) where the rungs stay tellable apart at
+a glance, because that ramp *is* the reading. So rb derives its palette from
+maya's 24 slots rather than using them directly, and the ramp is **constructed
+to be ordinal instead of trusted to be**: schemes are authored for editors,
+where success/warning/error rarely sit next to each other, and a few dozen make
+them near-identical (`HaX0R Blue` uses one colour for all three). Painted
+straight through, a full disk would look like an idle one. Every scheme gets
+checked and, where needed, spread along an amber→orange→red path anchored on
+its own error hue — so it keeps its character and still tells you the truth.
 
 **Or just use your mouse, you absolute animal.** Full mouse support, zero misses:
 

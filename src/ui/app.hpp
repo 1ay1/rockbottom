@@ -220,13 +220,32 @@ struct App {
         };
         std::optional<NiceMenu> nicemenu;
 
-        // Theme picker (T): an overlay listing the whole deck. `sel` is both
-        // the cursor AND the LIVE-previewed theme (moving it applies the theme
-        // immediately); `restore` is the index that was active when the menu
-        // opened, reverted on Esc / dismiss.
+        // Theme picker (T): an overlay over maya's 616-scheme registry. `sel`
+        // is both the cursor AND the LIVE-previewed theme (moving it applies
+        // the theme immediately); `restore` is the index that was active when
+        // the menu opened, reverted on Esc / dismiss.
+        //
+        // `query` is the type-to-search box. A 616-row list is not browsable
+        // by arrow key, so the picker is a filter first and a list second:
+        // typing narrows `hits` (deck indices, best match first) and the
+        // cursor walks THAT, not the raw deck. `hits` is recomputed by
+        // refilter_themes() whenever the query changes rather than in view(),
+        // because the key handler needs it too (to clamp the cursor and to
+        // know what Enter commits) and computing it twice risks the two
+        // disagreeing about which row is selected.
         struct ThemeMenu {
-            int sel = 0;
-            int restore = 0;
+            int sel = 0;                      // index INTO hits, not the deck
+            int restore = 0;                  // deck index to revert to
+            std::string query;
+            std::vector<std::size_t> hits;    // deck indices, best first
+
+            // The deck index the cursor is on, or the restore target when the
+            // filter matched nothing.
+            [[nodiscard]] std::size_t current(int fallback) const {
+                if (hits.empty()) return static_cast<std::size_t>(fallback);
+                const int i = std::clamp(sel, 0, static_cast<int>(hits.size()) - 1);
+                return hits[static_cast<std::size_t>(i)];
+            }
         };
         std::optional<ThemeMenu> thememenu;
 
@@ -720,7 +739,7 @@ struct App {
         m.refresh_ms = cfg.refresh_ms;
         m.filter     = cfg.filter;
         // Apply the saved/CLI theme (falls back to native if the name is stale).
-        if (int ti = ui::theme_index_by_name(cfg.theme); ti >= 0)
+        if (int ti = ui::theme_resolve(cfg.theme); ti >= 0)
             ui::set_theme(static_cast<std::size_t>(ti));
         // The very first sample runs synchronously: there is no event loop yet
         // to block, and the first frame should paint with real data instead of
@@ -912,38 +931,99 @@ struct App {
         return Cmd::quit(0);
     }
 
+    // Recompute the theme picker's match list after the query changed, and
+    // keep the cursor pointing at a real row.
+    //
+    // The cursor tries to STAY on the theme it was on: narrowing a search
+    // shouldn't yank the preview to an unrelated palette just because the
+    // matched set shifted under it. If the current theme survives the new
+    // filter we follow it; otherwise we land on the best match (index 0) and
+    // preview that, which is what makes typing feel like it's searching
+    // rather than like it's scrolling.
+    static void refilter_themes(Model& m) {
+        if (!m.thememenu) return;
+        auto& tm = *m.thememenu;
+        const std::size_t was = tm.current(tm.restore);
+        tm.hits = ui::theme_search(tm.query);
+        if (tm.hits.empty()) return;   // keep the live theme; view() says so
+        tm.sel = 0;
+        for (std::size_t i = 0; i < tm.hits.size(); ++i)
+            if (tm.hits[i] == was) { tm.sel = static_cast<int>(i); break; }
+        ui::set_theme(tm.current(tm.restore));
+    }
+
     // ── key handling: one place, mode-aware ─────────────────────────────────
 
     static Cmd on_key(Model& m, const maya::KeyEvent& ke) {
         maya::Event ev{ke};
         using maya::key;
 
-        // 0−. Theme picker intercepts everything while open. ↑↓/j k move the
-        //     cursor and LIVE-APPLY that theme (the whole UI repaints behind
-        //     the card); Enter keeps it, Esc/q reverts to the theme that was
-        //     active when the menu opened.
+        // 0−. Theme picker intercepts everything while open. It is a SEARCH
+        //     box over maya's 616 schemes, not just a list: printable keys
+        //     narrow the filter, ↑↓/j k move the cursor within the matches and
+        //     LIVE-APPLY that theme (the whole UI repaints behind the card),
+        //     Enter keeps it, Esc reverts to the theme active on open.
+        //
+        //     j/k are intentionally NOT bound here, unlike every other pane:
+        //     they are letters, and a picker whose whole point is typing a
+        //     name cannot swallow two of them ("jellybeans", "kanagawa").
+        //     Arrows and Ctrl+N/P do the moving.
         if (m.thememenu) {
-            const int n = static_cast<int>(ui::theme_count());
+            auto& tm = *m.thememenu;
             auto preview = [&](int sel) {
-                m.thememenu->sel = std::clamp(sel, 0, n - 1);
-                ui::set_theme(static_cast<std::size_t>(m.thememenu->sel));
+                if (tm.hits.empty()) return;
+                tm.sel = std::clamp(sel, 0, static_cast<int>(tm.hits.size()) - 1);
+                ui::set_theme(tm.current(tm.restore));
             };
-            if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
-                ui::set_theme(static_cast<std::size_t>(m.thememenu->restore));
+            if (key(ev, maya::SpecialKey::Escape)) {
+                ui::set_theme(static_cast<std::size_t>(tm.restore));
                 m.thememenu.reset();
                 return {};
             }
-            if (key(ev, maya::SpecialKey::Enter) || key(ev, 'T') || key(ev, ' ')) {
-                m.toast = Toast{"theme \u00b7 " + std::string(ui::active_theme_name()), false};
+            if (key(ev, maya::SpecialKey::Enter)) {
+                // Nothing matched — Enter can't commit a row that isn't there,
+                // so treat it as "keep what's live" rather than a no-op that
+                // leaves the user stuck in the overlay.
+                m.toast = Toast{"theme \xc2\xb7 " + std::string(ui::active_theme_name()), false};
                 m.thememenu.reset();
                 return {};
             }
-            if (key(ev, maya::SpecialKey::Down)  || key(ev, 'j')) { preview(m.thememenu->sel + 1); return {}; }
-            if (key(ev, maya::SpecialKey::Up)    || key(ev, 'k')) { preview(m.thememenu->sel - 1); return {}; }
-            if (key(ev, maya::SpecialKey::PageDown)) { preview(m.thememenu->sel + 8); return {}; }
-            if (key(ev, maya::SpecialKey::PageUp))   { preview(m.thememenu->sel - 8); return {}; }
-            if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { preview(0); return {}; }
-            if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { preview(n - 1); return {}; }
+            if (key(ev, maya::SpecialKey::Backspace)) {
+                if (!tm.query.empty()) {
+                    tm.query.pop_back();
+                    refilter_themes(m);
+                }
+                return {};
+            }
+            if (key(ev, maya::SpecialKey::Down)) { preview(tm.sel + 1); return {}; }
+            if (key(ev, maya::SpecialKey::Up))   { preview(tm.sel - 1); return {}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { preview(tm.sel + 8); return {}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { preview(tm.sel - 8); return {}; }
+            if (key(ev, maya::SpecialKey::Home)) { preview(0); return {}; }
+            if (key(ev, maya::SpecialKey::End))  {
+                preview(static_cast<int>(tm.hits.size()) - 1);
+                return {};
+            }
+            // Ctrl+N / Ctrl+P: move without leaving the home row, since the
+            // letter keys are all busy being letters.
+            const auto* ch = std::get_if<maya::CharKey>(&ke.key);
+            const char32_t cp = ch ? ch->codepoint : 0;
+            if (ke.mods.ctrl && cp == U'n') { preview(tm.sel + 1); return {}; }
+            if (ke.mods.ctrl && cp == U'p') { preview(tm.sel - 1); return {}; }
+            // Ctrl+U clears the query (readline habit).
+            if (ke.mods.ctrl && cp == U'u') {
+                tm.query.clear();
+                refilter_themes(m);
+                return {};
+            }
+            // Any other printable character extends the search. ASCII only:
+            // every theme name in the registry is ASCII, so a multi-byte
+            // codepoint can't match anything and would just corrupt the box.
+            if (ch && !ke.mods.ctrl && !ke.mods.alt && cp >= 0x20 && cp < 0x7F) {
+                tm.query += static_cast<char>(cp);
+                refilter_themes(m);
+                return {};
+            }
             return {};
         }
 
@@ -1298,13 +1378,17 @@ struct App {
         }
         if (key(ev, '?') || (key(ev, 'h') && !m.tree)) { m.show_help = true; return {}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {}; }
-        // Theme deck: T opens the picker overlay — a scrolling list of every
-        // theme with a live preview as you move the cursor. Enter keeps the
-        // choice (persisted on clean exit), Esc reverts. Seeded on the active
-        // theme so it opens where you already are.
+        // Theme deck: T opens the picker — a SEARCH box over maya's 616
+        // schemes with a live preview as you move the cursor. Enter keeps the
+        // choice (persisted on clean exit), Esc reverts. Opens unfiltered and
+        // seeded on the active theme, so it starts where you already are.
         if (key(ev, 'T')) {
             const int cur = static_cast<int>(ui::active_theme_index());
-            m.thememenu = Model::ThemeMenu{cur, cur};
+            Model::ThemeMenu tm;
+            tm.restore = cur;
+            tm.hits = ui::theme_search("");
+            tm.sel = cur;                 // empty query → hits is deck order
+            m.thememenu = std::move(tm);
             return {};
         }
 
@@ -1981,9 +2065,12 @@ struct App {
         // Renice dial: which process + the dialed value.
         if (m.nicemenu) { fold(29); fold(static_cast<std::uint64_t>(m.nicemenu->pid));
                           fold(static_cast<std::uint64_t>(m.nicemenu->val + 64)); }
-        // Theme picker: presence + cursor (the previewed theme index is
-        // already folded via active_theme_index() above).
-        if (m.thememenu) { fold(31); fold(static_cast<std::uint64_t>(m.thememenu->sel)); }
+        // Theme picker: presence + cursor + the query (which reorders the
+        // list, so it has to be in the hash or a keystroke that changes only
+        // the match set would not repaint).
+        if (m.thememenu) { fold(31); fold(static_cast<std::uint64_t>(m.thememenu->sel));
+                           fold_str(m.thememenu->query);
+                           fold(static_cast<std::uint64_t>(m.thememenu->hits.size())); }
         // Toast: text + error tint (its ttl countdown is what expires it).
         if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
 
@@ -2053,7 +2140,8 @@ struct App {
         }
 
         if (m.thememenu) {
-            return canvas(ThemeMenu{m.width, m.height, m.thememenu->sel});
+            return canvas(ThemeMenu{m.width, m.height, m.thememenu->sel,
+                                    m.thememenu->query, m.thememenu->hits});
         }
 
         if (m.detail != ui::Detail::None) {
