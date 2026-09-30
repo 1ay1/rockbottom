@@ -1218,24 +1218,58 @@ int main() {
                   "a non-matching query highlights nothing");
         }
 
-        // The picker's row budget must be positive at every terminal height
-        // it can be opened at — a zero here is an empty list on a short
-        // terminal, and the docked layout must fall back rather than squeeze.
+        // The picker's layout arithmetic. Every width and row count in that
+        // widget is DERIVED from the panel size, and the two times it was
+        // hand-guessed it was wrong on screen and invisible in review: the
+        // name column was 9 cells short at every size (names truncated with
+        // an empty gutter beside them), and the row budget was off by one
+        // (the second hint line never rendered) and then by two (dead rows
+        // above the border). Pin the relationships.
         {
-            bool rows_ok = true, dock_ok = true;
-            for (int hgt = 10; hgt <= 80; ++hgt)
-                if (ThemeMenu::visible_rows(hgt) < 4) rows_ok = false;
-            for (int wid = 40; wid <= 260; ++wid) {
+            bool rows_ok = true, dock_ok = true, name_ok = true;
+            for (int hgt = 12; hgt <= 80; ++hgt)
+                if (ThemeMenu::visible_rows(hgt) < 3) rows_ok = false;
+            // The row budget must never exceed what the panel can actually
+            // paint: rows + chrome has to fit inside the terminal height.
+            bool budget_ok = true;
+            for (int hgt = 12; hgt <= 80; ++hgt)
+                if (ThemeMenu::visible_rows(hgt) + 8 > hgt) budget_ok = false;
+            for (int wid = 40; wid <= 300; ++wid) {
                 const int pw = ThemeMenu::panel_width(wid);
                 if (pw == 0) continue;                 // card fallback: fine
-                // Docking must always leave the dashboard the larger share.
+                // Docking must always leave the dashboard the larger share,
+                // or the thing being previewed stops being worth looking at.
                 if (pw >= wid - pw) dock_ok = false;
+                // And the panel must always be wide enough to identify a
+                // theme by name.
+                if (pw < 30) name_ok = false;
             }
-            check(rows_ok, "the picker always has at least 4 visible rows");
+            check(rows_ok, "the picker always has at least 3 visible rows");
+            check(budget_ok, "the row budget always fits inside the terminal height");
             check(dock_ok, "docking never takes more room than it leaves the dashboard");
+            check(name_ok, "a docked panel is always wide enough to read a theme name");
             check(ThemeMenu::panel_width(80) == 0,
                   "an 80-col terminal falls back to the card instead of docking");
             check(ThemeMenu::panel_width(200) > 0, "a wide terminal docks the picker");
+            // Responsive, not fixed: a 240-col terminal must give the panel
+            // more room than a 110-col one.
+            check(ThemeMenu::panel_width(180) > ThemeMenu::panel_width(110),
+                  "the panel widens with the terminal instead of staying fixed");
+        }
+
+        // Every theme name must fit the widest panel without truncation —
+        // that is what the name-column cap is sized against, so a maya bump
+        // adding a longer name should fail here rather than silently clip.
+        {
+            std::size_t longest = 0;
+            std::string worst;
+            for (std::size_t i = 0; i < theme_count(); ++i) {
+                const std::size_t len = std::string(theme_name(i)).size();
+                if (len > longest) { longest = len; worst = theme_name(i); }
+            }
+            check(longest <= 30,
+                  "the longest theme name (\"" + worst + "\", " +
+                  std::to_string(longest) + ") fits the name column");
         }
 
         // set_theme must be total: no index can leave the palette half-applied,

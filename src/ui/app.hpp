@@ -2372,7 +2372,7 @@ struct App {
                                        m.thememenu->query, m.thememenu->hits,
                                        m.thememenu->mode, m.thememenu->hover,
                                        m.thememenu->top, theme_recent_count(m),
-                                       static_cast<std::size_t>(m.thememenu->restore)}}
+                                       static_cast<std::size_t>(m.thememenu->restore), true}}
                      | width(panel_w)).build()
                 ) | gap(0) | grow(1)).build());
             }
@@ -2380,7 +2380,7 @@ struct App {
                                     m.thememenu->query, m.thememenu->hits,
                                     m.thememenu->mode, m.thememenu->hover,
                                     m.thememenu->top, theme_recent_count(m),
-                                    static_cast<std::size_t>(m.thememenu->restore)});
+                                    static_cast<std::size_t>(m.thememenu->restore), false});
         }
 
         if (m.detail != ui::Detail::None) {
