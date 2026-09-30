@@ -1102,11 +1102,11 @@ void test_user_stats() {
         accts[0].name = "alice"; accts[0].uid = 1000; accts[0].home = "/home/alice";
         accts[0].shell = "/bin/bash"; accts[0].can_login = true;
         accts[0].disk_bytes = 5 * kGiB; accts[0].disk_known = true;
-        accts[0].disk_source = "scan";
+        accts[0].disk_source = DiskSource::Scan;
         accts[1].name = "carol"; accts[1].uid = 1001; accts[1].home = "/home/carol";
         accts[1].shell = "/bin/bash"; accts[1].can_login = true;
         accts[1].disk_bytes = 90 * kGiB; accts[1].disk_known = true;
-        accts[1].disk_source = "quota"; accts[1].disk_quota = 100 * kGiB;
+        accts[1].disk_source = DiskSource::Quota; accts[1].disk_quota = 100 * kGiB;
 
         std::vector<LoginSession> sess(2);
         sess[0].user = "alice"; sess[0].id = "1";

@@ -7,9 +7,17 @@ name: ci
 # The matrix exercises each per-platform backend (procfs/sysfs on Linux,
 # mach/IOKit on macOS) where it actually runs.
 #
-# maya is a git submodule, so every checkout is recursive. macOS builds with
-# Homebrew GCC (Apple Clang's libc++ lacks std::move_only_function, which maya
-# requires) — the same toolchain maya's own CI uses.
+# maya is a git submodule and maya now carries jaal, so every checkout is
+# recursive. macOS builds with Homebrew GCC (Apple Clang's libc++ lacks
+# std::move_only_function, which maya requires) — the same toolchain maya's own
+# CI uses.
+#
+# TOOLCHAIN FLOOR: g++-16. maya::app vendors jaal, and jaal needs C++26
+# structured binding packs (P1061) to see inside a struct for its
+# Sendable/Frozen checks. P1061 landed in GCC 16, so the gcc-14 this matrix
+# used before cannot build the repo at all any more — not slower, not
+# degraded, it does not compile. g++-16 is not in the runner image, so it
+# comes from ubuntu-toolchain-r/test on Linux and gcc@16 on macOS.
 
 on:
   push:
@@ -32,16 +40,16 @@ jobs:
         include:
           - name: linux-x86_64
             os: ubuntu-latest
-            cc: gcc-14
-            cxx: g++-14
+            cc: gcc-16
+            cxx: g++-16
           - name: linux-arm64
             os: ubuntu-24.04-arm
-            cc: gcc-14
-            cxx: g++-14
+            cc: gcc-16
+            cxx: g++-16
           - name: macos-arm64
             os: macos-14        # Apple Silicon runner
-            cc: gcc-14
-            cxx: g++-14
+            cc: gcc-16
+            cxx: g++-16
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,12 +58,14 @@ jobs:
       - name: Install toolchain (Linux)
         if: runner.os == 'Linux'
         run: |
+          # g++-16 is not in the runner image; ubuntu-toolchain-r/test has it.
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y g++-14 cmake ninja-build
+          sudo apt-get install -y g++-16 cmake ninja-build
 
       - name: Install toolchain (macOS)
         if: runner.os == 'macOS'
-        run: brew install gcc@14 cmake ninja || true
+        run: brew install gcc@16 cmake ninja || true
 
       - name: Configure
         shell: bash
@@ -295,12 +305,13 @@ jobs:
           submodules: recursive
       - name: Install toolchain
         run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y g++-14 cmake ninja-build
+          sudo apt-get install -y g++-16 cmake ninja-build
       - name: Build with sanitizers
         shell: bash
         run: |
-          export CC=gcc-14 CXX=g++-14
+          export CC=gcc-16 CXX=g++-16
           cmake -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Debug -DRB_STANDALONE=OFF \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
           cmake --build build-san -j

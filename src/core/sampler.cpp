@@ -312,7 +312,7 @@ void Sampler::start_home_scan(const std::vector<UserAccount>& accounts) {
         const auto now = std::chrono::steady_clock::now();
         for (const UserAccount& a : accounts) {
             if (a.system || !a.can_login) continue;
-            if (a.disk_source == std::string("quota")) continue;   // already exact
+            if (a.disk_source == DiskSource::Quota) continue;   // already exact
             if (!homescan::scannable_home(a.home)) continue;
             auto it = home_scan_.find(a.name);
             if (it != home_scan_.end() && now < it->second.next_at) continue;

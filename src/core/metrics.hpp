@@ -133,6 +133,33 @@ struct LoginSession {
 // optional: an account with no quota and no completed scan simply reports
 // disk_bytes = 0 with disk_known = false, and the UI says so rather than
 // printing a confident zero.
+//
+// Where a user's disk figure came from. This was a `const char*` holding one
+// of "quota"/"scan"/"", which meant every consumer compared it by building a
+// std::string (`a.disk_source == std::string("quota")`) — an allocation to
+// test a three-way tag, and a typo away from silently never matching.
+//
+// It's an enum now because jaal asked the right question: a Snapshot crosses
+// from the sampler thread to the UI thread, and a raw pointer inside a value
+// that gets sent is exactly what its Sendable check refuses. These particular
+// pointers were safe (always string literals), but the fix that satisfies the
+// check is also the one that should have been here to begin with.
+enum class DiskSource : std::uint8_t {
+    None = 0,   // not measured
+    Quota,      // exact, kernel-maintained
+    Scan,       // a budgeted walk of the home directory
+};
+
+// Human label for the detail pane. Returns a literal, never null.
+inline const char* disk_source_label(DiskSource s) {
+    switch (s) {
+        case DiskSource::Quota: return "quota";
+        case DiskSource::Scan:  return "scan";
+        case DiskSource::None:  break;
+    }
+    return "";
+}
+
 struct UserAccount {
     std::string   name;
     unsigned      uid = 0;
@@ -154,7 +181,7 @@ struct UserAccount {
     std::uint64_t disk_files = 0;      // inode count, 0 = unknown
     bool          disk_known = false;
     bool          disk_partial = false;  // a scan is still running
-    const char*   disk_source = "";     // "quota" | "scan" | ""
+    DiskSource    disk_source = DiskSource::None;
 };
 
 // One active network socket, attributed to its owning process. The connection

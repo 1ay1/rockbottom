@@ -518,7 +518,7 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
                 }
             }
             b.push_back(kv3(
-                "source", u.disk_source && *u.disk_source ? u.disk_source : "\xe2\x80\x94",
+                "source", u.disk_source != DiskSource::None ? disk_source_label(u.disk_source) : "\xe2\x80\x94",
                 pal::label,
                 "home", u.home.empty() ? "\xe2\x80\x94" : u.home, pal::label,
                 "shell", u.shell.empty() ? "\xe2\x80\x94" : u.shell, pal::label));
@@ -741,8 +741,8 @@ inline std::vector<Element> users_body(const Snapshot& s, const Ctx& cx,
         } else if (sel_u.user != "?") {
             who += "  \xc2\xb7 no passwd entry (deleted user, or a container uid map)";
         }
-        if (sel_u.disk_known && sel_u.disk_source && *sel_u.disk_source)
-            who += "  \xc2\xb7 disk via " + std::string(sel_u.disk_source)
+        if (sel_u.disk_known && sel_u.disk_source != DiskSource::None)
+            who += "  \xc2\xb7 disk via " + std::string(disk_source_label(sel_u.disk_source))
                  + (sel_u.disk_partial ? " (still walking)" : "");
         b.push_back(kv("selected", who, pal::proc_ac));
     }

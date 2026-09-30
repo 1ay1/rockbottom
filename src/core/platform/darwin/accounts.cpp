@@ -96,7 +96,7 @@ void Sampler::sample_accounts(std::vector<UserAccount>& accounts,
             a.disk_files   = it->second.files;
             a.disk_known   = true;
             a.disk_partial = !it->second.complete;
-            a.disk_source  = "scan";
+            a.disk_source  = DiskSource::Scan;
         }
     }
 

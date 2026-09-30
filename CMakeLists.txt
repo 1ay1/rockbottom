@@ -57,19 +57,34 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# CMake < 3.30 mishandles the cxx_std_26 compile-feature (Ubuntu 24 LTS ships
-# CMake 3.28 — see issue #1 / CMake 3.30 release notes). On such a CMake the
-# feature isn't advertised in CMAKE_CXX_COMPILE_FEATURES even when the compiler
-# supports C++26, so requesting it below aborts configuration. Mirror maya's
-# guard: if cxx_std_26 isn't advertised, fall back to C++23 (which every
-# supported compiler + CMake here handles), keeping `cmake -B build` working
-# out of the box on stock distro CMake.
-if(NOT MSVC AND NOT "cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES
-            AND "cxx_std_23" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    set(CMAKE_CXX_STANDARD 23)
-    message(STATUS "rockbottom: C++26 not advertised by "
-                   "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
-                   "(CMake ${CMAKE_VERSION}) — building at C++23.")
+# C++26 IS A HARD FLOOR NOW, and this block used to soften it.
+#
+# It used to fall back to C++23 when CMake didn't advertise cxx_std_26 (Ubuntu
+# 24 LTS ships CMake 3.28, which mishandles the feature — issue #1). That was
+# right when maya was self-contained. It isn't any more: maya's runtime is jaal,
+# and jaal needs real C++26 (structured-binding packs) to expand a Cmd/Sub's
+# effect rows. At C++23 the fallback didn't produce a slower build, it produced
+# a wall of template errors inside jaal's variadics.
+#
+# So keep the CMake-version workaround (probe the FLAG, not CMake's feature
+# list — maya::app does the same, see its MAYA_APP_STD_FLAG) but drop the
+# downgrade: if the compiler genuinely can't do C++26, say so here, in one
+# line, instead of letting it fail 2000 lines deep in a header.
+if(NOT MSVC AND NOT "cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-std=c++2c" RB_HAS_CXX2C)
+    if(NOT RB_HAS_CXX2C)
+        message(FATAL_ERROR
+            "rockbottom needs C++26: maya's runtime (jaal) uses structured-binding "
+            "packs (P1061), which ${CMAKE_CXX_COMPILER_ID} "
+            "${CMAKE_CXX_COMPILER_VERSION} does not accept. "
+            "P1061 landed in GCC 16 and Clang 22 — use one of those.")
+    endif()
+    # CMake won't add the flag from CMAKE_CXX_STANDARD it doesn't know about,
+    # so add it directly. Applies to our targets; maya::app carries its own.
+    add_compile_options(-std=c++2c)
+    message(STATUS "rockbottom: CMake ${CMAKE_VERSION} doesn't advertise "
+                   "cxx_std_26 — passing -std=c++2c directly.")
 endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -85,7 +100,8 @@ if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 # ── maya (vendored as a git submodule) ───────────────────────────────────────
-# We only want the library, not maya's own examples/tests/fuzzers.
+# We only want the library + maya::app, not maya's own examples/tests/fuzzers.
+set(MAYA_BUILD_APP      ON  CACHE BOOL "" FORCE)
 set(MAYA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(MAYA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(MAYA_BUILD_FUZZERS  OFF CACHE BOOL "" FORCE)
@@ -115,6 +131,18 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
     message(FATAL_ERROR
         "maya submodule missing — run: git submodule update --init --recursive")
 endif()
+# maya carries its own runtime submodule now: jaal is the Elm loop maya draws
+# for, and `maya::app` is maya + jaal + <maya/host/run.hpp>. A recursive
+# submodule init is therefore mandatory, and a missing jaal has to be named
+# here rather than surfacing 200 lines down as a template error inside
+# maya/host/run.hpp.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/third_party/jaal/CMakeLists.txt")
+    message(FATAL_ERROR
+        "jaal missing (maya's runtime submodule) — run: "
+        "git submodule update --init --recursive")
+endif()
+# We consume maya as a library, not as a distribution (its build knobs are set
+# in the maya block near the top of this file, before add_subdirectory).
 add_subdirectory(third_party/maya)
 
 # maya is a VENDORED dependency: we do not control its warning hygiene, and its
@@ -123,11 +151,20 @@ add_subdirectory(third_party/maya)
 # here. Re-export its include dirs as SYSTEM so -Wall -Wextra -Wshadow -Werror
 # police OUR code without a maya release being able to break our build. This
 # must happen after add_subdirectory, when the target exists.
-get_target_property(_maya_incs maya INTERFACE_INCLUDE_DIRECTORIES)
-if(_maya_incs)
-    set_target_properties(maya PROPERTIES
-        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_maya_incs}")
-endif()
+#
+# jaal gets the same treatment, for a sharper reason than hygiene: its Cmd/Sub
+# machinery is deep variadic templates, so ONE mistake in our update() prints
+# pages of instantiation notes. SYSTEM includes let the compiler collapse that
+# to the concept that actually failed.
+foreach(_dep maya jaal)
+    if(TARGET ${_dep})
+        get_target_property(_dep_incs ${_dep} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_dep_incs)
+            set_target_properties(${_dep} PROPERTIES
+                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_dep_incs}")
+        endif()
+    endif()
+endforeach()
 
 # ── version ─────────────────────────────────────────────────────────────────
 # Generate core/version.hpp from the project() version above, into the build
@@ -201,7 +238,11 @@ add_executable(rockbottom
     src/core/verdict.cpp
     ${RB_PLATFORM_SRC}
 )
-target_link_libraries(rockbottom PRIVATE maya rb_warnings)
+# maya::app, not maya: `maya` is the view layer + renderer, `maya::app` adds
+# jaal (the runtime) and is what <maya/host/run.hpp> needs to link. The tests
+# below that only build Elements still link plain `maya` — they never start a
+# loop, so they don't need to pay for jaal.
+target_link_libraries(rockbottom PRIVATE maya::app rb_warnings)
 target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 # rockbottom uses zero C++ modules (no `import`, no module units), but CMake >=
@@ -213,15 +254,6 @@ target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 # build break for a project with no modules at all. Turn scanning off; it is
 # pure overhead here and the source of the failure. Same for the other targets.
 set_target_properties(rockbottom PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-# Request cxx_std_26 only when CMake actually advertises it (CMake >= 3.30 with a
-# C++26-capable compiler). On older CMake the CMAKE_CXX_STANDARD set above still
-# applies the right -std flag; asking for the unknown feature here is what broke
-# the Ubuntu-24 / CMake-3.28 build (issue #1). Same guard maya uses internally.
-if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    target_compile_features(rockbottom PRIVATE cxx_std_26)
-else()
-    target_compile_features(rockbottom PRIVATE cxx_std_23)
-endif()
 
 # macOS backend needs the system frameworks that expose host/vm statistics,
 # battery state (IOKit power sources), and GPU telemetry (IOAccelerator).
@@ -397,16 +429,9 @@ set_target_properties(rb_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 add_executable(rb_scan_tests EXCLUDE_FROM_ALL tests/home_scan_test.cpp)
 target_link_libraries(rb_scan_tests PRIVATE rb_warnings)
 set_target_properties(rb_scan_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    target_compile_features(rb_scan_tests PRIVATE cxx_std_26)
-else()
-    target_compile_features(rb_scan_tests PRIVATE cxx_std_23)
-endif()
-if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    target_compile_features(rb_tests PRIVATE cxx_std_26)
-else()
-    target_compile_features(rb_tests PRIVATE cxx_std_23)
-endif()
+# cxx_std_26 fallbacks removed: see the hard-floor block at the top of this
+# file. Every target here gets C++26 from CMAKE_CXX_STANDARD (or the
+# -std=c++2c added there on an old CMake).
 
 # ── core logic tests ────────────────────────────────────────────────────────
 # The PURE layers: units, the filter query language, row ordering, and the
@@ -423,11 +448,6 @@ add_executable(rb_core_tests EXCLUDE_FROM_ALL
 target_link_libraries(rb_core_tests PRIVATE maya rb_warnings)
 target_include_directories(rb_core_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_core_tests PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    target_compile_features(rb_core_tests PRIVATE cxx_std_26)
-else()
-    target_compile_features(rb_core_tests PRIVATE cxx_std_23)
-endif()
 if(APPLE)
     target_link_libraries(rb_core_tests PRIVATE
         "-framework CoreFoundation" "-framework IOKit")
@@ -480,14 +500,11 @@ add_executable(rb_render_bench EXCLUDE_FROM_ALL
     src/core/verdict.cpp
     ${RB_PLATFORM_SRC}
 )
-target_link_libraries(rb_render_bench PRIVATE maya rb_warnings)
+# Links maya::app, not maya: the bench builds app.hpp's view(), which now pulls
+# in maya/host/* (and therefore jaal) for the Cmd/Sub rows.
+target_link_libraries(rb_render_bench PRIVATE maya::app rb_warnings)
 target_include_directories(rb_render_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_render_bench PROPERTIES CXX_SCAN_FOR_MODULES OFF)
-if("cxx_std_26" IN_LIST CMAKE_CXX_COMPILE_FEATURES)
-    target_compile_features(rb_render_bench PRIVATE cxx_std_26)
-else()
-    target_compile_features(rb_render_bench PRIVATE cxx_std_23)
-endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_link_libraries(rb_render_bench PRIVATE
         "-framework CoreFoundation"

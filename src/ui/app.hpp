@@ -15,7 +15,17 @@
 
 #pragma once
 
+// maya/host/*: the runtime seam. sources.hpp brings the on_key/on_mouse/
+// on_resize routers our Sub row names, and jaal's Cmd/Sub/Sink come with it.
+// interop.hpp is the one that is easy to forget and confusing to omit: it
+// teaches jaal that maya's Strong<Tag,T> wrappers (Columns, Rows) are safe to
+// send. Without it, a MouseEvent's x/y make the whole Msg non-Sendable, and
+// the error names maya::Strong<ColumnTag> rather than anything you wrote.
+// maya.hpp is still here for the element/style/widget side, which is the bulk
+// of this file.
 #include <maya/maya.hpp>
+#include <maya/host/interop.hpp>
+#include <maya/host/sources.hpp>
 
 #include "../core/sampler.hpp"
 #include "../core/config.hpp"
@@ -47,8 +57,64 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <type_traits>
 #include <variant>
 #include <vector>
+
+// ── crossing the thread boundary ─────────────────────────────────────────
+// A Snapshot is built on the sampler thread and moved to the UI thread, so
+// jaal checks it field by field for anything that might still be shared.
+//
+// These declarations live HERE, in the UI layer, and not next to the types in
+// core/units.hpp — on purpose. src/core/ knows nothing about a runtime: it is
+// plain data plus the syscalls that fill it, it builds in rb_core_tests and
+// rb_scan_tests with no maya and no jaal linked, and an #include <jaal/...> in
+// units.hpp breaks both of those targets (it did, the first time). The thread
+// boundary is a fact about THIS file — the only place that hands a Snapshot to
+// another thread — so this is where it gets declared.
+//
+// Why they need declaring at all: jaal walks a struct's fields only when it
+// can SEE them, i.e. when it's an aggregate. Every unit type has a
+// user-declared constructor (that's the whole point — you can't make a Bytes
+// by accident), which makes it a non-aggregate, so jaal can't look inside and
+// refuses rather than assuming. Fair question; here's the answer.
+//
+// Each of these holds ONE arithmetic value, by value. No pointer, no view, no
+// handle, nothing refcounted, so a moved-from instance shares precisely
+// nothing with the moved-to one — which is the bar sendable_opt_in asks about.
+//
+// Keyed on the primitive inside rather than spelled `true` five times: a
+// future BitsTag or JoulesTag is covered the moment it's declared, while a
+// unit that ever wrapped something unsendable (a Strong<Tag, string_view>)
+// would still be correctly refused.
+template <class Tag, class T>
+inline constexpr bool jaal::sendable_opt_in<rockbottom::Strong<Tag, T>> =
+    std::is_arithmetic_v<T>;
+template <class Q>
+inline constexpr bool jaal::sendable_opt_in<rockbottom::Rate<Q>> = true;
+template <>
+inline constexpr bool jaal::sendable_opt_in<rockbottom::Ratio> = true;
+
+// jaal also refuses shared_ptr-to-mutable by default, because the usual case
+// is two threads racing on one object. Our Sampler genuinely is shared mutable
+// state handed to a worker, so that refusal is asking a fair question too, and
+// this is the written-down answer it demands.
+//
+// Exactly ONE thread ever touches a given Sampler's mutable innards: the
+// isolated task that calls sample(). The UI thread only ever (a) copies the
+// shared_ptr and (b) calls the set_want_*/set_detail_pid setters, which are
+// atomic stores by construction (see sampler.hpp). The handoff is one-way and
+// non-overlapping — Model::sampling stops a second sample from starting until
+// the first one's result has landed — and when the watchdog gives up on a
+// wedged sampler it does NOT reuse it: it allocates a fresh Sampler and bumps
+// sampler_epoch, so the abandoned thread keeps the old object alive by
+// refcount and scribbles on memory nobody will read again.
+//
+// That last part is why the shared_ptr is load-bearing rather than lazy: a raw
+// pointer or a reference would dangle in exactly the wedged-collector case
+// this program is built to survive.
+template <>
+inline constexpr bool jaal::sendable_opt_in<std::shared_ptr<rockbottom::Sampler>> = true;
 
 namespace rockbottom {
 
@@ -217,6 +283,26 @@ struct App {
 
     using Msg = std::variant<Tick, Resize, Key, Mouse, Sampled, Quit>;
 
+    // ── the runtime rows ────────────────────────────────────────────────────
+    // jaal makes a program DECLARE what it does, and checks it. The Cmd row
+    // lists the effects we issue and the Sub row the event sources we read;
+    // asking for anything not listed is a compile error, and so is a host
+    // that can't deliver one of them.
+    //
+    // Our Cmd row is EMPTY, which is the point worth noticing: every effect
+    // rockbottom has is either built into jaal (quit, and the background
+    // sample via task_isolated) or is not an effect at all. We never set the
+    // title, never touch the clipboard, never commit scrollback — so none of
+    // maya's terminal effects appear here, and the compiler now enforces that
+    // a stray one can't sneak in.
+    using Cmd = jaal::Cmd<Msg>;
+
+    // Keys, mouse and resize come from the terminal; the sample cadence is a
+    // timer, which needs no row (jaal owns time). on_paste/on_focus are
+    // deliberately absent: a paste into a system monitor is meaningless, and
+    // we repaint off the sampler, not off focus.
+    using Sub = jaal::Sub<Msg, maya::on_key, maya::on_mouse, maya::on_resize>;
+
     // ── shared layout geometry ──────────────────────────────────────────────
     // The mouse handler and view() MUST agree on where every panel lands, so
     // the vertical/height arithmetic lives here once and both call it. Any
@@ -324,24 +410,22 @@ struct App {
     // (see hit_ids.hpp + Footer's hit() tags); this maps the action to a
     // model transition. No coordinate math — the id came from the same
     // layout pass that painted the hint.
-    static std::pair<Model, maya::Cmd<Msg>> dispatch_footer(Model m, ui::FooterAct a) {
-        using C = maya::Cmd<Msg>;
+    static Cmd dispatch_footer(Model& m, ui::FooterAct a) {
         using ui::FooterAct;
         switch (a) {
-            case FooterAct::Quit:  return {std::move(m), C::quit()};
-            case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}};
-            case FooterAct::End:   return arm_kill(std::move(m), SIGTERM);
-            case FooterAct::Kill:  return arm_kill(std::move(m), SIGKILL);
-            case FooterAct::Sort:  m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(std::move(m));
-            case FooterAct::Pause: m.paused = !m.paused; return {std::move(m), C{}};
-            case FooterAct::Help:  m.show_help = true; return {std::move(m), C{}};
+            case FooterAct::Quit:  return Cmd::quit(0);
+            case FooterAct::Filter: m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {};
+            case FooterAct::End:   return arm_kill(m, SIGTERM);
+            case FooterAct::Kill:  return arm_kill(m, SIGKILL);
+            case FooterAct::Sort:  m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(m);
+            case FooterAct::Pause: m.paused = !m.paused; return {};
+            case FooterAct::Help:  m.show_help = true; return {};
         }
-        return {std::move(m), C{}};
+        return {};
     }
 
     // ── mouse handling ───────────────────────────────────────────────────────
-    static std::pair<Model, maya::Cmd<Msg>> on_mouse(Model m, const maya::MouseEvent& me) {
-        using C = maya::Cmd<Msg>;
+    static Cmd on_mouse(Model& m, const maya::MouseEvent& me) {
         using maya::MouseButton;
         using maya::MouseEventKind;
 
@@ -357,23 +441,23 @@ struct App {
         // the list so the wheel is never a dead input.
         if (me.button == MouseButton::ScrollDown) {
             if (m.show_help) {
-                m.help_scroll += 3; clamp_help_scroll(m); return {std::move(m), C{}};
+                m.help_scroll += 3; clamp_help_scroll(m); return {};
             }
             if (m.detail != ui::Detail::None) {
-                m.detail_scroll += 3; clamp_detail_scroll(m); return {std::move(m), C{}};
+                m.detail_scroll += 3; clamp_detail_scroll(m); return {};
             }
             m.sel += 3; clamp_sel(m);
-            return {std::move(m), C{}};
+            return {};
         }
         if (me.button == MouseButton::ScrollUp) {
             if (m.show_help) {
-                m.help_scroll -= 3; clamp_help_scroll(m); return {std::move(m), C{}};
+                m.help_scroll -= 3; clamp_help_scroll(m); return {};
             }
             if (m.detail != ui::Detail::None) {
-                m.detail_scroll -= 3; clamp_detail_scroll(m); return {std::move(m), C{}};
+                m.detail_scroll -= 3; clamp_detail_scroll(m); return {};
             }
             m.sel -= 3; clamp_sel(m);
-            return {std::move(m), C{}};
+            return {};
         }
 
         // ── Drag-to-scroll ──
@@ -398,7 +482,7 @@ struct App {
             if (hit && maya::hit_kind(*hit) == ui::HK_DetailScroll) {
                 if (m.show_help) { scroll_from_bar(ui::hit_detail_scroll(), m.help_scroll,   help_scroll_max(m));   clamp_help_scroll(m); }
                 else             { scroll_from_bar(ui::hit_detail_scroll(), m.detail_scroll, detail_scroll_max(m)); clamp_detail_scroll(m); }
-                return {std::move(m), C{}};
+                return {};
             }
             // The process table's scrollbar is baked into maya::Table's row
             // cells (last 2 columns), so a gutter click resolves to HK_ProcRow,
@@ -423,7 +507,7 @@ struct App {
                     m.scroll_top = std::clamp(
                         static_cast<int>(std::lround(frac * max_top)), 0, max_top);
                     m.sel = std::clamp(m.sel, m.scroll_top, m.scroll_top + body - 1);
-                    return {std::move(m), C{}};
+                    return {};
                 }
             }
         }
@@ -438,16 +522,16 @@ struct App {
                 const int idx = static_cast<int>(maya::hit_index(*hit));
                 if (idx >= 0 && idx < n) hv = idx;
             }
-            if (hv != m.hover_row) { m.hover_row = hv; return {std::move(m), C{}}; }
-            return {std::move(m), C{}};
+            if (hv != m.hover_row) { m.hover_row = hv; return {}; }
+            return {};
         }
 
         // Only act on button presses for the rest (ignore Move/Release so we
         // don't double-fire; drags fall through harmlessly).
-        if (me.kind != MouseEventKind::Press) return {std::move(m), C{}};
+        if (me.kind != MouseEventKind::Press) return {};
 
         // Modal layers first — a click outside the modal dismisses it.
-        if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {std::move(m), C{}}; }
+        if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {}; }
         if (m.detail != ui::Detail::None) {
             // A click on a detail tab switches domain.
             if (me.button == MouseButton::Left && hit
@@ -456,7 +540,7 @@ struct App {
                 m.detail_scroll = 0;
                 m.user_anchor.clear();
                 if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
-                return {std::move(m), C{}};
+                return {};
             }
             // A click on a USERS column header sorts by it — same gesture as
             // the process table's headers. Which column maps to which key
@@ -472,9 +556,9 @@ struct App {
                 if (ci < keys.size() && keys[ci]) {
                     // Clicking the ACTIVE column flips direction, exactly like
                     // the process table's headers.
-                    return set_user_sort(std::move(m), *keys[ci]);
+                    return set_user_sort(m, *keys[ci]);
                 }
-                return {std::move(m), C{}};
+                return {};
             }
             // A click on the USERS table SELECTS that row rather than
             // closing the pane — the pane is a dashboard you work inside, and
@@ -503,12 +587,12 @@ struct App {
                     m.user_anchor = us[static_cast<std::size_t>(idx)].user;
                     if (dbl && m.user_zoom.empty()) {
                         m.last_click_pid = 0;   // consume; a 3rd click is fresh
-                        return zoom_selected_user(std::move(m));
+                        return zoom_selected_user(m);
                     }
                     m.last_click_pid = idx + 1;
                     m.last_click_at = now;
                 }
-                return {std::move(m), C{}};
+                return {};
             }
             // A click on the pane's own chrome/body does NOTHING. Closing on
             // any stray click made the panes hostile to actually USE: you
@@ -519,39 +603,39 @@ struct App {
                      || maya::hit_kind(*hit) == ui::HK_DetailScroll
                      || maya::hit_kind(*hit) == ui::HK_UserRow
                      || maya::hit_kind(*hit) == ui::HK_UserSortCol))
-                return {std::move(m), C{}};
+                return {};
             // A click genuinely OUTSIDE the pane card still dismisses it,
             // which is the normal modal contract.
             m.detail = ui::Detail::None;
             m.detail_pid = 0;
             m.user_anchor.clear();
-            return {std::move(m), C{}};
+            return {};
         }
         if (m.pending) {
             // Footer shows y·confirm / n·cancel; a click anywhere just cancels
             // for safety — killing is keyboard-confirmed only, never a click.
             m.pending.reset();
-            return {std::move(m), C{}};
+            return {};
         }
         if (m.sigmenu) {
             // Same safety rule for the signal picker: a click dismisses it;
             // the destructive choice stays keyboard-only.
             m.sigmenu.reset();
-            return {std::move(m), C{}};
+            return {};
         }
-        if (m.nicemenu) { m.nicemenu.reset(); return {std::move(m), C{}}; }
+        if (m.nicemenu) { m.nicemenu.reset(); return {}; }
         // A click on the theme picker COMMITS the previewed theme (you clicked
         // on what you were looking at) — unlike Esc, which reverts.
-        if (m.thememenu) { m.thememenu.reset(); return {std::move(m), C{}}; }
+        if (m.thememenu) { m.thememenu.reset(); return {}; }
 
         // ── Everything else routes through the paint-time hit registry ──
         if (hit) {
             switch (maya::hit_kind(*hit)) {
                 case ui::HK_FooterAct:
                     if (me.button == MouseButton::Left)
-                        return dispatch_footer(std::move(m),
+                        return dispatch_footer(m,
                             static_cast<ui::FooterAct>(maya::hit_index(*hit)));
-                    return {std::move(m), C{}};
+                    return {};
 
                 case ui::HK_SortCol:
                     if (me.button == MouseButton::Left && !m.filtering) {
@@ -563,26 +647,26 @@ struct App {
                         // stuck ascending forever. Sorting is a pure reorder of
                         // the current snapshot (the ordered view recomputes),
                         // so no re-sample is needed — matching the c/m/n keys.
-                        return set_sort(std::move(m),
+                        return set_sort(m,
                                         static_cast<SortKey>(maya::hit_index(*hit)));
                     }
-                    return {std::move(m), C{}};
+                    return {};
 
                 case ui::HK_BandPanel:
                     if (me.button == MouseButton::Left) {
                         m.detail = static_cast<ui::Detail>(maya::hit_index(*hit));
                         m.detail_scroll = 0;
                         if (m.detail == ui::Detail::Proc) pin_detail_pid(m);
-                        return {std::move(m), C{}};
+                        return {};
                     }
-                    return {std::move(m), C{}};
+                    return {};
 
                 case ui::HK_ProcRow: {
                     const int idx = static_cast<int>(maya::hit_index(*hit));
                     if (idx >= 0 && idx < n) {
                         m.sel = idx;
                         if (me.button == MouseButton::Right)
-                            return arm_kill(std::move(m), SIGTERM);
+                            return arm_kill(m, SIGTERM);
                         if (me.button == MouseButton::Left) {
                             const int pid = selected_pid(m);
                             // Double-click (same pid, within the window) opens
@@ -609,7 +693,7 @@ struct App {
                             }
                         }
                     }
-                    return {std::move(m), C{}};
+                    return {};
                 }
 
                 default:
@@ -617,13 +701,15 @@ struct App {
             }
         }
 
-        return {std::move(m), C{}};
+        return {};
     }
 
     // ── init / update ───────────────────────────────────────────────────────
 
-    static std::pair<Model, maya::Cmd<Msg>> init() {
-        Model m;
+    // jaal calls this once with the default-constructed Model, so there is no
+    // `static Model init()` returning one any more — we fill in the boot
+    // config and hand back the priming Cmd.
+    static Cmd init(Model& m) {
         // Seed the view from the boot config (CLI flags over the saved file):
         // the sort column + direction, tree/flat, refresh cadence, and an
         // optional startup filter all come back the way you left them.
@@ -663,8 +749,7 @@ struct App {
         // ports — land a heartbeat later instead of waiting a whole refresh
         // interval for the first Tick. sample_cmd runs it off-thread and folds
         // the result in via Sampled, exactly like a normal tick.
-        maya::Cmd<Msg> prime = sample_cmd(m);
-        return {std::move(m), std::move(prime)};
+        return sample_cmd(m);
     }
 
     // Write the current view state back to the config file on a clean exit, so
@@ -686,18 +771,24 @@ struct App {
     }
 
     // Describe (do NOT perform) a background sample. Returns a Cmd the runtime
-    // runs on a dedicated detached thread; when it finishes it dispatches a
+    // runs on a dedicated detached thread; when it finishes it sends a
     // Sampled{} message back through update(). task_isolated (not task) is
     // deliberate: sample_gpu() spawns nvidia-smi and reads /proc, /sys, and a
     // wedged syscall (dead FUSE mount, hung subprocess) must leak one thread
     // rather than starve the shared worker pool. Marks the model in-flight so
     // overlapping Ticks are dropped until the result lands.
-    static maya::Cmd<Msg> sample_cmd(Model& m) {
+    //
+    // The body CAPTURES NOTHING — jaal refuses a capturing task body, because a
+    // capture can outlive the update() call that made it. Everything the worker
+    // needs is passed as a by-value argument instead, which is both the rule
+    // and, here, the correct thing: the sampler handle, the sort key and the
+    // epoch are exactly the three facts the sample depends on.
+    static Cmd sample_cmd(Model& m) {
         m.sampling = true;
         m.sample_started = std::chrono::steady_clock::now();
         auto sampler = m.sampler;   // shared_ptr copy: outlives this update()
         const std::uint64_t epoch = m.sampler_epoch;
-        SortKey sort = m.sort;
+        const SortKey sort = m.sort;
         // The process detail pane is the sole consumer of the expensive
         // per-proc status/fd reads; tell the sampler which pid (if any) is
         // open so it reads those files for that ONE process instead of all.
@@ -710,98 +801,120 @@ struct App {
         // pane's DISK column. Left off, the most expensive work in the program
         // never happens at all.
         sampler->set_want_disk_usage(m.detail == ui::Detail::Users);
-        return maya::Cmd<Msg>::task_isolated(
-            [sampler, sort, epoch](std::function<void(Msg)> dispatch) {
-                dispatch(Sampled{sampler->sample(sort), epoch});
-            });
+        return Cmd::task_isolated(
+            [](jaal::Sink<Msg> out, std::stop_token,
+               std::shared_ptr<Sampler> s, SortKey k, std::uint64_t gen) {
+                // out.send returns false if the loop is already gone (quit
+                // raced this sample). Nothing to do about it and nothing to
+                // clean up — the Sink is weak, so this cannot write into
+                // freed memory. Dropping the result IS the correct handling.
+                out.send(Msg{Sampled{s->sample(k), gen}});
+            },
+            std::move(sampler), sort, epoch);
     }
 
-    static std::pair<Model, maya::Cmd<Msg>> update(Model m, Msg msg) {
-        using C = maya::Cmd<Msg>;
-        return std::visit(maya::overload{
-            [&](Tick) -> std::pair<Model, C> {
-                if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
-                if (m.verdict_pulse > 0) --m.verdict_pulse;
-                // Watchdog: an in-flight sample that outlived its limit is
-                // wedged (see Model::sampling). Abandon it — fresh Sampler,
-                // new epoch so the stale result is ignored — and re-kick.
-                if (!m.paused && m.sampling) {
-                    const auto limit = std::chrono::milliseconds(
-                        std::max(3 * m.refresh_ms, 10000));
-                    if (std::chrono::steady_clock::now() - m.sample_started > limit) {
-                        m.sampler = std::make_shared<Sampler>();
-                        ++m.sampler_epoch;
-                        m.sampling = false;
-                        m.toast = Toast{"sampler stalled — collector restarted", true};
-                    }
-                }
-                // Kick a background sample unless paused or one's already running.
-                if (!m.paused && !m.sampling) {
-                    ++m.ticks;
-                    C c = sample_cmd(m);
-                    return {std::move(m), std::move(c)};
-                }
-                return {std::move(m), C{}};
-            },
-            [&](Sampled sm) -> std::pair<Model, C> {
-                // A result from an ABANDONED sampler (watchdog fired while it
-                // was wedged): its delta state is from a dead world — drop it,
-                // and don't touch `sampling` (a new run may be in flight).
-                if (sm.epoch != m.sampler_epoch) return {std::move(m), C{}};
-                // Anchor the cursor to the PROCESS it sits on, not the row
-                // index, BEFORE the new snapshot re-sorts the list under it.
-                // Without this the list resorts every sample (cpu% shuffles
-                // rows) while m.sel stays put, so the highlight silently slides
-                // onto whatever process happens to land on that row — the
-                // "it jumped while I was looking at it" bug.
-                //
-                // Only anchor once the user has MOVED the cursor (sel>0): at
-                // the top row the table intentionally floats so the #1 slot
-                // always shows the current hottest process (htop's default).
-                // Pinning there would instead glue the cursor to last tick's
-                // leader. follow_pid (explicit pin) always wins below.
-                const int anchor_pid = m.sel > 0 ? selected_pid(m) : 0;
-                // Pure fold: the effect already did the I/O off-thread.
-                const Health prev = m.last_health;
-                m.snap = std::move(sm.snap);
-                ++m.snap_gen;   // new data → visual_hash advances → frame renders
-                m.last_health = m.snap.verdict.level;
-                if (static_cast<int>(m.last_health) > static_cast<int>(prev))
-                    m.verdict_pulse = 3;   // degrade → flare for 3 ticks
+    // ── update: one overload per Msg alternative ────────────────────────────
+    // There is no std::visit here any more, and no `Msg msg` parameter. jaal
+    // dispatches each variant alternative straight to the overload that takes
+    // it, so adding a Msg that nothing handles is a compile error instead of
+    // a silently-ignored event at runtime.
+    //
+    // The model arrives by REFERENCE and is mutated in place. That is the
+    // other half of the change and it matters here more than in a toy app:
+    // Model holds a Snapshot with ~500 ProcInfo (each with strings), and the
+    // old `Model m` by-value signature copied that on every event — every
+    // keypress, and every mouse MOVE, of which hover_motion delivers a flood.
+
+    static Cmd update(Model& m, Tick) {
+        if (m.toast && --m.toast->ttl <= 0) m.toast.reset();
+        if (m.verdict_pulse > 0) --m.verdict_pulse;
+        // Watchdog: an in-flight sample that outlived its limit is
+        // wedged (see Model::sampling). Abandon it — fresh Sampler,
+        // new epoch so the stale result is ignored — and re-kick.
+        if (!m.paused && m.sampling) {
+            const auto limit = std::chrono::milliseconds(
+                std::max(3 * m.refresh_ms, 10000));
+            if (std::chrono::steady_clock::now() - m.sample_started > limit) {
+                m.sampler = std::make_shared<Sampler>();
+                ++m.sampler_epoch;
                 m.sampling = false;
-                // Follow mode pins to its locked pid; otherwise re-resolve the
-                // cursor to the same process in the freshly-sorted view so the
-                // highlight tracks the process, not the row. select_pid falls
-                // back to clamp when the process exited (cursor holds its row).
-                if (m.follow_pid)       select_pid(m, m.follow_pid);
-                else if (anchor_pid > 0) select_pid(m, anchor_pid);
-                else                     clamp_sel(m);
-                // Re-clamp the detail pane's scroll against the FRESH snapshot:
-                // the pinned process may have exited, or the pane's body may
-                // have shrunk (fewer connections, a collapsed section), leaving
-                // detail_scroll pointing past the new content. The scroller
-                // clamps at paint time too, so this only fixes a one-frame
-                // scrollbar snap — but it keeps the model self-consistent so
-                // detail_scroll_max()-driven drag math stays correct.
-                // Same treatment for the USERS pane: its cursor is a row
-                // index into a table that just re-sorted, and X/K signal
-                // whatever it lands on. Re-point it at the anchored NAME
-                // before anything can act on the new order.
-                if (m.detail == ui::Detail::Users) sync_user_sel(m);
-                if (m.detail != ui::Detail::None) clamp_detail_scroll(m);
-                return {std::move(m), C{}};
-            },
-            [&](Resize r) { m.width = r.w; m.height = r.h; return std::pair{std::move(m), C{}}; },
-            [&](Key k)    { return on_key(std::move(m), k.ev); },
-            [&](Mouse mo) { return on_mouse(std::move(m), mo.ev); },
-            [&](Quit)     { save_config(m); return std::pair{std::move(m), C::quit()}; },
-        }, msg);
+                m.toast = Toast{"sampler stalled — collector restarted", true};
+            }
+        }
+        // Kick a background sample unless paused or one's already running.
+        if (!m.paused && !m.sampling) {
+            ++m.ticks;
+            return sample_cmd(m);
+        }
+        return {};
+    }
+
+    static Cmd update(Model& m, Sampled sm) {
+        // A result from an ABANDONED sampler (watchdog fired while it
+        // was wedged): its delta state is from a dead world — drop it,
+        // and don't touch `sampling` (a new run may be in flight).
+        if (sm.epoch != m.sampler_epoch) return {};
+        // Anchor the cursor to the PROCESS it sits on, not the row
+        // index, BEFORE the new snapshot re-sorts the list under it.
+        // Without this the list resorts every sample (cpu% shuffles
+        // rows) while m.sel stays put, so the highlight silently slides
+        // onto whatever process happens to land on that row — the
+        // "it jumped while I was looking at it" bug.
+        //
+        // Only anchor once the user has MOVED the cursor (sel>0): at
+        // the top row the table intentionally floats so the #1 slot
+        // always shows the current hottest process (htop's default).
+        // Pinning there would instead glue the cursor to last tick's
+        // leader. follow_pid (explicit pin) always wins below.
+        const int anchor_pid = m.sel > 0 ? selected_pid(m) : 0;
+        // Pure fold: the effect already did the I/O off-thread.
+        const Health prev = m.last_health;
+        m.snap = std::move(sm.snap);
+        ++m.snap_gen;   // new data → visual_hash advances → frame renders
+        m.last_health = m.snap.verdict.level;
+        if (static_cast<int>(m.last_health) > static_cast<int>(prev))
+            m.verdict_pulse = 3;   // degrade → flare for 3 ticks
+        m.sampling = false;
+        // Follow mode pins to its locked pid; otherwise re-resolve the
+        // cursor to the same process in the freshly-sorted view so the
+        // highlight tracks the process, not the row. select_pid falls
+        // back to clamp when the process exited (cursor holds its row).
+        if (m.follow_pid)       select_pid(m, m.follow_pid);
+        else if (anchor_pid > 0) select_pid(m, anchor_pid);
+        else                     clamp_sel(m);
+        // Re-clamp the detail pane's scroll against the FRESH snapshot:
+        // the pinned process may have exited, or the pane's body may
+        // have shrunk (fewer connections, a collapsed section), leaving
+        // detail_scroll pointing past the new content. The scroller
+        // clamps at paint time too, so this only fixes a one-frame
+        // scrollbar snap — but it keeps the model self-consistent so
+        // detail_scroll_max()-driven drag math stays correct.
+        // Same treatment for the USERS pane: its cursor is a row
+        // index into a table that just re-sorted, and X/K signal
+        // whatever it lands on. Re-point it at the anchored NAME
+        // before anything can act on the new order.
+        if (m.detail == ui::Detail::Users) sync_user_sel(m);
+        if (m.detail != ui::Detail::None) clamp_detail_scroll(m);
+        return {};
+    }
+
+    static Cmd update(Model& m, Resize r) {
+        m.width = r.w;
+        m.height = r.h;
+        return {};
+    }
+
+    static Cmd update(Model& m, Key k)   { return on_key(m, k.ev); }
+    static Cmd update(Model& m, Mouse o) { return on_mouse(m, o.ev); }
+
+    static Cmd update(Model& m, Quit) {
+        save_config(m);
+        return Cmd::quit(0);
     }
 
     // ── key handling: one place, mode-aware ─────────────────────────────────
 
-    static std::pair<Model, maya::Cmd<Msg>> on_key(Model m, const maya::KeyEvent& ke) {
-        using C = maya::Cmd<Msg>;
+    static Cmd on_key(Model& m, const maya::KeyEvent& ke) {
         maya::Event ev{ke};
         using maya::key;
 
@@ -818,20 +931,20 @@ struct App {
             if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
                 ui::set_theme(static_cast<std::size_t>(m.thememenu->restore));
                 m.thememenu.reset();
-                return {std::move(m), C{}};
+                return {};
             }
             if (key(ev, maya::SpecialKey::Enter) || key(ev, 'T') || key(ev, ' ')) {
                 m.toast = Toast{"theme \u00b7 " + std::string(ui::active_theme_name()), false};
                 m.thememenu.reset();
-                return {std::move(m), C{}};
+                return {};
             }
-            if (key(ev, maya::SpecialKey::Down)  || key(ev, 'j')) { preview(m.thememenu->sel + 1); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::Up)    || key(ev, 'k')) { preview(m.thememenu->sel - 1); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::PageDown)) { preview(m.thememenu->sel + 8); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::PageUp))   { preview(m.thememenu->sel - 8); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { preview(0); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { preview(n - 1); return {std::move(m), C{}}; }
-            return {std::move(m), C{}};
+            if (key(ev, maya::SpecialKey::Down)  || key(ev, 'j')) { preview(m.thememenu->sel + 1); return {}; }
+            if (key(ev, maya::SpecialKey::Up)    || key(ev, 'k')) { preview(m.thememenu->sel - 1); return {}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { preview(m.thememenu->sel + 8); return {}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { preview(m.thememenu->sel - 8); return {}; }
+            if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { preview(0); return {}; }
+            if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { preview(n - 1); return {}; }
+            return {};
         }
 
         // 0. Signal picker intercepts everything. Number keys 1-9 jump to a
@@ -841,19 +954,19 @@ struct App {
             const int n = static_cast<int>(cat.size());
             if (key(ev, maya::SpecialKey::Escape) || key(ev, 'n') || key(ev, 'q')) {
                 m.sigmenu.reset();
-                return {std::move(m), C{}};
+                return {};
             }
             if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) {
-                m.sigmenu->sel = std::min(n - 1, m.sigmenu->sel + 1); return {std::move(m), C{}};
+                m.sigmenu->sel = std::min(n - 1, m.sigmenu->sel + 1); return {};
             }
             if (key(ev, maya::SpecialKey::Up) || key(ev, 'k')) {
-                m.sigmenu->sel = std::max(0, m.sigmenu->sel - 1); return {std::move(m), C{}};
+                m.sigmenu->sel = std::max(0, m.sigmenu->sel - 1); return {};
             }
             if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
                 ck && ck->codepoint >= '1' && ck->codepoint <= '9') {
                 const int idx = static_cast<int>(ck->codepoint - '1');
                 if (idx < n) m.sigmenu->sel = idx;
-                return {std::move(m), C{}};
+                return {};
             }
             if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
                 const int sig = cat[static_cast<std::size_t>(
@@ -862,27 +975,27 @@ struct App {
                 m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
                                         sig, m.sigmenu->pids, std::move(starts)};
                 m.sigmenu.reset();
-                return {std::move(m), C{}};
+                return {};
             }
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 0b. Renice dial. ←→/↑↓ adjust; enter applies via setpriority(2).
         if (m.nicemenu) {
             if (key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
                 m.nicemenu.reset();
-                return {std::move(m), C{}};
+                return {};
             }
             if (key(ev, maya::SpecialKey::Left) || key(ev, maya::SpecialKey::Down)
                 || key(ev, 'h') || key(ev, 'j')) {
-                m.nicemenu->val = std::max(-20, m.nicemenu->val - 1); return {std::move(m), C{}};
+                m.nicemenu->val = std::max(-20, m.nicemenu->val - 1); return {};
             }
             if (key(ev, maya::SpecialKey::Right) || key(ev, maya::SpecialKey::Up)
                 || key(ev, 'l') || key(ev, 'k')) {
-                m.nicemenu->val = std::min(19, m.nicemenu->val + 1); return {std::move(m), C{}};
+                m.nicemenu->val = std::min(19, m.nicemenu->val + 1); return {};
             }
-            if (key(ev, maya::SpecialKey::PageDown)) { m.nicemenu->val = std::max(-20, m.nicemenu->val - 5); return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::PageUp))   { m.nicemenu->val = std::min(19, m.nicemenu->val + 5); return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { m.nicemenu->val = std::max(-20, m.nicemenu->val - 5); return {}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { m.nicemenu->val = std::min(19, m.nicemenu->val + 5); return {}; }
             if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
                 std::string err = renice_process(m.nicemenu->pid, m.nicemenu->val);
                 if (err.empty())
@@ -891,10 +1004,10 @@ struct App {
                 else
                     m.toast = Toast{err, true};
                 m.nicemenu.reset();
-                if (!m.sampling) { auto c = sample_cmd(m); return {std::move(m), std::move(c)}; }
-                return {std::move(m), C{}};
+                if (!m.sampling) { auto c = sample_cmd(m); return c; }
+                return {};
             }
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 1. Kill confirmation intercepts everything.
@@ -928,11 +1041,11 @@ struct App {
                 m.pending.reset();
                 // Refresh the list off-thread so killed processes drop out
                 // promptly without blocking on a full re-sample here.
-                if (!m.sampling) { auto c = sample_cmd(m); return {std::move(m), std::move(c)}; }
+                if (!m.sampling) { auto c = sample_cmd(m); return c; }
             } else if (key(ev, 'n') || key(ev, maya::SpecialKey::Escape) || key(ev, 'q')) {
                 m.pending.reset();
             }
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 2. Filter typing mode.
@@ -947,7 +1060,7 @@ struct App {
             }
             m.sel = 0;
             m.scroll_top = 0;
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 3. Help overlay: scrollable; the usual dismiss keys close it.
@@ -961,7 +1074,7 @@ struct App {
             else if (key(ev, maya::SpecialKey::PageUp))  { m.help_scroll -= 10; clamp_help_scroll(m); }
             else if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.help_scroll = 0; }
             else if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.help_scroll = 1 << 20; clamp_help_scroll(m); }
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 3b. Detail pane (full-screen drill-down): Esc/q close it, the
@@ -977,27 +1090,27 @@ struct App {
                     m.user_zoom.clear();
                     m.detail_scroll = 0;
                     sync_user_sel(m);
-                    return {std::move(m), C{}};
+                    return {};
                 }
                 if (m.detail == ui::Detail::Users && !m.user_filter.empty()) {
                     m.user_filter.clear();
                     m.user_filtering = false;
                     m.detail_scroll = 0;
                     sync_user_sel(m);
-                    return {std::move(m), C{}};
+                    return {};
                 }
                 m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
                 m.user_zoom.clear(); m.user_anchor.clear();
                 m.user_filter.clear(); m.user_filtering = false;
-                return {std::move(m), C{}};
+                return {};
             }
-            if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
-            if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m); return {std::move(m), C{}}; }
-            if (key(ev, '7')) { m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0; m.user_anchor.clear(); m.user_zoom.clear(); m.user_filter.clear(); m.user_filtering = false; m.user_desc = true; return {std::move(m), C{}}; }
+            if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {}; }
+            if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {}; }
+            if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {}; }
+            if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {}; }
+            if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {}; }
+            if (key(ev, '6')) { m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m); return {}; }
+            if (key(ev, '7')) { m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0; m.user_anchor.clear(); m.user_zoom.clear(); m.user_filter.clear(); m.user_filtering = false; m.user_desc = true; return {}; }
             if (m.detail == ui::Detail::Users) {
                 // TYPING MODE comes first: while the roster filter is open
                 // every printable key is TEXT, not a command. Otherwise
@@ -1007,19 +1120,19 @@ struct App {
                     if (key(ev, maya::SpecialKey::Escape)) {
                         m.user_filtering = false; m.user_filter.clear();
                         m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
-                        return {std::move(m), C{}};
+                        return {};
                     }
                     if (key(ev, maya::SpecialKey::Enter)) {
                         // Commit: the filter stays applied, keys go back to
                         // being commands so you can act on what you found.
                         m.user_filtering = false;
                         sync_user_sel(m);
-                        return {std::move(m), C{}};
+                        return {};
                     }
                     if (key(ev, maya::SpecialKey::Backspace)) {
                         if (!m.user_filter.empty()) m.user_filter.pop_back();
                         m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
-                        return {std::move(m), C{}};
+                        return {};
                     }
                     if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
                         ck && ck->codepoint >= 0x20 && ck->codepoint < 0x7f) {
@@ -1027,16 +1140,16 @@ struct App {
                         // Every keystroke re-narrows the list, so the cursor
                         // goes home rather than pointing at a stale row.
                         m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
-                        return {std::move(m), C{}};
+                        return {};
                     }
-                    return {std::move(m), C{}};
+                    return {};
                 }
                 // '/' opens it — the same key that filters the process list,
                 // because "narrow this list" is the same idea in both places.
                 if (key(ev, '/') && m.user_zoom.empty()) {
                     m.user_filtering = true;
                     m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
-                    return {std::move(m), C{}};
+                    return {};
                 }
                 // ↑↓ move the row cursor (and drag the scroll window with it),
                 // because the selection is what the destructive keys target —
@@ -1078,14 +1191,13 @@ struct App {
                 // someone else, with X still armed. Pressing the SAME key
                 // again reverses the order, matching the headers and the
                 // process table.
-                auto resort = [&](Model& mm, ui::UserSort k) {
-                    auto [nm, _] = set_user_sort(std::move(mm), k);
-                    mm = std::move(nm);
-                };
-                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.user_sel; clamp_usel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.user_sel = 0; clamp_usel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.user_sel = static_cast<int>(rows().size()) - 1; clamp_usel(m); return {std::move(m), C{}}; }
+                // By-reference update means this is just the call now — it
+                // used to copy the model out and back in.
+                auto resort = [](Model& mm, ui::UserSort k) { set_user_sort(mm, k); };
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.user_sel; clamp_usel(m); return {}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.user_sel; clamp_usel(m); return {}; }
+                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.user_sel = 0; clamp_usel(m); return {}; }
+                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.user_sel = static_cast<int>(rows().size()) - 1; clamp_usel(m); return {}; }
                 // Re-sort. 'c'/'m'/'i'/'n' match the process table so the
                 // muscle memory carries. Two deliberate departures:
                 //   'u' (not 'p') for procs — 'p' is PAUSE everywhere else in
@@ -1095,70 +1207,70 @@ struct App {
                 //       in every other context; reusing it here for a sort
                 //       taught two meanings for one key. Lowercase 'd' now
                 //       does the expected thing and opens the disk pane.
-                if (key(ev, 'c')) { resort(m, ui::UserSort::Cpu);   return {std::move(m), C{}}; }
-                if (key(ev, 'm')) { resort(m, ui::UserSort::Mem);   return {std::move(m), C{}}; }
-                if (key(ev, 'u')) { resort(m, ui::UserSort::Procs); return {std::move(m), C{}}; }
-                if (key(ev, 'i')) { resort(m, ui::UserSort::Io);    return {std::move(m), C{}}; }
-                if (key(ev, 'D')) { resort(m, ui::UserSort::Disk);  return {std::move(m), C{}}; }
-                if (key(ev, 'n')) { resort(m, ui::UserSort::Name);  return {std::move(m), C{}}; }
-                if (key(ev, 'd')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+                if (key(ev, 'c')) { resort(m, ui::UserSort::Cpu);   return {}; }
+                if (key(ev, 'm')) { resort(m, ui::UserSort::Mem);   return {}; }
+                if (key(ev, 'u')) { resort(m, ui::UserSort::Procs); return {}; }
+                if (key(ev, 'i')) { resort(m, ui::UserSort::Io);    return {}; }
+                if (key(ev, 'D')) { resort(m, ui::UserSort::Disk);  return {}; }
+                if (key(ev, 'n')) { resort(m, ui::UserSort::Name);  return {}; }
+                if (key(ev, 'd')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {}; }
                 // Enter: open THIS user's full dashboard — every resource
                 // they're using, in detail. Esc backs out to the roster.
                 // 'f' keeps the other half of the gesture: leave the pane with
                 // the process list FILTERED to this user, turning "who is
                 // eating the box" straight into "show me what they're running".
-                if (key(ev, maya::SpecialKey::Enter)) return zoom_selected_user(std::move(m));
-                if (key(ev, 'f'))  return filter_to_selected_user(std::move(m));
+                if (key(ev, maya::SpecialKey::Enter)) return zoom_selected_user(m);
+                if (key(ev, 'f'))  return filter_to_selected_user(m);
                 // The destructive one. Deliberately capital-X only (no lone
                 // 'x'): every other pane's lowercase x kills ONE process, and
                 // reusing it for "signal everything this person owns" would be
                 // a punishing overload of a one-key gesture.
-                if (key(ev, 'X')) return arm_kill_user(std::move(m), SIGTERM);
-                if (key(ev, 'K')) return arm_kill_user(std::move(m), SIGKILL);
-                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; m.user_sel += 10; clamp_usel(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; m.user_sel -= 10; clamp_usel(m); return {std::move(m), C{}}; }
-                return {std::move(m), C{}};
+                if (key(ev, 'X')) return arm_kill_user(m, SIGTERM);
+                if (key(ev, 'K')) return arm_kill_user(m, SIGKILL);
+                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; m.user_sel += 10; clamp_usel(m); return {}; }
+                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; m.user_sel -= 10; clamp_usel(m); return {}; }
+                return {};
             }
             if (m.detail == ui::Detail::Proc) {
                 // ↑↓ walk the table selection AND re-pin the pane to the new
                 // row, so the pane follows deliberate navigation but never
                 // drifts on its own when the table resorts under it.
-                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); pin_detail_pid(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); pin_detail_pid(m); return {}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); pin_detail_pid(m); return {}; }
                 // ←/→ walk the FAMILY: up to the parent, down into the busiest
                 // child — turning the detail pane into a tree explorer you never
                 // have to leave. Re-pins pane + table selection together.
-                if (key(ev, maya::SpecialKey::Left)  || key(ev, 'h')) return nav_family(std::move(m), /*to_parent=*/true);
-                if (key(ev, maya::SpecialKey::Right) || key(ev, 'l')) return nav_family(std::move(m), /*to_parent=*/false);
+                if (key(ev, maya::SpecialKey::Left)  || key(ev, 'h')) return nav_family(m, /*to_parent=*/true);
+                if (key(ev, maya::SpecialKey::Right) || key(ev, 'l')) return nav_family(m, /*to_parent=*/false);
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0; m.detail_pid = 0;
-                    return {std::move(m), C{}};
+                    return {};
                 }
-                if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
-                if (key(ev, 'K')) return arm_kill(std::move(m), SIGKILL);
-                if (key(ev, 'X')) return arm_kill_all(std::move(m), SIGTERM);
-                if (key(ev, 'T')) return arm_kill_subtree(std::move(m), SIGTERM);
+                if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(m, SIGTERM);
+                if (key(ev, 'K')) return arm_kill(m, SIGKILL);
+                if (key(ev, 'X')) return arm_kill_all(m, SIGTERM);
+                if (key(ev, 'T')) return arm_kill_subtree(m, SIGTERM);
                 // 'l' is the family-nav key in this pane (→ busiest child), so
                 // the signal picker moves to 's' here — 'l' could never reach
                 // open_sigmenu below it. 'r' opens the renice dial.
-                if (key(ev, 's')) return open_sigmenu(std::move(m));
-                if (key(ev, 'r')) return open_nicemenu(std::move(m));
-                if (key(ev, maya::SpecialKey::PageDown)) { m.detail_scroll += 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, 's')) return open_sigmenu(m);
+                if (key(ev, 'r')) return open_nicemenu(m);
+                if (key(ev, maya::SpecialKey::PageDown)) { m.detail_scroll += 10; clamp_detail_scroll(m); return {}; }
+                if (key(ev, maya::SpecialKey::PageUp))   { m.detail_scroll -= 10; clamp_detail_scroll(m); return {}; }
             } else {
                 if (key(ev, maya::SpecialKey::Enter)) {
                     m.detail = ui::Detail::None; m.detail_scroll = 0;
-                    return {std::move(m), C{}};
+                    return {};
                 }
                 // Every other pane is scrollable with the usual keys.
-                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { m.detail_scroll += 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { m.detail_scroll -= 1; clamp_detail_scroll(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::PageUp))  { m.detail_scroll -= 10; clamp_detail_scroll(m); return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.detail_scroll = 0; return {std::move(m), C{}}; }
-                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.detail_scroll = 1 << 20; clamp_detail_scroll(m); return {std::move(m), C{}}; }
+                if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { m.detail_scroll += 1; clamp_detail_scroll(m); return {}; }
+                if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { m.detail_scroll -= 1; clamp_detail_scroll(m); return {}; }
+                if (key(ev, maya::SpecialKey::PageDown) || key(ev, ' ')) { m.detail_scroll += 10; clamp_detail_scroll(m); return {}; }
+                if (key(ev, maya::SpecialKey::PageUp))  { m.detail_scroll -= 10; clamp_detail_scroll(m); return {}; }
+                if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.detail_scroll = 0; return {}; }
+                if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.detail_scroll = 1 << 20; clamp_detail_scroll(m); return {}; }
             }
-            return {std::move(m), C{}};
+            return {};
         }
 
         // 4. Normal mode.
@@ -1167,25 +1279,25 @@ struct App {
         // that's no longer the focus.
         m.hover_row = -1;
         if (key(ev, 'q') || key(ev, maya::SpecialKey::Escape)) {
-            if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
+            if (!m.filter.empty()) { m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {}; }
             save_config(m);
-            return {std::move(m), C::quit()};
+            return Cmd::quit(0);
         }
-        if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {std::move(m), C{}}; }
+        if (key(ev, 'p') || key(ev, ' '))  { m.paused = !m.paused; return {}; }
         // Refresh cadence: < slower, > faster, clamped 250ms–5s. A toast
         // confirms the new rate; the subscription re-times on next update.
         if (key(ev, '>') || key(ev, '.')) {
             m.refresh_ms = std::max(250, m.refresh_ms - 250);
             m.toast = Toast{"refresh " + refresh_label(m.refresh_ms), false};
-            return {std::move(m), C{}};
+            return {};
         }
         if (key(ev, '<') || key(ev, ',')) {
             m.refresh_ms = std::min(5000, m.refresh_ms + 250);
             m.toast = Toast{"refresh " + refresh_label(m.refresh_ms), false};
-            return {std::move(m), C{}};
+            return {};
         }
-        if (key(ev, '?') || (key(ev, 'h') && !m.tree)) { m.show_help = true; return {std::move(m), C{}}; }
-        if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {std::move(m), C{}}; }
+        if (key(ev, '?') || (key(ev, 'h') && !m.tree)) { m.show_help = true; return {}; }
+        if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {}; }
         // Theme deck: T opens the picker overlay — a scrolling list of every
         // theme with a live preview as you move the cursor. Enter keeps the
         // choice (persisted on clean exit), Esc reverts. Seeded on the active
@@ -1193,19 +1305,19 @@ struct App {
         if (key(ev, 'T')) {
             const int cur = static_cast<int>(ui::active_theme_index());
             m.thememenu = Model::ThemeMenu{cur, cur};
-            return {std::move(m), C{}};
+            return {};
         }
 
         // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
         // the selected process's detail.
-        if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {std::move(m), C{}}; }
-        if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {std::move(m), C{}}; }
+        if (key(ev, '1')) { m.detail = ui::Detail::Cpu;  m.detail_scroll = 0; return {}; }
+        if (key(ev, '2')) { m.detail = ui::Detail::Mem;  m.detail_scroll = 0; return {}; }
+        if (key(ev, '3')) { m.detail = ui::Detail::Net;  m.detail_scroll = 0; return {}; }
+        if (key(ev, '4')) { m.detail = ui::Detail::Gpu;  m.detail_scroll = 0; return {}; }
+        if (key(ev, '5')) { m.detail = ui::Detail::Disk; m.detail_scroll = 0; return {}; }
         if (key(ev, '6') || key(ev, maya::SpecialKey::Enter)) {
             m.detail = ui::Detail::Proc; m.detail_scroll = 0; pin_detail_pid(m);
-            return {std::move(m), C{}};
+            return {};
         }
         if (key(ev, '7')) {
             m.detail = ui::Detail::Users; m.detail_scroll = 0; m.user_sel = 0;
@@ -1214,59 +1326,59 @@ struct App {
             m.user_filter.clear();
             m.user_filtering = false;
             m.user_desc = true;   // open biggest-first, not however you left it
-            return {std::move(m), C{}};
+            return {};
         }
 
-        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); m.sort_desc = true; return resample(std::move(m)); }
-        if (key(ev, 'c')) return set_sort(std::move(m), SortKey::Cpu);
-        if (key(ev, 'm')) return set_sort(std::move(m), SortKey::Mem);
-        if (key(ev, 'i')) return set_sort(std::move(m), SortKey::Io);
-        if (key(ev, 'P')) return set_sort(std::move(m), SortKey::Pid);
-        if (key(ev, 'n')) return set_sort(std::move(m), SortKey::Name);
-        if (key(ev, 'o')) return set_sort(std::move(m), SortKey::Port);
-        if (key(ev, 'R')) { m.sort_desc = !m.sort_desc; const int keep = selected_pid(m); select_pid(m, keep); return {std::move(m), C{}}; }
+        if (key(ev, 's')) { m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); m.sort_desc = true; return resample(m); }
+        if (key(ev, 'c')) return set_sort(m, SortKey::Cpu);
+        if (key(ev, 'm')) return set_sort(m, SortKey::Mem);
+        if (key(ev, 'i')) return set_sort(m, SortKey::Io);
+        if (key(ev, 'P')) return set_sort(m, SortKey::Pid);
+        if (key(ev, 'n')) return set_sort(m, SortKey::Name);
+        if (key(ev, 'o')) return set_sort(m, SortKey::Port);
+        if (key(ev, 'R')) { m.sort_desc = !m.sort_desc; const int keep = selected_pid(m); select_pid(m, keep); return {}; }
 
         // Tree view + navigation.
-        if (key(ev, 't')) return toggle_tree(std::move(m));
-        if (key(ev, '*')) return toggle_follow(std::move(m));
-        if (m.tree && (key(ev, maya::SpecialKey::Left)  || key(ev, 'h'))) return set_collapse(std::move(m), true);
-        if (m.tree && (key(ev, maya::SpecialKey::Right) || key(ev, 'l'))) return set_collapse(std::move(m), false);
-        if (m.tree && key(ev, '=')) return collapse_all(std::move(m));
-        if (m.tree && key(ev, '+')) return expand_all(std::move(m));
+        if (key(ev, 't')) return toggle_tree(m);
+        if (key(ev, '*')) return toggle_follow(m);
+        if (m.tree && (key(ev, maya::SpecialKey::Left)  || key(ev, 'h'))) return set_collapse(m, true);
+        if (m.tree && (key(ev, maya::SpecialKey::Right) || key(ev, 'l'))) return set_collapse(m, false);
+        if (m.tree && key(ev, '=')) return collapse_all(m);
+        if (m.tree && key(ev, '+')) return expand_all(m);
 
         // Selection.
-        if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.sel; clamp_sel(m); m.follow_pid = 0; return {}; }
+        if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.sel; clamp_sel(m); m.follow_pid = 0; return {}; }
         // Top / bottom. `g`/`G` mirror the vim idiom used by every other
         // scrollable view in the app (menus, help, detail pane); the main
         // table only had Home/End, an inconsistency for the primary view.
-        if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {std::move(m), C{}}; }
-        if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+        if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {}; }
+        if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.sel = 1 << 20; clamp_sel(m); m.follow_pid = 0; return {}; }
         // Page by the ACTUAL visible body height, not a hardcoded 10, so one
         // press moves exactly one screenful and the cursor keeps its place on
         // the new page. Fall back to a sane step on a degenerate viewport.
         {
             const int page = std::max(1, compute_layout(m).body_rows - 1);
-            if (key(ev, maya::SpecialKey::PageDown)) { m.sel += page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-            if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= page; clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { m.sel += page; clamp_sel(m); m.follow_pid = 0; return {}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { m.sel -= page; clamp_sel(m); m.follow_pid = 0; return {}; }
             // H / M / L — cursor to the top / middle / bottom of the VISIBLE
             // window without scrolling (vim's screen-relative motions). The
             // window is [scroll_top, scroll_top+body); clamp_sel keeps it in
             // range when the list is shorter than a screenful.
             const int body = std::max(1, compute_layout(m).body_rows);
-            if (key(ev, 'H')) { m.sel = m.scroll_top;                    clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-            if (key(ev, 'M')) { m.sel = m.scroll_top + body / 2;         clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
-            if (key(ev, 'L')) { m.sel = m.scroll_top + body - 1;         clamp_sel(m); m.follow_pid = 0; return {std::move(m), C{}}; }
+            if (key(ev, 'H')) { m.sel = m.scroll_top;                    clamp_sel(m); m.follow_pid = 0; return {}; }
+            if (key(ev, 'M')) { m.sel = m.scroll_top + body / 2;         clamp_sel(m); m.follow_pid = 0; return {}; }
+            if (key(ev, 'L')) { m.sel = m.scroll_top + body - 1;         clamp_sel(m); m.follow_pid = 0; return {}; }
         }
 
         // Kill.
-        if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(std::move(m), SIGTERM);
-        if (key(ev, 'K'))                                      return arm_kill(std::move(m), SIGKILL);
-        if (key(ev, 'X'))                                      return arm_kill_all(std::move(m), SIGTERM);
-        if (key(ev, 'l') && !m.tree)                           return open_sigmenu(std::move(m));
-        if (key(ev, 'r'))                                      return open_nicemenu(std::move(m));
+        if (key(ev, 'x') || key(ev, maya::SpecialKey::Delete)) return arm_kill(m, SIGTERM);
+        if (key(ev, 'K'))                                      return arm_kill(m, SIGKILL);
+        if (key(ev, 'X'))                                      return arm_kill_all(m, SIGTERM);
+        if (key(ev, 'l') && !m.tree)                           return open_sigmenu(m);
+        if (key(ev, 'r'))                                      return open_nicemenu(m);
 
-        return {std::move(m), C{}};
+        return {};
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────
@@ -1362,21 +1474,21 @@ struct App {
     }
 
     // Toggle the process-tree view, keeping the cursor on the same process.
-    static std::pair<Model, maya::Cmd<Msg>> toggle_tree(Model m) {
+    static Cmd toggle_tree(Model& m) {
         const int keep = selected_pid(m);
         m.tree = !m.tree;
         // Tree opens FULLY EXPANDED (collapsed set stays empty); leaving tree
         // clears any folds so re-entry is a clean, fully-open slate.
         if (!m.tree) m.collapsed.clear();
         select_pid(m, keep);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Collapse (fold=true) or expand (fold=false) the selected subtree. In
     // flat mode this is a no-op. Collapsing a leaf jumps to its parent so
     // ←/→ feels like real tree navigation (htop idiom).
-    static std::pair<Model, maya::Cmd<Msg>> set_collapse(Model m, bool fold) {
-        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+    static Cmd set_collapse(Model& m, bool fold) {
+        if (!m.tree) return {};
         // Snapshot the row's facts out of the (cached) view BEFORE any mutation,
         // because select_pid() below recomputes the cache and would invalidate
         // a held reference.
@@ -1384,7 +1496,7 @@ struct App {
         {
             const ui::OrderedProcs& ord = ordered(m);
             if (m.sel < 0 || m.sel >= static_cast<int>(ord.procs.size()))
-                return {std::move(m), maya::Cmd<Msg>{}};
+                return {};
             const auto* p = ord.procs[static_cast<std::size_t>(m.sel)];
             pid = p->pid; ppid = p->ppid;
             kids = m.sel < static_cast<int>(ord.has_kids.size())
@@ -1401,25 +1513,25 @@ struct App {
             if (kids && m.collapsed.count(pid)) m.collapsed.erase(pid);
         }
         select_pid(m, pid);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Toggle collapse on the selected row (Space / Enter-on-parent).
-    static std::pair<Model, maya::Cmd<Msg>> toggle_collapse(Model m) {
-        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+    static Cmd toggle_collapse(Model& m) {
+        if (!m.tree) return {};
         const int pid = selected_pid(m);
-        if (pid <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        if (pid <= 0) return {};
         if (m.collapsed.count(pid)) m.collapsed.erase(pid);
         else                        m.collapsed.insert(pid);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Fold EVERY subtree to its roots (btop/broot "fit to screen"): collapse
     // every process that has children in the current view. The cursor stays on
     // its process — if that row got folded away under an ancestor, select_pid
     // resolves to the nearest visible row.
-    static std::pair<Model, maya::Cmd<Msg>> collapse_all(Model m) {
-        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+    static Cmd collapse_all(Model& m) {
+        if (!m.tree) return {};
         const int keep = selected_pid(m);
         // Build the parent set from the UNFILTERED, UNCOLLAPSED tree so we fold
         // every real parent, not just the ones currently expanded/visible.
@@ -1431,16 +1543,16 @@ struct App {
             if (i < full.has_kids.size() && full.has_kids[i])
                 m.collapsed.insert(full.procs[i]->pid);
         select_pid(m, keep);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Expand everything: clear the fold set so the whole tree is open.
-    static std::pair<Model, maya::Cmd<Msg>> expand_all(Model m) {
-        if (!m.tree) return {std::move(m), maya::Cmd<Msg>{}};
+    static Cmd expand_all(Model& m) {
+        if (!m.tree) return {};
         const int keep = selected_pid(m);
         m.collapsed.clear();
         select_pid(m, keep);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Lock/unlock "pin": mark the selected process and keep the cursor glued
@@ -1448,21 +1560,21 @@ struct App {
     // where it sits in the list — no hoisting, no jump. You can watch one
     // process without losing it as the list re-sorts. Re-pressing on the same
     // process (or moving the cursor off it) unpins.
-    static std::pair<Model, maya::Cmd<Msg>> toggle_follow(Model m) {
+    static Cmd toggle_follow(Model& m) {
         const int pid = selected_pid(m);
         m.follow_pid = (m.follow_pid == pid) ? 0 : pid;   // pin in place / unpin
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Pick a sort column. Re-pressing the ACTIVE column flips direction
     // (btop/htop idiom); switching columns resets to the natural "biggest
     // first" order.
-    static std::pair<Model, maya::Cmd<Msg>> set_sort(Model m, SortKey k) {
+    static Cmd set_sort(Model& m, SortKey k) {
         const int keep = selected_pid(m);
         if (m.sort == k) m.sort_desc = !m.sort_desc;
         else            { m.sort = k; m.sort_desc = true; }
         select_pid(m, keep);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Remember WHICH process the Proc detail pane is showing. The table
@@ -1520,24 +1632,24 @@ struct App {
 
     // Open the signal picker on the selected process (single target). The
     // menu itself arms the PendingKill once a signal is chosen.
-    static std::pair<Model, maya::Cmd<Msg>> open_sigmenu(Model m) {
+    static Cmd open_sigmenu(Model& m) {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.sigmenu = Model::SigMenu{p->pid, p->name, {p->pid}, 0};
         }
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Open the renice dial on the selected process, seeded with its current
     // nice value so ←→ nudge from where it already is.
-    static std::pair<Model, maya::Cmd<Msg>> open_nicemenu(Model m) {
+    static Cmd open_nicemenu(Model& m) {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.nicemenu = Model::NiceMenu{p->pid, p->name, p->nice, p->nice};
         }
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Thin adapter over ui::starts_of — the pure version takes the process
@@ -1548,19 +1660,19 @@ struct App {
         return ui::starts_of(m.snap.procs, pids);
     }
 
-    static std::pair<Model, maya::Cmd<Msg>> arm_kill(Model m, int sig) {
+    static Cmd arm_kill(Model& m, int sig) {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
             m.pending = PendingKill{p->pid, p->name, sig, {p->pid}, {p->start_sec}};
         }
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Arm a kill for EVERY process sharing the selected row's name (the
     // "kill all Chrome Helpers" move). Same keyboard-confirm flow — the
     // confirm strip shows the count so there are no surprises.
-    static std::pair<Model, maya::Cmd<Msg>> arm_kill_all(Model m, int sig) {
+    static Cmd arm_kill_all(Model& m, int sig) {
         const auto& view = filtered(m);
         if (!view.empty() && m.sel < static_cast<int>(view.size())) {
             const ProcInfo* p = view[static_cast<std::size_t>(m.sel)];
@@ -1569,7 +1681,7 @@ struct App {
             auto starts = starts_of(m, pids);
             m.pending = PendingKill{p->pid, p->name, sig, std::move(pids), std::move(starts)};
         }
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Arm a kill for EVERY process owned by the USERS pane's selected row —
@@ -1587,12 +1699,12 @@ struct App {
     //  * The confirm strip still runs, and on confirm every pid is
     //    revalidated against start_sec, so the pid-reuse race is covered by
     //    exactly the same guard as every other kill path.
-    static std::pair<Model, maya::Cmd<Msg>> arm_kill_user(Model m, int sig) {
+    static Cmd arm_kill_user(Model& m, int sig) {
         // MUST use the same list the pane renders, or `user_sel` would index
         // a different table than the one on screen — and this one ends in
         // kill(2). users_rows() is that single source of truth.
         const std::vector<ui::UserStat> us = users_rows(m);
-        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        if (us.empty()) return {};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;
 
@@ -1605,19 +1717,19 @@ struct App {
         if (!m.user_anchor.empty() && m.user_anchor != user) {
             sync_user_sel(m);
             m.toast = Toast{"the list moved under the cursor \xe2\x80\x94 nothing was signalled, try again", true};
-            return {std::move(m), maya::Cmd<Msg>{}};
+            return {};
         }
 
         if (user == "root") {
             m.toast = Toast{"refusing to mass-signal root \xe2\x80\x94 that's not a recovery action",
                             true};
-            return {std::move(m), maya::Cmd<Msg>{}};
+            return {};
         }
         std::vector<int> pids =
             ui::plan_by_user(m.snap.procs, user, static_cast<int>(::getpid()));
         if (pids.empty()) {
             m.toast = Toast{"no signalable processes for " + user, false};
-            return {std::move(m), maya::Cmd<Msg>{}};
+            return {};
         }
         auto starts = starts_of(m, pids);
         // The anchor pid is only used for messaging; the name carries the
@@ -1625,7 +1737,7 @@ struct App {
         // recognises.
         const int anchor = pids.front();
         m.pending = PendingKill{anchor, user, sig, std::move(pids), std::move(starts)};
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Pick a roster column, or flip direction if it's already active — the
@@ -1634,39 +1746,39 @@ struct App {
     // keyboard through here is what keeps them in lockstep; setting
     // m.user_sort directly anywhere else would leave the arrow lying about
     // the order, or strand the table ascending forever.
-    static std::pair<Model, maya::Cmd<Msg>> set_user_sort(Model m, ui::UserSort k) {
+    static Cmd set_user_sort(Model& m, ui::UserSort k) {
         if (m.user_sort == k) m.user_desc = !m.user_desc;
         else { m.user_sort = k; m.user_desc = true; }
         // Re-point the cursor at the same PERSON after the reorder, rather
         // than leaving it on a row index that now names someone else — X is
         // armed against whatever this lands on.
         sync_user_sel(m);
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Open the selected user's full dashboard. Stores the NAME, so the view
     // can't drift onto a different person when the roster re-sorts underneath.
-    static std::pair<Model, maya::Cmd<Msg>> zoom_selected_user(Model m) {
+    static Cmd zoom_selected_user(Model& m) {
         const std::vector<ui::UserStat> us = users_rows(m);
-        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        if (us.empty()) return {};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         m.user_zoom = us[static_cast<std::size_t>(idx)].user;
         m.user_anchor = m.user_zoom;   // backing out lands on the same row
         m.detail_scroll = 0;
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Leave the USERS pane with the process table filtered to that user. The
     // pane answers "who", this turns it straight into "show me what" without
     // making the admin retype a filter they just read off the screen.
-    static std::pair<Model, maya::Cmd<Msg>> filter_to_selected_user(Model m) {
+    static Cmd filter_to_selected_user(Model& m) {
         const std::vector<ui::UserStat> us = users_rows(m);
-        if (us.empty()) return {std::move(m), maya::Cmd<Msg>{}};
+        if (us.empty()) return {};
         const int idx = std::clamp(m.user_sel, 0, static_cast<int>(us.size()) - 1);
         const std::string& user = us[static_cast<std::size_t>(idx)].user;
         if (user == "?") {
             m.toast = Toast{"those processes have no resolvable owner", false};
-            return {std::move(m), maya::Cmd<Msg>{}};
+            return {};
         }
         m.filter = "user:" + user;
         m.detail = ui::Detail::None;
@@ -1675,7 +1787,7 @@ struct App {
         clamp_sel(m);
         sync_scroll(m);
         m.toast = Toast{"filtered to " + user + " \xc2\xb7 esc clears", false};
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // How many USERS rows the table can show. Delegates to the PANE's own
@@ -1730,9 +1842,9 @@ struct App {
     // descendant), pid-collected by walking the parent map. The "reap this
     // process group" move — one confirm, the strip shows the count. Targets
     // m.detail_pid so it works from the pane regardless of table selection.
-    static std::pair<Model, maya::Cmd<Msg>> arm_kill_subtree(Model m, int sig) {
+    static Cmd arm_kill_subtree(Model& m, int sig) {
         const int root = m.detail == ui::Detail::Proc ? m.detail_pid : selected_pid(m);
-        if (root <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        if (root <= 0) return {};
         const ProcInfo* rp = nullptr;
         for (const auto& q : m.snap.procs) if (q.pid == root) { rp = &q; break; }
 
@@ -1747,18 +1859,18 @@ struct App {
         // subtree of one (a leaf) still reads as a single-target kill.
         auto starts = starts_of(m, pids);
         m.pending = PendingKill{root, name + " +subtree", sig, std::move(pids), std::move(starts)};
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Walk the FAMILY from the detail pane: to_parent hops up to the ppid, else
     // down into the busiest child. Re-pins m.detail_pid and best-effort syncs
     // m.sel so leaving the pane lands the cursor on the same process.
-    static std::pair<Model, maya::Cmd<Msg>> nav_family(Model m, bool to_parent) {
+    static Cmd nav_family(Model& m, bool to_parent) {
         const int cur = m.detail_pid;
-        if (cur <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        if (cur <= 0) return {};
         const ProcInfo* self = nullptr;
         for (const auto& q : m.snap.procs) if (q.pid == cur) { self = &q; break; }
-        if (!self) return {std::move(m), maya::Cmd<Msg>{}};
+        if (!self) return {};
 
         int target = 0;
         if (to_parent) {
@@ -1771,7 +1883,7 @@ struct App {
             for (const auto& q : m.snap.procs)
                 if (q.ppid == cur && q.pid != cur && q.cpu > best) { best = q.cpu; target = q.pid; }
         }
-        if (target <= 0) return {std::move(m), maya::Cmd<Msg>{}};
+        if (target <= 0) return {};
         m.detail_pid = target;
         m.detail_scroll = 0;
         // If the target is visible in the current ordered list, move the cursor
@@ -1779,7 +1891,7 @@ struct App {
         const auto& view = filtered(m);
         for (std::size_t i = 0; i < view.size(); ++i)
             if (view[i]->pid == target) { m.sel = static_cast<int>(i); break; }
-        return {std::move(m), maya::Cmd<Msg>{}};
+        return {};
     }
 
     // Human refresh label: "1.0s" / "250ms" for the toast + chip.
@@ -1791,15 +1903,15 @@ struct App {
         return std::to_string(ms) + "ms";
     }
 
-    static std::pair<Model, maya::Cmd<Msg>> resample(Model m) {
+    static Cmd resample(Model& m) {
         // Sort changed: re-sample in the background rather than blocking the
         // keystroke. The list keeps showing the old order for one frame, then
         // Sampled{} folds in the re-sorted snapshot. If a sample is already in
         // flight we let it finish (its result will already carry the new sort).
         clamp_sel(m);
-        if (m.sampling) return {std::move(m), maya::Cmd<Msg>{}};
+        if (m.sampling) return {};
         auto c = sample_cmd(m);
-        return {std::move(m), std::move(c)};
+        return c;
     }
 
     // ── subscriptions ───────────────────────────────────────────────────────
@@ -1884,21 +1996,26 @@ struct App {
         return h;
     }
 
-    static maya::Sub<Msg> subscribe(const Model& m) {
-        using S = maya::Sub<Msg>;
+    static Sub subscribe(const Model& m) {
+        using S = Sub;
         using namespace std::chrono_literals;
         std::vector<S> subs;
         // Sample cadence is model-driven (< > adjust it); maya re-subscribes
         // after each update so a changed interval takes effect immediately.
         subs.push_back(S::every(std::chrono::milliseconds(std::clamp(m.refresh_ms, 250, 5000)),
                                 Tick{}));
-        subs.push_back(S::on_resize([](maya::Size sz) -> Msg {
-            return Resize{sz.width.value, sz.height.value};
+        // The three terminal sources, each declared in the Sub row above.
+        // Sub::on(router, fn) replaces the old named on_key/on_mouse/on_resize
+        // helpers: the router tag is what jaal matches against the host, so a
+        // source the host doesn't produce fails to compile rather than being a
+        // handler that quietly never fires.
+        subs.push_back(S::on(maya::on_resize{}, [](const maya::ResizeEvent& rz) -> std::optional<Msg> {
+            return Resize{rz.width.value, rz.height.value};
         }));
-        subs.push_back(S::on_key([](const maya::KeyEvent& ke) -> std::optional<Msg> {
+        subs.push_back(S::on(maya::on_key{}, [](const maya::KeyEvent& ke) -> std::optional<Msg> {
             return Key{ke};
         }));
-        subs.push_back(S::on_mouse([](const maya::MouseEvent& me) -> std::optional<Msg> {
+        subs.push_back(S::on(maya::on_mouse{}, [](const maya::MouseEvent& me) -> std::optional<Msg> {
             return Mouse{me};
         }));
         return S::batch(std::move(subs));

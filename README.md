@@ -441,8 +441,10 @@ from ~470ms to ~7ms. You press the key, it's there.
 
 ## Architecture (skip this; we both know you were going to)
 
-rockbottom is a maya **Elm-style `Program`** — pure functions, no sneaky in-place
-mutations, the kind of tidy that would make your therapist weep with pride:
+rockbottom is an **Elm-style `Program`** — pure functions, no sneaky in-place
+mutations, the kind of tidy that would make your therapist weep with pride.
+maya draws it; [jaal](https://github.com/1ay1/jaal), maya's runtime, runs the
+loop, the timers and the background thread:
 
 | Layer | Where | Role |
 |-------|-------|------|
@@ -450,8 +452,25 @@ mutations, the kind of tidy that would make your therapist weep with pride:
 | Data | `src/core/metrics.hpp` | Pure `Snapshot` value types + the almighty `Verdict` |
 | Sampler | `src/core/sampler.*` + `verdict.cpp` | OS-agnostic: orchestration, cross-tick deltas, and the diagnosis engine |
 | Platform | `src/core/platform/<os>/` | The one grubby room that touches the real world — `linux/` reads `/proc` + `/sys`; `darwin/` uses mach / sysctl / libproc / IOKit. CMake compiles exactly one |
-| App | `src/ui/app.hpp` | `Model` + `Msg` + `update` + a pure `view` |
+| App | `src/ui/app.hpp` | `Model` + `Msg` + one `update` per message + a pure `view` |
 | Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
+
+The program **declares what it's allowed to do**, and the compiler holds it to
+it. `Cmd` lists the effects rockbottom issues and `Sub` lists the event sources
+it reads (`on_key`, `on_mouse`, `on_resize` — no paste, no focus), so reaching
+for an effect that isn't on the list doesn't compile. Our `Cmd` row is *empty*,
+which is the interesting part: rb never sets the title, never touches your
+clipboard, never writes to scrollback. That's now a fact the build enforces
+rather than a habit.
+
+The same check runs across the thread boundary. The background sample is an
+isolated task whose body **captures nothing** — everything it needs (the sampler
+handle, the sort key, the epoch) is passed by value — and every value that
+crosses is verified as safe to send, field by field. That check earned its keep
+immediately: it flagged a `const char*` tag sitting in `UserAccount`, which is
+now a `DiskSource` enum. The pointers were harmless string literals, but the
+three call sites comparing them were each building a `std::string` to test a
+three-way tag.
 
 No pane hand-counts breakpoints like a savage. Every layout is *measured*: maya's
 responsive toolkit (`fit_row` sheds the header **and** the footer hints as they
@@ -470,9 +489,15 @@ serene in here. Please take your shoes off.
 
 ## Building
 
-Needs a C++26 compiler (GCC 15+; built on GCC 16) and CMake 3.28+. Yes, it's a
-fancy compiler. The type theory has *demands.* It's an artist, and it will not be
-rushed.
+Needs a C++26 compiler (GCC 16+ or Clang 22+) and CMake 3.28+. Yes, it's a fancy
+compiler. The type theory has *demands.* It's an artist, and it will not be
+rushed. C++26 is a hard floor, not a preference: jaal reads a struct's fields
+with structured-binding packs (P1061), which landed in GCC 16 and Clang 22, so
+there is no C++23 fallback to fall back to.
+
+The submodules are **recursive**: maya carries jaal. `--recurse-submodules` on
+the clone handles it; if you forget, the CMake configure will tell you which one
+is missing instead of failing somewhere deep in a header.
 
 **Linux:**
 
@@ -651,7 +676,8 @@ every platform.
 ## License
 
 MIT — see [LICENSE](LICENSE). Do whatever you want; we are not your dad, and we
-would not presume. Vendored maya is MIT too. Everybody's chill. Go be free.
+would not presume. Vendored maya (and its jaal) is MIT too. Everybody's chill.
+Go be free.
 
 ---
 

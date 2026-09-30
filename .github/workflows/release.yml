@@ -8,8 +8,8 @@ name: release
 #
 # Supported platforms: Linux (x86_64 + arm64) and Apple Silicon macOS. There is
 # deliberately no Windows build, and no Intel macOS build (the macos-13 runner
-# image is retired). maya is a submodule → recursive checkout; macOS builds with
-# Homebrew GCC.
+# image is retired). maya is a submodule and carries jaal → recursive checkout;
+# macOS builds with Homebrew GCC 16 (jaal needs P1061, GCC 16+).
 #
 # Asset names embed platform + arch so all three coexist:
 #   rb-linux-x86_64  rb-linux-arm64  rb-macos-arm64
@@ -48,7 +48,7 @@ jobs:
 
       - name: Install toolchain (macOS)
         if: runner.os == 'macOS'
-        run: brew install gcc@14 cmake ninja || true
+        run: brew install gcc@16 cmake ninja || true
 
       # ── Linux: build against MUSL, not glibc ────────────────────────────
       # The Linux release is compiled inside Alpine so it links musl's libc.a
@@ -65,8 +65,10 @@ jobs:
       #   * It also removes the static-glibc NSS caveat cleanly: musl can't
       #     dlopen glibc NSS modules either, but user_of() already handles that
       #     (parse /etc/passwd, then busybox `getent` for directory accounts).
-      # Alpine edge ships gcc 14+ with musl and the *-static runtime archives,
-      # which is the C++26 toolchain maya needs (std::move_only_function).
+      # Alpine edge tracks a current GCC with musl and the *-static runtime
+      # archives, which is the toolchain this repo needs: C++26 with structured
+      # binding packs (P1061, GCC 16+) for maya's vendored jaal runtime, plus
+      # std::move_only_function for maya itself.
       - name: Build (Release, stripped) — Linux, musl/Alpine
         if: runner.os == 'Linux'
         shell: bash
@@ -96,7 +98,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          export CC=gcc-14 CXX=g++-14
+          export CC=gcc-16 CXX=g++-16
           # -DRB_STANDALONE=ON is the default, but say it out loud: this is the
           # release path and a portable binary is the whole point. Being
           # explicit means a future flip of the default can never silently turn

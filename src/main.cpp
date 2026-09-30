@@ -1,7 +1,7 @@
 // main.cpp — entry point: parse CLI flags + config, then hand the App program
-// to the maya runtime.
+// to the maya runtime (maya draws; jaal runs the loop).
 
-#include <maya/maya.hpp>
+#include <maya/host/run.hpp>
 
 #include "ui/app.hpp"
 #include "core/config.hpp"
@@ -337,8 +337,8 @@ int main(int argc, char** argv) {
             int people = 0, quota_n = 0, scan_n = 0;
             for (const UserAccount& a : s.accounts) {
                 if (!a.system) ++people;
-                if (a.disk_source == std::string("quota")) ++quota_n;
-                else if (a.disk_source == std::string("scan")) ++scan_n;
+                if (a.disk_source == DiskSource::Quota) ++quota_n;
+                else if (a.disk_source == DiskSource::Scan) ++scan_n;
             }
             std::string why;
             if (s.accounts.empty()) {
@@ -423,7 +423,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    maya::run<rockbottom::App>({
+    return maya::run<rockbottom::App>({
         .title = "rockbottom",
         // Event-driven, NOT a fixed frame rate.
         //
@@ -444,5 +444,4 @@ int main(int argc, char** argv) {
         .hover_motion = true,
         .mode  = maya::Mode::Fullscreen,
     });
-    return 0;
 }

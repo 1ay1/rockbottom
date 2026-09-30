@@ -56,7 +56,7 @@ struct UserStat {
     std::uint64_t disk_quota = 0;
     bool          disk_known = false;    // false = not measured, NOT "zero"
     bool          disk_partial = false;  // a budgeted scan is still running
-    const char*   disk_source = "";
+    DiskSource    disk_source = DiskSource::None;
     // Disk usage as a FRACTION, so the roster can rank people against a
     // common scale. Against a quota it's bytes/quota (that's the limit that
     // actually bites); with no quota it's bytes/filesystem-size. 0 when

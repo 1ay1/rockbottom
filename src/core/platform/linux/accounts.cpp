@@ -281,7 +281,7 @@ void Sampler::sample_accounts(std::vector<UserAccount>& accounts,
             a.disk_files += files;
             a.disk_quota = std::max(a.disk_quota, limit);
             a.disk_known = true;
-            a.disk_source = "quota";
+            a.disk_source = DiskSource::Quota;
         }
     }
 #endif
@@ -292,14 +292,14 @@ void Sampler::sample_accounts(std::vector<UserAccount>& accounts,
     {
         std::lock_guard<std::mutex> lk(home_scan_mu_);
         for (UserAccount& a : accounts) {
-            if (a.disk_known && a.disk_source == std::string("quota")) continue;
+            if (a.disk_known && a.disk_source == DiskSource::Quota) continue;
             auto it = home_scan_.find(a.name);
             if (it == home_scan_.end()) continue;
             a.disk_bytes   = it->second.bytes;
             a.disk_files   = it->second.files;
             a.disk_known   = true;
             a.disk_partial = !it->second.complete;
-            a.disk_source  = "scan";
+            a.disk_source  = DiskSource::Scan;
         }
     }
 
