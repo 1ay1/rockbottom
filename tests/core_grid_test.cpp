@@ -26,6 +26,7 @@
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/core/platform/common/sys_util.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
+#include "../src/ui/widgets/theme_menu.hpp"
 #include "../src/ui/widgets/detail/cpu.hpp"
 #include "../src/ui/widgets/detail/mem.hpp"
 #include "../src/ui/widgets/detail/net.hpp"
@@ -1172,6 +1173,70 @@ int main() {
         check(!theme_suggestions("mocah", 4).empty(),
               "a transposed typo still offers suggestions");
         check(theme_resolve("") < 0, "an empty theme name resolves to nothing");
+
+        // The picker's dark/light filter. Both halves must be non-empty and
+        // must partition the deck, or a filter chip is a dead end.
+        {
+            const std::size_t all   = theme_search("", ThemeMode::All).size();
+            const std::size_t dark  = theme_search("", ThemeMode::Dark).size();
+            const std::size_t light = theme_search("", ThemeMode::Light).size();
+            check(dark > 20 && light > 20,
+                  "both the dark and light filters keep a usable number of themes (" +
+                  std::to_string(dark) + " dark, " + std::to_string(light) + " light)");
+            // native is in every list (it has no palette to classify), so the
+            // halves overlap by exactly it.
+            check(dark + light == all + 1,
+                  "dark and light partition the deck, with native in both");
+            check(theme_search("", ThemeMode::Light)[0] == 0,
+                  "native stays available under a mode filter");
+        }
+
+        // Match highlighting drives what the picker underlines, so it has to
+        // agree with the matcher that ranked the row — one position per query
+        // character, in order, landing on the right letters.
+        {
+            const int i = theme_resolve("Catppuccin Mocha");
+            const std::vector<std::size_t> pos =
+                theme_match_positions(static_cast<std::size_t>(i), "cmocha");
+            check(pos.size() == 6, "every query character gets a highlight position");
+            bool ascending = true;
+            for (std::size_t k = 1; k < pos.size(); ++k)
+                if (pos[k] <= pos[k - 1]) ascending = false;
+            check(ascending, "highlight positions are strictly left-to-right");
+            const std::string nm = theme_name(static_cast<std::size_t>(i));
+            bool on_letters = !pos.empty();
+            const std::string want = "cmocha";
+            for (std::size_t k = 0; k < pos.size(); ++k) {
+                const char c = nm[pos[k]];
+                const char lc = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+                if (lc != want[k]) on_letters = false;
+            }
+            check(on_letters, "each highlight lands on the character it matched");
+            check(theme_match_positions(static_cast<std::size_t>(i), "").empty(),
+                  "an empty query highlights nothing");
+            check(theme_match_positions(static_cast<std::size_t>(i), "zzz").empty(),
+                  "a non-matching query highlights nothing");
+        }
+
+        // The picker's row budget must be positive at every terminal height
+        // it can be opened at — a zero here is an empty list on a short
+        // terminal, and the docked layout must fall back rather than squeeze.
+        {
+            bool rows_ok = true, dock_ok = true;
+            for (int hgt = 10; hgt <= 80; ++hgt)
+                if (ThemeMenu::visible_rows(hgt) < 4) rows_ok = false;
+            for (int wid = 40; wid <= 260; ++wid) {
+                const int pw = ThemeMenu::panel_width(wid);
+                if (pw == 0) continue;                 // card fallback: fine
+                // Docking must always leave the dashboard the larger share.
+                if (pw >= wid - pw) dock_ok = false;
+            }
+            check(rows_ok, "the picker always has at least 4 visible rows");
+            check(dock_ok, "docking never takes more room than it leaves the dashboard");
+            check(ThemeMenu::panel_width(80) == 0,
+                  "an 80-col terminal falls back to the card instead of docking");
+            check(ThemeMenu::panel_width(200) > 0, "a wide terminal docks the picker");
+        }
 
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.

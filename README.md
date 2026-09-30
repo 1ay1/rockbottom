@@ -559,7 +559,7 @@ There. Fixed. You're welcome. We're not mad. We could never be mad at you.
 | `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
 | `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
 | `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |
-| `T` | theme picker — **type to search 616 themes**, live-previewed as you move |
+| `T` | theme picker — **docked** beside the live UI, type to search 616 |
 | `?` / `h` | help, for when every key you just read immediately evaporates from your brain |
 | `q` / `Esc` | leave. go outside. the grass misses you. |
 
@@ -574,11 +574,32 @@ Stand` is in there, and we are not going to discuss it).
 rb used to ship 35 hand-tuned palettes. Maintaining those meant re-tuning 35
 things by hand every time anything moved, so they're gone.
 
-Press `T` and start typing. The list narrows as you type and the whole UI
-repaints behind the card in whatever the cursor is on, so you are always
-looking at the real thing rather than a swatch. `cmocha` finds Catppuccin
-Mocha, `tnsto` finds TokyoNight Storm. Enter keeps it, Esc puts back what you
-had, and your choice survives a restart.
+Press `T` and start typing. The picker **docks to the side** rather than
+covering the screen, and the dashboard repaints beside it in whatever the
+cursor is on — so you are judging a theme by looking at the actual process
+table, not at a swatch. (Below ~108 columns there isn't room for both, so it
+falls back to a centered card.)
+
+The list narrows as you type and the matched letters light up, so you can see
+*why* a row ranked where it did: `cmocha` finds Catppuccin Mocha, `tnsto`
+finds TokyoNight Storm. Each row shows a ◐/◑ for light/dark — the one thing
+you cannot guess from a name — plus that theme's canvas, two domain accents
+and its whole load ramp, painted in its own colours.
+
+The themes you actually use float to the top, because the honest use case is
+cycling between two or three favourites, and finding those in 616
+alphabetical rows is the exact thing a long list is worst at.
+
+| In the picker | |
+|---|---|
+| type | filter |
+| `↑` `↓`, `Ctrl+N/P` | move + preview |
+| wheel | scroll the list *without* moving the preview |
+| click | preview a row; click it again to keep it |
+| `Ctrl+D` / `Ctrl+L` | only dark / only light themes |
+| `Ctrl+G` | jump back to the theme you opened with |
+| `Enter` | keep it |
+| `Esc` | clear the filter; again to revert and close |
 
 From the shell, `--theme=NAME` takes the same loose matching
 (`--theme=cmocha` works) and `rb --themes` prints all 616 one per line, so it

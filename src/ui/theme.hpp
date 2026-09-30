@@ -504,23 +504,76 @@ namespace detail {
     return score - static_cast<int>(f.size());    // prefer the shorter name
 }
 
+// Where in `name` each query character landed, for highlighting the match in
+// the picker. Same walk as match_score, so the highlight can never disagree
+// with the ranking that put the row there. Empty when the query is empty or
+// doesn't match.
+[[nodiscard]] inline std::vector<std::size_t> match_positions(std::string_view name,
+                                                              const std::string& q) {
+    std::vector<std::size_t> pos;
+    if (q.empty()) return pos;
+    std::size_t qi = 0;
+    for (std::size_t i = 0; i < name.size() && qi < q.size(); ++i) {
+        const char raw = name[i];
+        if (raw == ' ' || raw == '-' || raw == '_' || raw == '.'
+            || raw == '(' || raw == ')') continue;
+        const char lc = static_cast<char>(raw >= 'A' && raw <= 'Z' ? raw - 'A' + 'a' : raw);
+        if (lc == q[qi]) { pos.push_back(i); ++qi; }
+    }
+    if (qi < q.size()) pos.clear();
+    return pos;
+}
+
 }  // namespace detail
+
+// Is this theme light-on-dark or dark-on-light?
+//
+// Worth surfacing in the picker because it is the single most consequential
+// thing about a theme and the one you cannot infer from a name: "Ayu" is
+// dark, "Ayu Light" is not, and "Alabaster" gives you no clue at all. It is
+// also what the l/d filter keys narrow on — if you work in daylight, most of
+// the 616 are simply not candidates.
+[[nodiscard]] inline bool theme_is_light(std::size_t i) {
+    const detail::Slot& s = detail::deck()[i % detail::deck().size()];
+    if (!s.scheme) return false;                    // native: the terminal's call
+    return detail::luma(detail::chan(s.scheme->background)) > 140.0;
+}
+
+// Byte offsets in theme `i`'s NAME matched by `query`, for highlighting.
+[[nodiscard]] inline std::vector<std::size_t> theme_match_positions(
+    std::size_t i, const std::string& query) {
+    return detail::match_positions(detail::deck()[i % detail::deck().size()].name,
+                                   detail::fold(query));
+}
+
+// Which half of the deck to consider. Most people only ever want one.
+enum class ThemeMode : std::uint8_t { All = 0, Dark, Light };
 
 // Deck indices matching `query`, best first. An empty query means "all of it,
 // in deck order" — which is what the picker shows before you type.
-[[nodiscard]] inline std::vector<std::size_t> theme_search(const std::string& query) {
+//
+// `mode` narrows to dark or light themes first. native is exempt: it has no
+// palette of its own, so it belongs in every list rather than being
+// classified into one.
+[[nodiscard]] inline std::vector<std::size_t> theme_search(const std::string& query,
+                                                           ThemeMode mode = ThemeMode::All) {
     const auto& d = detail::deck();
+    auto admits = [&](std::size_t i) {
+        if (mode == ThemeMode::All || i == 0) return true;
+        return theme_is_light(i) == (mode == ThemeMode::Light);
+    };
     std::vector<std::size_t> out;
     const std::string q = detail::fold(query);
     if (q.empty()) {
-        out.resize(d.size());
-        for (std::size_t i = 0; i < d.size(); ++i) out[i] = i;
+        for (std::size_t i = 0; i < d.size(); ++i)
+            if (admits(i)) out.push_back(i);
         return out;
     }
     std::vector<std::pair<int, std::size_t>> hits;
     for (std::size_t i = 0; i < d.size(); ++i)
-        if (const int s = detail::match_score(d[i].name, q); s >= 0)
-            hits.push_back({s, i});
+        if (admits(i))
+            if (const int s = detail::match_score(d[i].name, q); s >= 0)
+                hits.push_back({s, i});
     // Stable by score, then by deck order, so the list never reshuffles
     // between two equally good matches.
     std::stable_sort(hits.begin(), hits.end(),

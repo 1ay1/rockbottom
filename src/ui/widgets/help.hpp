@@ -92,7 +92,7 @@ public:
             {"GENERAL", {
                 {"p / Space", "pause / resume"},
                 {"< / >", "slower / faster refresh (250ms–5s)"},
-                {"T", "theme picker \xe2\x80\x94 type to search 616, live preview"},
+                {"T", "theme picker \xe2\x80\x94 docked, type to search 616, live"},
                 {"? / h", "toggle this help (h = collapse in flow tree)"},
                 {"q / Esc", "quit"},
             }},

@@ -220,24 +220,36 @@ struct App {
         };
         std::optional<NiceMenu> nicemenu;
 
-        // Theme picker (T): an overlay over maya's 616-scheme registry. `sel`
-        // is both the cursor AND the LIVE-previewed theme (moving it applies
-        // the theme immediately); `restore` is the index that was active when
-        // the menu opened, reverted on Esc / dismiss.
+        // Theme picker (T): a DOCKED side panel over maya's 616-scheme
+        // registry — not a modal.
         //
-        // `query` is the type-to-search box. A 616-row list is not browsable
-        // by arrow key, so the picker is a filter first and a list second:
-        // typing narrows `hits` (deck indices, best match first) and the
-        // cursor walks THAT, not the raw deck. `hits` is recomputed by
-        // refilter_themes() whenever the query changes rather than in view(),
-        // because the key handler needs it too (to clamp the cursor and to
-        // know what Enter commits) and computing it twice risks the two
-        // disagreeing about which row is selected.
+        // It used to be a centered card, which was the wrong shape for what
+        // it does: the picker's whole value is the live preview, and a
+        // centered modal covers the thing being previewed. You would move the
+        // cursor, watch a card change colour, commit, and only then find out
+        // what the process table looked like. Docked to one side, the panels
+        // and graphs stay visible and you are picking a theme by looking at
+        // the actual UI in it.
+        //
+        // `sel` is the cursor INTO `hits` and also the live-previewed theme;
+        // `restore` is the deck index active when the picker opened, which
+        // Esc reverts to. `hits` is recomputed by refilter_themes() whenever
+        // the query or mode changes rather than in view(), because the key
+        // and mouse handlers need it too (to clamp the cursor and know what
+        // Enter commits) and computing it twice risks disagreement about
+        // which row is selected.
         struct ThemeMenu {
             int sel = 0;                      // index INTO hits, not the deck
             int restore = 0;                  // deck index to revert to
             std::string query;
             std::vector<std::size_t> hits;    // deck indices, best first
+            ui::ThemeMode mode = ui::ThemeMode::All;
+            int hover = -1;                   // hovered row (index into hits)
+            int top = 0;                      // first visible row — owned by
+                                              // the model, not recomputed in
+                                              // view(), so the wheel can move
+                                              // the window without moving the
+                                              // cursor (and the preview).
 
             // The deck index the cursor is on, or the restore target when the
             // filter matched nothing.
@@ -248,6 +260,13 @@ struct App {
             }
         };
         std::optional<ThemeMenu> thememenu;
+
+        // Themes used recently, most recent first, as deck indices. Pinned to
+        // the top of the picker when you have not typed anything, because the
+        // realistic use is cycling between two or three favourites — and
+        // finding those in a 616-row list is the exact thing the list is bad
+        // at. Persisted, so it survives a restart.
+        std::vector<std::size_t> recent_themes;
 
         // Verdict pulse: when health DEGRADES the banner border flares and
         // fades over the next few ticks so the state change catches the eye.
@@ -459,6 +478,14 @@ struct App {
         // process table it moves the selection; anywhere else it still scrolls
         // the list so the wheel is never a dead input.
         if (me.button == MouseButton::ScrollDown) {
+            // The picker owns the wheel while it's open: it is the thing you
+            // are looking at, and scrolling the process table behind it would
+            // be both useless and confusing. Scrolling moves the WINDOW, not
+            // the cursor — so the live preview stays on the theme you chose
+            // while you look further down the list. That separation is the
+            // whole reason `top` lives in the model rather than being derived
+            // from `sel` at paint time.
+            if (m.thememenu) { scroll_theme_list(m, +3); return {}; }
             if (m.show_help) {
                 m.help_scroll += 3; clamp_help_scroll(m); return {};
             }
@@ -469,6 +496,7 @@ struct App {
             return {};
         }
         if (me.button == MouseButton::ScrollUp) {
+            if (m.thememenu) { scroll_theme_list(m, -3); return {}; }
             if (m.show_help) {
                 m.help_scroll -= 3; clamp_help_scroll(m); return {};
             }
@@ -536,6 +564,20 @@ struct App {
         // Only a proc row lights up; moving off the list clears it. Buttoned
         // moves are drags (handled above) and must not repaint a hover.
         if (me.kind == MouseEventKind::Move && me.button == MouseButton::None) {
+            // The picker owns hover while it's open, and tracks it on its own
+            // row index. Hover only HIGHLIGHTS here — it deliberately does not
+            // preview. Repainting the entire UI in a new palette every time
+            // the pointer crosses a row turns a mouse twitch into a strobe;
+            // you ask for a preview by clicking.
+            if (m.thememenu) {
+                int hv = -1;
+                if (hit && maya::hit_kind(*hit) == ui::HK_ThemeRow) {
+                    const int idx = static_cast<int>(maya::hit_index(*hit));
+                    if (idx >= 0 && idx < static_cast<int>(m.thememenu->hits.size())) hv = idx;
+                }
+                if (hv != m.thememenu->hover) m.thememenu->hover = hv;
+                return {};
+            }
             int hv = -1;
             if (hit && maya::hit_kind(*hit) == ui::HK_ProcRow) {
                 const int idx = static_cast<int>(maya::hit_index(*hit));
@@ -643,9 +685,37 @@ struct App {
             return {};
         }
         if (m.nicemenu) { m.nicemenu.reset(); return {}; }
-        // A click on the theme picker COMMITS the previewed theme (you clicked
-        // on what you were looking at) — unlike Esc, which reverts.
-        if (m.thememenu) { m.thememenu.reset(); return {}; }
+        // The theme picker is DOCKED, not modal, so a click is not
+        // automatically "dismiss". Route it through the hit registry below:
+        // a click on a row picks that theme, a click on a mode chip toggles
+        // the filter, and only a click OUTSIDE the panel commits and closes
+        // (you clicked away from what you were looking at, having seen it).
+        if (m.thememenu && hit) {
+            const std::uint32_t k = maya::hit_kind(*hit);
+            if (k == ui::HK_ThemeRow) {
+                auto& tm = *m.thememenu;
+                const int row = static_cast<int>(maya::hit_index(*hit));
+                if (row >= 0 && row < static_cast<int>(tm.hits.size())) {
+                    // First click previews, a click on the ALREADY-selected
+                    // row commits. Mirrors the process table's click-then-
+                    // double-click feel without needing a double-click: you
+                    // can never commit a theme you have not seen applied.
+                    if (row == tm.sel && me.button == MouseButton::Left) {
+                        commit_theme(m);
+                        return {};
+                    }
+                    tm.sel = row;
+                    ui::set_theme(tm.current(tm.restore));
+                }
+                return {};
+            }
+            if (k == ui::HK_ThemeMode) {
+                m.thememenu->mode = static_cast<ui::ThemeMode>(maya::hit_index(*hit));
+                refilter_themes(m);
+                return {};
+            }
+        }
+        if (m.thememenu) { commit_theme(m); return {}; }
 
         // ── Everything else routes through the paint-time hit registry ──
         if (hit) {
@@ -741,6 +811,13 @@ struct App {
         // Apply the saved/CLI theme (falls back to native if the name is stale).
         if (int ti = ui::theme_resolve(cfg.theme); ti >= 0)
             ui::set_theme(static_cast<std::size_t>(ti));
+        // Rehydrate the recently-used list. Names that no longer resolve (a
+        // maya bump dropped or renamed a scheme) are skipped rather than
+        // faulted — a stale favourite should cost you that one entry, not the
+        // whole list.
+        for (const std::string& name : cfg.recent_themes)
+            if (const int ri = ui::theme_resolve(name); ri >= 0)
+                m.recent_themes.push_back(static_cast<std::size_t>(ri));
         // The very first sample runs synchronously: there is no event loop yet
         // to block, and the first frame should paint with real data instead of
         // an empty snapshot. Every sample AFTER this is a background effect.
@@ -786,6 +863,7 @@ struct App {
         c.theme      = m.thememenu
             ? ui::theme_name(static_cast<std::size_t>(m.thememenu->restore))
             : ui::active_theme_name();
+        for (std::size_t i : m.recent_themes) c.recent_themes.push_back(ui::theme_name(i));
         c.save();
     }
 
@@ -931,8 +1009,50 @@ struct App {
         return Cmd::quit(0);
     }
 
-    // Recompute the theme picker's match list after the query changed, and
-    // keep the cursor pointing at a real row.
+    // How many theme rows the docked picker shows at this terminal height.
+    // Must agree with the widget's own arithmetic; ThemeMenu owns the formula
+    // so the two can't drift.
+    static int theme_rows(const Model& m) { return ui::ThemeMenu::visible_rows(m.height); }
+
+    // Keep the scroll window around the cursor. Called after anything that
+    // moves `sel`, so the selected row is always on screen without the
+    // window jumping when it didn't need to — a wheel scroll that leaves the
+    // cursor visible must not snap back.
+    static void theme_scroll_to_sel(Model& m) {
+        if (!m.thememenu) return;
+        auto& tm = *m.thememenu;
+        const int vis = theme_rows(m);
+        const int n = static_cast<int>(tm.hits.size());
+        if (n <= vis) { tm.top = 0; return; }
+        if (tm.sel < tm.top)            tm.top = tm.sel;
+        else if (tm.sel >= tm.top + vis) tm.top = tm.sel - vis + 1;
+        tm.top = std::clamp(tm.top, 0, n - vis);
+    }
+
+    // Move the picker's scroll WINDOW without moving the cursor. The wheel
+    // uses this: you can survey the list while the live preview stays put on
+    // the theme you actually chose, which is the behaviour every good list
+    // has and the reason `top` is model state rather than derived from `sel`.
+    static void scroll_theme_list(Model& m, int by) {
+        if (!m.thememenu) return;
+        auto& tm = *m.thememenu;
+        const int vis = theme_rows(m);
+        const int n = static_cast<int>(tm.hits.size());
+        tm.top = n <= vis ? 0 : std::clamp(tm.top + by, 0, n - vis);
+    }
+
+    // Push a theme onto the recently-used list (most recent first, deduped).
+    // native is included: "back to my terminal's own colours" is a choice
+    // people make deliberately and want to get back to quickly.
+    static void remember_theme(Model& m, std::size_t deck_idx) {
+        auto& r = m.recent_themes;
+        r.erase(std::remove(r.begin(), r.end(), deck_idx), r.end());
+        r.insert(r.begin(), deck_idx);
+        if (r.size() > 8) r.resize(8);
+    }
+
+    // Recompute the theme picker's match list after the query or mode
+    // changed, and keep the cursor pointing at a real row.
     //
     // The cursor tries to STAY on the theme it was on: narrowing a search
     // shouldn't yank the preview to an unrelated palette just because the
@@ -944,25 +1064,85 @@ struct App {
         if (!m.thememenu) return;
         auto& tm = *m.thememenu;
         const std::size_t was = tm.current(tm.restore);
-        tm.hits = ui::theme_search(tm.query);
+        tm.hits = ui::theme_search(tm.query, tm.mode);
+        // With no query, pin the recently-used themes to the top. This is the
+        // one ordering that matches how the picker is actually used: people
+        // cycle between a couple of favourites far more often than they go
+        // browsing, and hunting those down in 616 alphabetical rows is the
+        // exact thing a long list is worst at. Once you type, relevance takes
+        // over and recency stops mattering.
+        if (tm.query.empty() && !m.recent_themes.empty()) {
+            std::vector<std::size_t> front;
+            for (std::size_t r : m.recent_themes)
+                if (std::find(tm.hits.begin(), tm.hits.end(), r) != tm.hits.end())
+                    front.push_back(r);
+            if (!front.empty()) {
+                std::vector<std::size_t> rest;
+                rest.reserve(tm.hits.size());
+                for (std::size_t i : tm.hits)
+                    if (std::find(front.begin(), front.end(), i) == front.end())
+                        rest.push_back(i);
+                tm.hits = std::move(front);
+                tm.hits.insert(tm.hits.end(), rest.begin(), rest.end());
+            }
+        }
+        tm.hover = -1;
         if (tm.hits.empty()) return;   // keep the live theme; view() says so
         tm.sel = 0;
         for (std::size_t i = 0; i < tm.hits.size(); ++i)
             if (tm.hits[i] == was) { tm.sel = static_cast<int>(i); break; }
         ui::set_theme(tm.current(tm.restore));
+        theme_scroll_to_sel(m);
     }
 
-    // ── key handling: one place, mode-aware ─────────────────────────────────
+    // How many of the leading rows are recents (so the widget can draw the
+    // divider). Only meaningful with an empty query — see refilter_themes.
+    static int theme_recent_count(const Model& m) {
+        if (!m.thememenu || !m.thememenu->query.empty()) return 0;
+        int n = 0;
+        for (std::size_t i : m.thememenu->hits) {
+            if (std::find(m.recent_themes.begin(), m.recent_themes.end(), i)
+                == m.recent_themes.end()) break;
+            ++n;
+        }
+        return n;
+    }
+
+    // Open the picker, seeded on the active theme.
+    static void open_theme_menu(Model& m) {
+        const int cur = static_cast<int>(ui::active_theme_index());
+        Model::ThemeMenu tm;
+        tm.restore = cur;
+        m.thememenu = std::move(tm);
+        refilter_themes(m);
+        // refilter lands on the first match; move to the ACTIVE theme so the
+        // picker opens where you already are rather than repainting the whole
+        // UI in an unrelated palette the instant it opens.
+        auto& t = *m.thememenu;
+        for (std::size_t i = 0; i < t.hits.size(); ++i)
+            if (t.hits[i] == static_cast<std::size_t>(cur)) { t.sel = static_cast<int>(i); break; }
+        ui::set_theme(t.current(cur));
+        theme_scroll_to_sel(m);
+    }
+
+    // Commit the previewed theme and close.
+    static void commit_theme(Model& m) {
+        if (!m.thememenu) return;
+        remember_theme(m, ui::active_theme_index());
+        m.toast = Toast{"theme \xc2\xb7 " + std::string(ui::active_theme_name()), false};
+        m.thememenu.reset();
+    }
+
+    // ── key handling: one place, mode-aware ──────────────────────────────
 
     static Cmd on_key(Model& m, const maya::KeyEvent& ke) {
         maya::Event ev{ke};
         using maya::key;
 
         // 0−. Theme picker intercepts everything while open. It is a SEARCH
-        //     box over maya's 616 schemes, not just a list: printable keys
-        //     narrow the filter, ↑↓/j k move the cursor within the matches and
-        //     LIVE-APPLY that theme (the whole UI repaints behind the card),
-        //     Enter keeps it, Esc reverts to the theme active on open.
+        //     box over maya's 616 schemes docked beside the live UI: printable
+        //     keys narrow the filter, ↑↓ move the cursor within the matches
+        //     and LIVE-APPLY that theme, Enter keeps it, Esc reverts.
         //
         //     j/k are intentionally NOT bound here, unlike every other pane:
         //     they are letters, and a picker whose whole point is typing a
@@ -974,20 +1154,27 @@ struct App {
                 if (tm.hits.empty()) return;
                 tm.sel = std::clamp(sel, 0, static_cast<int>(tm.hits.size()) - 1);
                 ui::set_theme(tm.current(tm.restore));
+                theme_scroll_to_sel(m);
             };
             if (key(ev, maya::SpecialKey::Escape)) {
+                // Two-stage, because Esc means two different things here and
+                // guessing wrong is destructive. With a filter typed, the
+                // thing you most likely want to undo is the FILTER — losing
+                // the whole picker (and the theme you were closing in on)
+                // because you wanted to retype a search is a real papercut.
+                // An empty query has nothing left to clear, so Esc then means
+                // "leave, put back what I had".
+                if (!tm.query.empty() || tm.mode != ui::ThemeMode::All) {
+                    tm.query.clear();
+                    tm.mode = ui::ThemeMode::All;
+                    refilter_themes(m);
+                    return {};
+                }
                 ui::set_theme(static_cast<std::size_t>(tm.restore));
                 m.thememenu.reset();
                 return {};
             }
-            if (key(ev, maya::SpecialKey::Enter)) {
-                // Nothing matched — Enter can't commit a row that isn't there,
-                // so treat it as "keep what's live" rather than a no-op that
-                // leaves the user stuck in the overlay.
-                m.toast = Toast{"theme \xc2\xb7 " + std::string(ui::active_theme_name()), false};
-                m.thememenu.reset();
-                return {};
-            }
+            if (key(ev, maya::SpecialKey::Enter)) { commit_theme(m); return {}; }
             if (key(ev, maya::SpecialKey::Backspace)) {
                 if (!tm.query.empty()) {
                     tm.query.pop_back();
@@ -997,23 +1184,51 @@ struct App {
             }
             if (key(ev, maya::SpecialKey::Down)) { preview(tm.sel + 1); return {}; }
             if (key(ev, maya::SpecialKey::Up))   { preview(tm.sel - 1); return {}; }
-            if (key(ev, maya::SpecialKey::PageDown)) { preview(tm.sel + 8); return {}; }
-            if (key(ev, maya::SpecialKey::PageUp))   { preview(tm.sel - 8); return {}; }
+            if (key(ev, maya::SpecialKey::PageDown)) { preview(tm.sel + theme_rows(m)); return {}; }
+            if (key(ev, maya::SpecialKey::PageUp))   { preview(tm.sel - theme_rows(m)); return {}; }
             if (key(ev, maya::SpecialKey::Home)) { preview(0); return {}; }
             if (key(ev, maya::SpecialKey::End))  {
                 preview(static_cast<int>(tm.hits.size()) - 1);
                 return {};
             }
-            // Ctrl+N / Ctrl+P: move without leaving the home row, since the
-            // letter keys are all busy being letters.
             const auto* ch = std::get_if<maya::CharKey>(&ke.key);
             const char32_t cp = ch ? ch->codepoint : 0;
+            // Ctrl+N / Ctrl+P: move without leaving the home row, since the
+            // letter keys are all busy being letters.
             if (ke.mods.ctrl && cp == U'n') { preview(tm.sel + 1); return {}; }
             if (ke.mods.ctrl && cp == U'p') { preview(tm.sel - 1); return {}; }
             // Ctrl+U clears the query (readline habit).
             if (ke.mods.ctrl && cp == U'u') {
                 tm.query.clear();
                 refilter_themes(m);
+                return {};
+            }
+            // Ctrl+D / Ctrl+L cycle the dark/light filter. On Ctrl rather than
+            // bare d/l for the same reason j/k are unbound: they are letters,
+            // and "dracula" starts with one of them.
+            if (ke.mods.ctrl && cp == U'd') {
+                tm.mode = tm.mode == ui::ThemeMode::Dark ? ui::ThemeMode::All
+                                                         : ui::ThemeMode::Dark;
+                refilter_themes(m);
+                return {};
+            }
+            if (ke.mods.ctrl && cp == U'l') {
+                tm.mode = tm.mode == ui::ThemeMode::Light ? ui::ThemeMode::All
+                                                          : ui::ThemeMode::Light;
+                refilter_themes(m);
+                return {};
+            }
+            // Ctrl+G: back to the theme you opened with, without leaving.
+            // The escape hatch for "I have previewed thirty of these and want
+            // my own one back" — otherwise the only route is Esc (which also
+            // closes) or finding it again by name.
+            if (ke.mods.ctrl && cp == U'g') {
+                for (std::size_t i = 0; i < tm.hits.size(); ++i)
+                    if (tm.hits[i] == static_cast<std::size_t>(tm.restore)) {
+                        preview(static_cast<int>(i));
+                        return {};
+                    }
+                ui::set_theme(static_cast<std::size_t>(tm.restore));
                 return {};
             }
             // Any other printable character extends the search. ASCII only:
@@ -1378,19 +1593,11 @@ struct App {
         }
         if (key(ev, '?') || (key(ev, 'h') && !m.tree)) { m.show_help = true; return {}; }
         if (key(ev, '/'))                  { m.filtering = true; m.filter.clear(); m.sel = 0; m.scroll_top = 0; return {}; }
-        // Theme deck: T opens the picker — a SEARCH box over maya's 616
-        // schemes with a live preview as you move the cursor. Enter keeps the
-        // choice (persisted on clean exit), Esc reverts. Opens unfiltered and
-        // seeded on the active theme, so it starts where you already are.
-        if (key(ev, 'T')) {
-            const int cur = static_cast<int>(ui::active_theme_index());
-            Model::ThemeMenu tm;
-            tm.restore = cur;
-            tm.hits = ui::theme_search("");
-            tm.sel = cur;                 // empty query → hits is deck order
-            m.thememenu = std::move(tm);
-            return {};
-        }
+        // Theme deck: T opens the picker — a search box over maya's 616
+        // schemes, docked beside the live UI so you can see what you are
+        // choosing. Enter keeps the choice (persisted on clean exit), Esc
+        // reverts.
+        if (key(ev, 'T')) { open_theme_menu(m); return {}; }
 
         // Detail drill-down: 1-5 open a full-screen domain view; Enter opens
         // the selected process's detail.
@@ -2067,10 +2274,14 @@ struct App {
                           fold(static_cast<std::uint64_t>(m.nicemenu->val + 64)); }
         // Theme picker: presence + cursor + the query (which reorders the
         // list, so it has to be in the hash or a keystroke that changes only
-        // the match set would not repaint).
+        // the match set would not repaint) + the scroll window, mode filter
+        // and hover, each of which moves pixels on its own.
         if (m.thememenu) { fold(31); fold(static_cast<std::uint64_t>(m.thememenu->sel));
                            fold_str(m.thememenu->query);
-                           fold(static_cast<std::uint64_t>(m.thememenu->hits.size())); }
+                           fold(static_cast<std::uint64_t>(m.thememenu->hits.size()));
+                           fold(static_cast<std::uint64_t>(m.thememenu->top));
+                           fold(static_cast<std::uint64_t>(m.thememenu->mode));
+                           fold(static_cast<std::uint64_t>(m.thememenu->hover + 1)); }
         // Toast: text + error tint (its ttl countdown is what expires it).
         if (m.toast) { fold(m.toast->error ? 11 : 13); fold_str(m.toast->text); }
 
@@ -2140,8 +2351,36 @@ struct App {
         }
 
         if (m.thememenu) {
+            // DOCKED, not modal. The picker's entire value is the live
+            // preview, so covering the UI with a centered card defeated it:
+            // you moved the cursor, watched a card change colour, committed,
+            // and only then saw what the process table looked like. Here the
+            // dashboard renders at a reduced width beside the panel and
+            // repaints in each theme as you move, so you choose by looking at
+            // the real thing.
+            //
+            // Below kMinDockWidth there isn't room for both, so it falls back
+            // to the full-width card — a squeezed two-column layout on an
+            // 80-col terminal would wreck the preview it exists to show.
+            const int panel_w = ThemeMenu::panel_width(m.width);
+            if (panel_w > 0) {
+                Model shrunk = m;
+                shrunk.width = m.width - panel_w;
+                return canvas((h(
+                    (Element{dashboard(shrunk)} | width(shrunk.width)).build(),
+                    (Element{ThemeMenu{panel_w, m.height, m.thememenu->sel,
+                                       m.thememenu->query, m.thememenu->hits,
+                                       m.thememenu->mode, m.thememenu->hover,
+                                       m.thememenu->top, theme_recent_count(m),
+                                       static_cast<std::size_t>(m.thememenu->restore)}}
+                     | width(panel_w)).build()
+                ) | gap(0) | grow(1)).build());
+            }
             return canvas(ThemeMenu{m.width, m.height, m.thememenu->sel,
-                                    m.thememenu->query, m.thememenu->hits});
+                                    m.thememenu->query, m.thememenu->hits,
+                                    m.thememenu->mode, m.thememenu->hover,
+                                    m.thememenu->top, theme_recent_count(m),
+                                    static_cast<std::size_t>(m.thememenu->restore)});
         }
 
         if (m.detail != ui::Detail::None) {
@@ -2151,6 +2390,22 @@ struct App {
                               m.user_sort, m.user_sel, m.user_zoom,
                               m.user_filter, m.user_filtering, m.user_desc});
         }
+
+        return canvas(dashboard(m));
+    }
+
+    // The main dashboard: header, verdict, the stat band, the process table,
+    // footer. Split out of view() so the theme picker can render it BESIDE
+    // itself at a reduced width — a docked picker has to draw the very thing
+    // it is previewing, and that is only possible if the dashboard is a
+    // function of a Model rather than the tail of view().
+    //
+    // It takes the Model by value-ish reference and reads m.width, so the
+    // caller shrinks the width and everything below reflows on its own.
+    static maya::Element dashboard(const Model& m) {
+        using namespace maya;
+        using namespace maya::dsl;
+        using namespace rockbottom::ui;
 
         const Snapshot& s = m.snap;
         const bool narrow = m.width < 96;
@@ -2328,13 +2583,13 @@ struct App {
                 Element{ProcPanel{s, pv}} | grow(1)
             ) | gap(gap_w) | height(band_h)).build();
 
-            return canvas((v(
+            return (v(
                 Header{s, m.paused},
                 VerdictBanner{s, m.verdict_pulse},
                 std::move(body),
                 Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                        m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
-            ) | padding(0, 1, 0, 1)).build());
+            ) | padding(0, 1, 0, 1)).build();
         }
 
         // Narrow: the stacked stat band gets a bounded share of the height so
@@ -2402,14 +2657,14 @@ struct App {
               ) | gap(gap_w) | height(band_px)).build();
         }
 
-        return canvas((v(
+        return (v(
             Header{s, m.paused},
             VerdictBanner{s, m.verdict_pulse},
             std::move(top),
             Element{ProcPanel{s, pv}} | grow(1),
             Footer{m.paused, m.ticks, m.toast ? &*m.toast : nullptr,
                    m.pending ? &*m.pending : nullptr, m.filtering, m.filter}
-        ) | padding(0, 1, 0, 1)).build());
+        ) | padding(0, 1, 0, 1)).build();
     }
 };
 

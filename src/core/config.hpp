@@ -21,6 +21,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <sys/stat.h>
 
 namespace rockbottom {
@@ -32,6 +33,12 @@ struct Config {
     int         refresh_ms = 1000;
     std::string filter;                // startup filter query ("" = none)
     std::string theme = "native";      // active palette name (see ui/theme.hpp)
+    // Recently-used theme NAMES, most recent first. Names rather than deck
+    // indices on purpose: an index is only meaningful against one version of
+    // maya's registry, so a maya bump that inserts a scheme would silently
+    // repoint every remembered slot at the wrong theme. A name that no longer
+    // resolves is simply dropped on load.
+    std::vector<std::string> recent_themes;
     bool        show_help_on_exit = false;   // never persisted; reserved
 
     // ── SortKey <-> name ──
@@ -96,6 +103,23 @@ struct Config {
             else if (key == "refresh_ms") { int v = std::atoi(val.c_str()); if (v >= 250 && v <= 5000) c.refresh_ms = v; }
             else if (key == "filter")    c.filter = val;
             else if (key == "theme")     c.theme = val;
+            else if (key == "recent_themes") {
+                // Comma-separated names. A theme name can't contain a comma
+                // (maya's registry uses spaces, dashes and parens), so a
+                // plain split is safe and keeps the file hand-editable.
+                c.recent_themes.clear();
+                std::size_t start = 0;
+                while (start <= val.size()) {
+                    const std::size_t comma = val.find(',', start);
+                    const std::size_t end = comma == std::string::npos ? val.size() : comma;
+                    std::string one = val.substr(start, end - start);
+                    while (!one.empty() && one.front() == ' ') one.erase(one.begin());
+                    while (!one.empty() && one.back() == ' ')  one.pop_back();
+                    if (!one.empty()) c.recent_themes.push_back(one);
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            }
         }
         return c;
     }
@@ -119,6 +143,10 @@ struct Config {
         f << "refresh_ms=" << refresh_ms << "\n";
         f << "filter=" << filter << "\n";
         f << "theme=" << theme << "\n";
+        f << "recent_themes=";
+        for (std::size_t i = 0; i < recent_themes.size(); ++i)
+            f << (i ? "," : "") << recent_themes[i];
+        f << "\n";
     }
 
     // ── CLI parsing: returns false + fills `exit_msg` for --help/--version or
