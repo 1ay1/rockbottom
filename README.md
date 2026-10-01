@@ -630,6 +630,7 @@ its own error hue — so it keeps its character and still tells you the truth.
 | **click a users column header** | sorts the roster by it — including `DISK%`; click again to reverse (▼ / ▲) |
 | **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
+| **right-click anywhere else** | **go back** — one level per click, same as `Esc`. Closes a detail pane, the theme picker, help, a signal menu; a zoomed user drops to the roster first. Left-click *works* an overlay, so this is the way out of one without reaching for the keyboard. |
 | **drag a scrollbar** | slides that list or pane to any position — the process list, every detail pane, and this help all grab-and-slide |
 | **scroll wheel** | rolls the process list (or the detail pane, if one's open) |
 

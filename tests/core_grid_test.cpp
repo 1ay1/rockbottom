@@ -33,6 +33,7 @@
 #include "../src/ui/widgets/detail/net.hpp"
 #include "../src/ui/widgets/detail/disk.hpp"
 #include "../src/ui/widgets/detail/users.hpp"
+#include "../src/ui/widgets/detail.hpp"
 #include "../src/ui/proc_order.hpp"
 
 #include <cctype>
@@ -1313,6 +1314,70 @@ int main() {
         // offset arithmetic the widget now does incrementally stays sound.
         check(std::strlen("\xe2\x97\x8f") == std::strlen("\xe2\x94\x80"),
               "the renice slider's cursor and track glyphs are the same byte width");
+
+        // The ZOOMED user dashboard must present as a sibling of the other
+        // detail panes, not as a second mode of the roster. Two things were
+        // wrong and both were invisible without rendering it: the hint bar
+        // printed the roster's gestures ("↵·open" for a row that doesn't
+        // exist, "/·find" for a filter box that isn't shown) and crowded out
+        // the ↑↓·scroll affordance every other pane has.
+        {
+            Snapshot zs;
+            zs.hostname = "t"; zs.kernel = "k";
+            zs.cpu.logical = 4;
+            zs.mem.total = Bytes{8ull << 30};
+            zs.mem.used  = Bytes{4ull << 30};
+            for (int i = 0; i < 24; ++i) {
+                ProcInfo p;
+                p.pid = 200 + i; p.name = "p" + std::to_string(i);
+                p.user = "ayush"; p.cpu = 24 - i;
+                p.rss = Bytes{static_cast<std::uint64_t>(i + 1) << 24};
+                p.state = 'S'; p.threads = 1;
+                if (i % 4 == 0) p.ports.push_back(static_cast<std::uint16_t>(9000 + i));
+                zs.procs.push_back(p);
+            }
+            zs.proc_count = 24;
+            UserAccount ua;
+            ua.name = "ayush"; ua.uid = 1000; ua.home = "/home/ayush";
+            ua.shell = "/bin/sh"; ua.can_login = true;
+            zs.accounts.push_back(ua);
+
+            const int W = 120, H = 34;
+            auto roster_rows = render_rows(
+                DetailPane{zs, Detail::Users, nullptr, W, H, 0}, W, H);
+            auto zoom_rows = render_rows(
+                DetailPane{zs, Detail::Users, nullptr, W, H, 0, nullptr,
+                           UserSort::Cpu, 0, "ayush"}, W, H);
+            auto join = [](const std::vector<std::string>& v) {
+                std::string s; for (const auto& l : v) { s += l; s += '\n'; } return s;
+            };
+            const std::string rtext = join(roster_rows);
+            const std::string ztext = join(zoom_rows);
+
+            check(rtext.find("esc") != std::string::npos,
+                  "the users roster names its escape key");
+            // "roster" only makes sense as a destination from inside the zoom.
+            check(ztext.find("roster") != std::string::npos,
+                  "the zoomed user dashboard says esc goes back to the roster");
+            check(rtext.find("roster") == std::string::npos,
+                  "the roster does not offer to take you to the roster");
+            // The zoom is a document, so it must advertise scrolling like its
+            // siblings do — and must NOT advertise opening a row.
+            check(ztext.find("scroll") != std::string::npos,
+                  "the zoomed user dashboard advertises the scroll affordance");
+            check(ztext.find("open") == std::string::npos,
+                  "the zoomed user dashboard does not advertise a row-open key");
+            check(ztext.find("find") == std::string::npos,
+                  "the zoomed user dashboard does not advertise the roster's find box");
+            // And the body has to actually be taller than the viewport, or the
+            // scroll affordance would be a lie. Scrolling must change what is
+            // painted.
+            auto zoom_scrolled = render_rows(
+                DetailPane{zs, Detail::Users, nullptr, W, H, 10, nullptr,
+                           UserSort::Cpu, 0, "ayush"}, W, H);
+            check(join(zoom_scrolled) != ztext,
+                  "the zoomed user dashboard actually scrolls");
+        }
 
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.

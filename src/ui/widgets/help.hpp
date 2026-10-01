@@ -100,7 +100,7 @@ public:
                 {"hover row", "highlight the process under the pointer"},
                 {"click row", "pin + select it · header sorts · footer acts"},
                 {"double-click", "open the process detail pane"},
-                {"right-click", "end process (SIGTERM)"},
+                {"right-click", "a process: end it \xc2\xb7 anywhere else: go back"},
                 {"drag scrollbar", "slide any list / pane to any position"},
                 {"wheel", "scroll list · panes · this help"},
             }},

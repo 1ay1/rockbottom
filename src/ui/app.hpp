@@ -637,6 +637,55 @@ struct App {
         // don't double-fire; drags fall through harmlessly).
         if (me.kind != MouseEventKind::Press) return {};
 
+        // RIGHT-CLICK IS "BACK", EVERYWHERE.
+        //
+        // Left-click inside an overlay deliberately WORKS the overlay (picks a
+        // user, sorts a column, previews a theme) rather than dismissing it —
+        // these are dashboards you operate, not tooltips you flick away. That
+        // left no mouse-only way OUT of them: you could open the users pane
+        // with the mouse, drill into a user with the mouse, and then need the
+        // keyboard to leave. Right-click fills that gap with one rule that
+        // holds in every layer, which is the only kind of gesture worth
+        // teaching.
+        //
+        // Ordered innermost-first, so it unwinds one level at a time the same
+        // way Esc does rather than teleporting to the dashboard: a zoomed user
+        // goes back to the roster, not out of the pane entirely.
+        //
+        // The process table is the ONE exception, handled below: right-click
+        // on a row is already "end this process" (arm a SIGTERM confirm), and
+        // that is both long-standing and the single most useful binding in the
+        // app. There is nothing to go back from on the dashboard anyway.
+        if (me.button == MouseButton::Right) {
+            if (m.pending)   { m.pending.reset();   return {}; }
+            if (m.sigmenu)   { m.sigmenu.reset();   return {}; }
+            if (m.nicemenu)  { m.nicemenu.reset();  return {}; }
+            if (m.thememenu) {
+                // Same as Esc: revert the preview. A right-click is "undo this
+                // excursion", so committing a half-browsed theme would be the
+                // opposite of what the gesture means.
+                ui::set_theme(static_cast<std::size_t>(m.thememenu->restore));
+                m.thememenu.reset();
+                return {};
+            }
+            if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {}; }
+            if (m.detail != ui::Detail::None) {
+                if (m.detail == ui::Detail::Users && !m.user_zoom.empty()) {
+                    m.user_zoom.clear();
+                    m.detail_scroll = 0;
+                    return {};
+                }
+                if (m.detail == ui::Detail::Users && m.user_filtering) {
+                    m.user_filtering = false;
+                    return {};
+                }
+                m.detail = ui::Detail::None;
+                m.detail_scroll = 0;
+                return {};
+            }
+            if (m.filtering) { m.filtering = false; return {}; }
+        }
+
         // Modal layers first — a click outside the modal dismisses it.
         if (m.show_help) { m.show_help = false; m.help_scroll = 0; return {}; }
         if (m.detail != ui::Detail::None) {
@@ -1589,6 +1638,42 @@ struct App {
                 // By-reference update means this is just the call now — it
                 // used to copy the model out and back in.
                 auto resort = [](Model& mm, ui::UserSort k) { set_user_sort(mm, k); };
+                // ZOOMED USER DASHBOARD: scroll, don't navigate.
+                //
+                // The roster is a table with a row cursor; the zoomed view is a
+                // DOCUMENT, the same shape as the cpu/mem/net/disk panes. Both
+                // used to run the identical key block, so in the zoom ↑↓ moved
+                // an invisible row cursor and clamp_usel() then pinned
+                // detail_scroll to it — which is why the inner pane couldn't
+                // scroll at all. Its content is taller than a terminal on any
+                // real machine (sessions, per-process table, disk, verdict), so
+                // the bottom was simply unreachable.
+                //
+                // Handle it FIRST and fall through to the ordinary pane scroll
+                // below, so the zoom behaves like every other detail pane and
+                // the roster keeps its cursor.
+                if (!m.user_zoom.empty()) {
+                    if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) {
+                        m.detail_scroll += 1; clamp_detail_scroll(m); return {};
+                    }
+                    if (key(ev, maya::SpecialKey::Up) || key(ev, 'k')) {
+                        m.detail_scroll -= 1; clamp_detail_scroll(m); return {};
+                    }
+                    if (key(ev, maya::SpecialKey::PageDown)) {
+                        m.detail_scroll += std::max(1, users_view_rows(m));
+                        clamp_detail_scroll(m); return {};
+                    }
+                    if (key(ev, maya::SpecialKey::PageUp)) {
+                        m.detail_scroll -= std::max(1, users_view_rows(m));
+                        clamp_detail_scroll(m); return {};
+                    }
+                    if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) {
+                        m.detail_scroll = 0; return {};
+                    }
+                    if (key(ev, maya::SpecialKey::End) || key(ev, 'G')) {
+                        m.detail_scroll = detail_scroll_max(m); return {};
+                    }
+                }
                 if (key(ev, maya::SpecialKey::Down) || key(ev, 'j')) { ++m.user_sel; clamp_usel(m); return {}; }
                 if (key(ev, maya::SpecialKey::Up)   || key(ev, 'k')) { --m.user_sel; clamp_usel(m); return {}; }
                 if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.user_sel = 0; clamp_usel(m); return {}; }

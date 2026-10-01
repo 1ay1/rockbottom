@@ -308,8 +308,15 @@ private:
             const char* pad = density == 2 ? "   " : density == 1 ? "  " : " ";
             std::vector<Element> row;
             row.push_back((text(" esc") | nowrap | Bold | fgc(pal::sky)).build());
-            if (density > 0)
-                row.push_back((text("·back") | nowrap | fgc(pal::dim)).build());
+            if (density > 0) {
+                // In a zoomed user dashboard esc goes back to the ROSTER, not
+                // out of the pane — one Esc per level, like everywhere else.
+                // Saying "back" there would be true but useless; naming the
+                // destination is what makes the two-level pane legible.
+                const bool zoomed = which_ == Detail::Users && !user_zoom_.empty();
+                row.push_back((text(zoomed ? "\xc2\xb7" "roster" : "\xc2\xb7" "back")
+                               | nowrap | fgc(pal::dim)).build());
+            }
             row.push_back((text(pad) | nowrap).build());
             for (const Tab& t : tabs) {
                 const bool on = which_ == t.d;
@@ -350,19 +357,35 @@ private:
             // documented only in `?`. A destructive key nobody discovers is
             // dead weight; one discovered by accident is worse. Surface them
             // where the hand already is — and colour X like the danger it is.
+            //
+            // But the ROSTER and the ZOOM are different views with different
+            // gestures, and this used to print the roster's list in both. In a
+            // zoomed dashboard "↵·open" names a key that does nothing (there
+            // is no row to open) and "/·find" points at a filter box that
+            // isn't on screen, while the one thing you actually need — how to
+            // get back to the roster — went unsaid. esc reads as "leave the
+            // pane" everywhere else in this bar, so it has to say otherwise
+            // here.
             if (which_ == Detail::Users && density == 2) {
                 // NOTE the string breaks: "\xc2\xb7open" would parse as ONE
                 // hex escape \xc2b7o (hex keeps eating valid digits), which is
                 // out of range and silently mangles the glyph. Splitting the
                 // literal ends the escape at the right byte.
-                row.push_back((text("  \xe2\x86\xb5") | nowrap | Bold | fgc(pal::sky)).build());
-                row.push_back((text("\xc2\xb7" "open ") | nowrap | fgc(pal::dim)).build());
-                row.push_back((text("/") | nowrap | Bold | fgc(pal::sky)).build());
-                row.push_back((text("\xc2\xb7" "find ") | nowrap | fgc(pal::dim)).build());
-                row.push_back((text("f") | nowrap | Bold | fgc(pal::sky)).build());
-                row.push_back((text("\xc2\xb7" "filter ") | nowrap | fgc(pal::dim)).build());
-                row.push_back((text("X") | nowrap | Bold | fgc(pal::crit)).build());
-                row.push_back((text("\xc2\xb7" "end all") | nowrap | fgc(pal::dim)).build());
+                if (user_zoom_.empty()) {
+                    row.push_back((text("  \xe2\x86\xb5") | nowrap | Bold | fgc(pal::sky)).build());
+                    row.push_back((text("\xc2\xb7" "open ") | nowrap | fgc(pal::dim)).build());
+                    row.push_back((text("/") | nowrap | Bold | fgc(pal::sky)).build());
+                    row.push_back((text("\xc2\xb7" "find ") | nowrap | fgc(pal::dim)).build());
+                    row.push_back((text("f") | nowrap | Bold | fgc(pal::sky)).build());
+                    row.push_back((text("\xc2\xb7" "filter ") | nowrap | fgc(pal::dim)).build());
+                    row.push_back((text("X") | nowrap | Bold | fgc(pal::crit)).build());
+                    row.push_back((text("\xc2\xb7" "end all") | nowrap | fgc(pal::dim)).build());
+                } else {
+                    row.push_back((text("  f") | nowrap | Bold | fgc(pal::sky)).build());
+                    row.push_back((text("\xc2\xb7" "filter ") | nowrap | fgc(pal::dim)).build());
+                    row.push_back((text("X") | nowrap | Bold | fgc(pal::crit)).build());
+                    row.push_back((text("\xc2\xb7" "end all") | nowrap | fgc(pal::dim)).build());
+                }
             }
             return (h(std::move(row))).build();
         };
