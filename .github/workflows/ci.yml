@@ -245,13 +245,20 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            # CLANG 22, NOT GCC. alpine:edge ships g++ 15, and jaal needs C++26
+            # structured binding packs (P1061) which landed in GCC 16 / clang
+            # 22 — so the gcc path aborts in jaal/meta/fields.hpp before it
+            # compiles a line of rockbottom. clang22 is in edge and satisfies
+            # the floor. Revisit when Alpine ships gcc 16.
+            #
             # NB: alpine:edge folded the static libstdc++.a into the g++
             # package — the standalone `libstdc++-static` apk was removed, so
-            # requesting it now aborts with "no such package".
+            # requesting it now aborts with "no such package". g++ is still
+            # installed for that static runtime; clang links against it.
             apk add --no-cache \
               build-base g++ gcc musl-dev cmake ninja \
-              libgcc binutils file
-            export CC=gcc CXX=g++
+              clang22 lld libgcc binutils file
+            export CC=clang-22 CXX=clang++-22
             cmake -B build-musl -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_STANDALONE=ON
             cmake --build build-musl -j
             ./build-musl/rb --version

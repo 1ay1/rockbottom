@@ -74,12 +74,18 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$PWD:/src" -w /src alpine:edge sh -euc '
+            # CLANG 22, NOT GCC. alpine:edge ships g++ 15; jaal needs C++26
+            # structured binding packs (P1061), which landed in GCC 16 and
+            # clang 22. The gcc path aborts inside jaal/meta/fields.hpp before
+            # reaching any rockbottom source. Revisit when Alpine ships gcc 16.
+            #
             # alpine:edge folded static libstdc++.a into the g++ package;
-            # the standalone libstdc++-static apk no longer exists.
+            # the standalone libstdc++-static apk no longer exists. g++ stays
+            # installed for that static runtime, which clang links against.
             apk add --no-cache \
               build-base g++ gcc musl-dev cmake ninja \
-              libgcc
-            export CC=gcc CXX=g++
+              clang22 lld libgcc
+            export CC=clang-22 CXX=clang++-22
             # -DRB_STANDALONE=ON asks for a static link; on the musl toolchain
             # that actually delivers one. State it explicitly so a future flip
             # of the default can never silently publish a dynamic asset. CMake
