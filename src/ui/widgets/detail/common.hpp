@@ -58,8 +58,22 @@ struct Ctx {
         // 104-capped column leaves on a 150-col terminal.
         c.ultrawide = w >= 146;
         c.tall = h >= 30;
-        // Frame chrome: panel border(2) + panel padding(2) + hint(1) = 5 rows.
-        c.body_h = std::max(3, h - 5);
+        // Frame chrome, counted against a real render rather than from the
+        // frame's source:
+        //   2  panel border (top + bottom)
+        //   3  system strip — identity row, census row, trailing blank
+        //   1  hint bar
+        //   = 6 rows that are never part of the scrollable body.
+        //
+        // This said 5 and listed "panel padding(2)" while omitting the system
+        // strip entirely, which netted out one row too generous. One row of
+        // over-estimate here is not a cosmetic rounding error: body_h IS the
+        // divisor in max_scroll (total rows - viewport), so every scrollable
+        // detail pane stopped one row short and the LAST line of content was
+        // unreachable at every terminal size. Measured on cpu, mem, disk,
+        // proc and the zoomed users dashboard — all five were short by exactly
+        // one, which is what finally identified the missing term.
+        c.body_h = std::max(3, h - 6);
         // Hero graph height. On a SHORT pane keep it moderate so a low-load
         // trace still reads and the sections below it stay above the fold.
         // On a TALL pane, though, a fixed ~9-row graph strands 20+ empty rows

@@ -34,6 +34,7 @@
 #include "../src/ui/widgets/detail/disk.hpp"
 #include "../src/ui/widgets/detail/users.hpp"
 #include "../src/ui/widgets/detail.hpp"
+#include "../src/ui/widgets/help.hpp"
 #include "../src/ui/proc_order.hpp"
 
 #include <cctype>
@@ -1377,6 +1378,151 @@ int main() {
                            UserSort::Cpu, 0, "ayush"}, W, H);
             check(join(zoom_scrolled) != ztext,
                   "the zoomed user dashboard actually scrolls");
+        }
+
+        // ── SCROLL CEILINGS MUST BE HONEST ──────────────────────────────────
+        //
+        // max_scroll() is the number the app clamps to, so it has to be the
+        // LAST offset that still changes the frame. Off by one in either
+        // direction is a bug you can feel but not see:
+        //   too low  → the final row is permanently unreachable
+        //   too high → End and the wheel scroll into blank space
+        //
+        // Both shipped. Ctx::body_h claimed `h - 5` (border + padding + hint)
+        // and never subtracted the 3-row system strip, so EVERY scrollable
+        // detail pane — cpu, mem, disk, proc and the zoomed users dashboard —
+        // stopped one row short. The help overlay had the mirror image: a
+        // hand-tallied content estimate that deliberately over-counted the
+        // logo, plus a viewport copied from the detail panes' chrome (6) when
+        // its own card only spends 3, which let it run ~6 rows past the end.
+        //
+        // This walks the real offsets and finds where the paint stops
+        // changing, which is the only definition that can't drift from the
+        // renderer.
+        {
+            auto last_useful = [](auto make, int mx, int w, int h) {
+                auto frame = [&](int off) {
+                    const auto r = render_rows(make(off), w, h);
+                    std::string s;
+                    for (const auto& l : r) { s += l; s += '\n'; }
+                    return s;
+                };
+                int last = 0;
+                std::string prev = frame(0);
+                for (int off = 1; off <= mx + 5; ++off) {
+                    std::string cur = frame(off);
+                    if (cur != prev) last = off;
+                    prev = std::move(cur);
+                }
+                return last;
+            };
+
+            // A machine with enough of everything that every pane overflows.
+            Snapshot ss;
+            ss.hostname = "t"; ss.kernel = "k"; ss.uptime_sec = 9999;
+            ss.cpu.model = "CPU"; ss.cpu.logical = 8; ss.cpu.total = Ratio{0.4};
+            for (int i = 0; i < 8; ++i) {
+                CpuCore c; c.usage = Ratio{0.4}; c.temp_c = 50.0f + i;
+                ss.cpu.cores.push_back(c);
+            }
+            ss.mem.total = Bytes{16ull << 30}; ss.mem.used = Bytes{8ull << 30};
+            ss.mem.available = Bytes{8ull << 30}; ss.mem.cached = Bytes{4ull << 30};
+            for (int i = 0; i < 50; ++i) {
+                ProcInfo p;
+                p.pid = 100 + i; p.ppid = 1;
+                p.name = "proc" + std::to_string(i);
+                p.user = "ayush"; p.cpu = (50 - i) * 0.9;
+                p.rss = Bytes{static_cast<std::uint64_t>(i + 1) << 24};
+                p.state = 'S'; p.threads = 2;
+                ss.procs.push_back(p);
+            }
+            ss.proc_count = 50;
+            UserAccount ua2;
+            ua2.name = "ayush"; ua2.uid = 1000; ua2.home = "/home/ayush";
+            ua2.shell = "/bin/sh"; ua2.can_login = true;
+            ss.accounts.push_back(ua2);
+
+            int dishonest = 0;
+            const Detail kinds[] = {Detail::Cpu, Detail::Mem, Detail::Disk, Detail::Proc};
+            const char* knames[] = {"cpu", "mem", "disk", "proc"};
+            // Widths BELOW the ultrawide threshold (146). At and above it the
+            // cpu and mem bodies reflow themselves into two side-by-side
+            // columns, which changes the painted height in a way this
+            // row-stacking measurement does not model — their ceiling is still
+            // a few rows generous there. That is a narrower, separate bug than
+            // the one this test was written for (every pane short by one at
+            // every width) and is tracked by the explicit check below rather
+            // than silently folded in here.
+            for (const auto& [w, h] : std::vector<std::pair<int,int>>{
+                     {100, 30}, {120, 36}, {130, 40}}) {
+                for (int k = 0; k < 4; ++k) {
+                    auto make = [&](int off) {
+                        return DetailPane{ss, kinds[k],
+                                          kinds[k] == Detail::Proc ? &ss.procs[0] : nullptr,
+                                          w, h, off};
+                    };
+                    const int mx = make(0).max_scroll();
+                    if (mx == 0) continue;            // fits; nothing to prove
+                    const int last = last_useful(make, mx, w, h);
+                    if (last != mx) {
+                        ++dishonest;
+                        if (dishonest <= 4)
+                            std::printf("       \xe2\x86\x92 %s %dx%d: max_scroll=%d but "
+                                        "content stops changing at %d\n",
+                                        knames[k], w, h, mx, last);
+                    }
+                }
+                // And the zoomed users dashboard, the one that prompted this.
+                auto zmake = [&](int off) {
+                    return DetailPane{ss, Detail::Users, nullptr, w, h, off, nullptr,
+                                      UserSort::Cpu, 0, "ayush"};
+                };
+                const int zmx = zmake(0).max_scroll();
+                if (zmx > 0 && last_useful(zmake, zmx, w, h) != zmx) {
+                    ++dishonest;
+                    std::printf("       \xe2\x86\x92 users zoom %dx%d: max_scroll=%d but "
+                                "content stops changing at %d\n",
+                                w, h, zmx, last_useful(zmake, zmx, w, h));
+                }
+            }
+            check(dishonest == 0,
+                  "every detail pane's scroll ceiling is the last offset that "
+                  "changes the frame");
+
+            // The help overlay, which had the opposite error.
+            int help_bad = 0;
+            for (int h : {24, 30, 36, 50}) {
+                const int w = 120;
+                const int mx = std::max(0, HelpOverlay::content_rows(w)
+                                           - HelpOverlay::viewport_rows(h));
+                auto make = [&](int off) { return HelpOverlay{w, h, off}; };
+                if (mx == 0) continue;
+                const int last = last_useful(make, mx, w, h);
+                if (last != mx) {
+                    ++help_bad;
+                    std::printf("       \xe2\x86\x92 help %dx%d: max=%d but content stops "
+                                "changing at %d\n", w, h, mx, last);
+                }
+            }
+            check(help_bad == 0, "the help overlay's scroll ceiling is honest too");
+
+            // The ultrawide case, stated as a KNOWN narrowing rather than
+            // asserted clean: at >=146 cols the cpu/mem bodies self-split into
+            // two columns and the ceiling runs a few rows past the end. It is
+            // not reachable-content loss (the bug this commit fixes) but a few
+            // rows of dead scroll at the bottom, so it is recorded here to
+            // keep it from being rediscovered as a mystery.
+            {
+                auto make = [&](int off) {
+                    return DetailPane{ss, Detail::Cpu, nullptr, 150, 40, off};
+                };
+                const int mx = make(0).max_scroll();
+                const int last = last_useful(make, mx, 150, 40);
+                check(last <= mx,
+                      "an ultrawide pane never hides content below its ceiling "
+                      "(ceiling " + std::to_string(mx) + ", last useful " +
+                      std::to_string(last) + ")");
+            }
         }
 
         // set_theme must be total: no index can leave the palette half-applied,

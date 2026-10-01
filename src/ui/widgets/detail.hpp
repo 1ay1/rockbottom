@@ -87,17 +87,54 @@ public:
     // viewport. (The OLD element-count ceiling was in the wrong unit and, once
     // a tall hero graph became the top element, pinned it to 0 — the content
     // below the graph was unreachable. Rows fix that.)
+    // Rows the scrollable viewport actually gets.
+    //
+    // MEASURED, not assumed. Ctx::body_h is a width-independent `h - 6`, but
+    // the frame's chrome is NOT width-independent: the system strip's census
+    // row ("N procs · N threads · ...") wraps to two lines on a narrow pane
+    // and one on a wide one, so an ultrawide terminal hands the scroller ~4
+    // more rows than body_h claims. max_scroll subtracted the claim, so on a
+    // 150-col terminal the ceiling sat 4 rows above the last useful offset and
+    // End scrolled into blank space.
+    //
+    // Only the SYSBAR is measured. The hint bar is deliberately taken as a
+    // constant 1 instead of measured, because measuring it would recurse:
+    // hint() asks scrollable() whether to draw the ↑↓ affordance, scrollable()
+    // asks max_scroll(), and max_scroll() would be asking hint() how tall it
+    // is. (It does, in fact, stack-overflow — found the hard way.) The hint is
+    // a single nowrap row at every width and density by construction, so the
+    // constant is exact rather than an approximation.
+    [[nodiscard]] int viewport_rows_measured() const {
+        using namespace maya;
+        const int inner = std::max(1, w_ - 4);   // panel border + padding
+        const int sys = std::max(1, measure_element(sysbar(), inner).height.value);
+        constexpr int kHintRows = 1;
+        // + 2 for the panel's own top and bottom border.
+        return std::max(3, h_ - 2 - sys - kHintRows);
+    }
+
     [[nodiscard]] int max_scroll() const {
         using namespace maya;
         detail::Ctx cx = detail::Ctx::make(w_, h_, scroll_);
         std::vector<Element> rows = body();
         if (rows.empty()) return 0;
 
-        // Mirror the scroller's width math. PROC keeps a compact reading body
-        // beneath its full-width two-row hero; ultrawide non-PROC panes may
-        // reflow into two columns and therefore receive the full slot.
-        const bool cap_width = which_ != Detail::Net
-                            && (!cx.ultrawide || which_ == Detail::Proc);
+        // Mirror the scroller's width math EXACTLY. This is the whole contract
+        // of this function: measure the body at the width it will be PAINTED
+        // at, so the ceiling is the offset where the paint stops changing.
+        //
+        // `cap_width` here must be the negation of build()'s `split_body`, not
+        // a paraphrase of it. It was written as
+        //     which_ != Detail::Net && (!cx.ultrawide || which_ == Detail::Proc)
+        // while build() passes
+        //     !((cx.ultrawide && which_ != Detail::Proc) || which_ == Detail::Net)
+        // which agree on Net and on narrow terminals but NOT on an ultrawide
+        // PROC pane — and, more importantly, were two independent expressions
+        // of one rule, so any future edit to one silently desynced the ceiling
+        // from the paint. Derive it from the same boolean instead.
+        const bool split_body = (cx.ultrawide && which_ != Detail::Proc)
+                             || which_ == Detail::Net;
+        const bool cap_width = !split_body;
         const int full_width_prefix = which_ == Detail::Proc ? 2 : 0;
         const int gutter_w = std::max(1, w_ - 2 - 2 - 2);
         constexpr int kDesign = 104;
@@ -110,7 +147,7 @@ public:
             total_rows += std::max(1, measure_element(rows[i], row_w).height.value);
         }
 
-        return std::max(0, static_cast<int>(total_rows) - std::max(1, cx.body_h));
+        return std::max(0, static_cast<int>(total_rows) - viewport_rows_measured());
     }
 
     // Does the body overflow the viewport at all? (hint bar affordance.)

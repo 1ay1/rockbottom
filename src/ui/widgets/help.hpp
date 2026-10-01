@@ -108,41 +108,55 @@ public:
         return g;
     }
 
-    // Total body rows at a given card width — the app uses this to clamp the
-    // scroll offset. In two-column mode the groups render side-by-side, so the
-    // body is roughly the taller column; single-column stacks them all.
+    // Rows the body actually occupies at this width.
+    //
+    // MEASURED, not estimated. This used to add up a hand-written tally:
+    //   8 /*logo+blank*/ + body + 1 /*blank*/ + 3 /*footnotes*/
+    // with a comment admitting the logo was "~7 rows" and that it used "the
+    // taller estimate" deliberately. That over-count went straight into the
+    // scroll ceiling, so `End` and the wheel ran 5-6 rows PAST the content and
+    // you scrolled the help off the top into empty space — the exact mirror of
+    // the detail panes, which were one row SHORT for the opposite reason.
+    //
+    // Both are now measured off the real element tree, so neither can drift
+    // when the logo, a group or a footnote changes.
     [[nodiscard]] static int content_rows(int term_w) {
-        const bool two_col = term_w >= 92;
-        int rows_each = 0;
-        std::vector<int> heights;
-        for (const auto& g : groups())
-            heights.push_back(1 + static_cast<int>(g.entries.size()) + 1);
-        int total = 0; for (int h : heights) total += h;
-        int body;
-        if (two_col) {
-            std::size_t split = (heights.size() + 1) / 2;
-            int left = 0, right = 0;
-            for (std::size_t i = 0; i < heights.size(); ++i)
-                (i < split ? left : right) += heights[i];
-            body = std::max(left, right);
-        } else {
-            body = total;
-        }
-        (void)rows_each;
-        // Header = logo splash (~7 rows: 5-row slab + tagline + blank) + a blank.
-        // Compact mark is 3 rows; use the taller estimate so the clamp never
-        // strands the last footnote below a short terminal.
-        return 8 /*logo+blank*/ + body + 1 /*blank*/ + 3 /*footnotes*/;
+        using namespace maya;
+        // Mirror the scroller's width math EXACTLY, or the measurement is of a
+        // different layout than the one on screen and the ceiling drifts again:
+        // the card's inner slot is the terminal minus the panel border and
+        // padding, the scroller reserves 2 cells for its gutter + bar, and the
+        // reading column is capped at the same design width build() passes
+        // (150, wider than the domain panes' 104 — see build()).
+        const int slot_w  = std::max(1, term_w - 4);
+        const int gutter  = std::max(1, slot_w - 2);
+        const int inner   = std::min(gutter, 150);
+        long long total = 0;
+        for (const Element& e : body_rows(term_w))
+            total += std::max(1, measure_element(e, inner).height.value);
+        return static_cast<int>(total);
     }
 
-    // Viewport rows available for the body inside the full-frame card:
-    // outer grow + panel border(2) + panel padding(2) + hint bar(1) + slack.
+    // Viewport rows available for the body inside the full-frame card.
+    //
+    // The help card's chrome is 3 rows: the panel's top and bottom border,
+    // plus the one-line hint bar. It is NOT the detail panes' 6 — those also
+    // spend 3 on a system strip this overlay doesn't have, and copying their
+    // number here claimed a viewport 3 rows shorter than the scroller actually
+    // paints. Combined with the old over-estimated content tally, `End` ran
+    // ~6 rows past the last line and you scrolled the reference off the top
+    // into blank space.
+    //
+    // Must stay in step with build()'s own `view_h`, which is the number the
+    // scroller really gets.
     [[nodiscard]] static int viewport_rows(int term_h) {
-        return std::max(3, term_h - 6);
+        return std::max(3, term_h - 3);
     }
 
-private:
-    [[nodiscard]] maya::Element build() const {
+    // The scrollable body, as the rows the scroller will window. Static and
+    // width-only so content_rows() can MEASURE the very tree build() paints —
+    // the whole reason the old hand-tallied estimate could drift from it.
+    [[nodiscard]] static std::vector<maya::Element> body_rows(int width_) {
         using namespace maya;
         using namespace maya::dsl;
 
@@ -206,9 +220,21 @@ private:
         body.push_back((text("▁▅█ tree fold marker = subtree CPU  ·  » culprit  ·  ▎ selection.")
                         | nowrap | fgc(pal::dim)).build());
 
+        return body;
+    }
+
+private:
+    [[nodiscard]] maya::Element build() const {
+        using namespace maya;
+        using namespace maya::dsl;
+
+        std::vector<Element> body = body_rows(width_);
+
         // Window through the shared scroller (only bites on a very short term),
         // then a hint bar, all inside a full-frame card — the detail-pane idiom.
-        const int view_h = std::max(3, height_ - 6);
+        // viewport_rows() owns this number so the app's scroll clamp and the
+        // scroller can't disagree about how tall the window is.
+        const int view_h = viewport_rows(height_);
         // A wider design cap than the domain panes (150 vs 104): the help is a
         // two-column reference table whose descriptions run ~50 cols each, so
         // the 104 cap would clip them. 150 lets both columns print in full,
