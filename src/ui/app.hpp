@@ -1009,10 +1009,16 @@ struct App {
         return Cmd::quit(0);
     }
 
-    // How many theme rows the docked picker shows at this terminal height.
-    // Must agree with the widget's own arithmetic; ThemeMenu owns the formula
-    // so the two can't drift.
-    static int theme_rows(const Model& m) { return ui::ThemeMenu::visible_rows(m.height); }
+    // How many theme rows the picker shows at this terminal size. Must agree
+    // with the widget's own arithmetic, so it calls straight into it — and it
+    // has to pass the SAME docked flag view() will, because the card
+    // fallback's padding costs two rows the docked path doesn't spend.
+    // Disagree here and PageDown scrolls by a different amount than the
+    // panel actually shows.
+    static int theme_rows(const Model& m) {
+        return ui::ThemeMenu::visible_rows(m.height,
+                                           ui::ThemeMenu::panel_width(m.width) > 0);
+    }
 
     // Keep the scroll window around the cursor. Called after anything that
     // moves `sel`, so the selected row is always on screen without the

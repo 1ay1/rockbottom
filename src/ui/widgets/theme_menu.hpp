@@ -79,10 +79,10 @@ class ThemeMenu {
     // getting this wrong is invisible in code review and obvious on screen.
     // It was 9 (second hint line clipped off the bottom), then 10 (two dead
     // rows above the border). Measured:
-    //   1 search  1 chips  1 blank  1 position bar  2 hints = 6
-    //   + 2 panel border rows = 8
+    //   1 search  1 chips  1 blank  1 position bar  1 hint = 5
+    //   + 2 panel border rows = 7
     // The panel's interior padding is horizontal only, so it costs no rows.
-    static constexpr int kChromeRows = 8;
+    static constexpr int kChromeRows = 7;
 
 public:
     ThemeMenu(int w, int h, int sel, std::string query,
@@ -115,8 +115,12 @@ public:
     }
 
     // How many theme rows fit.
-    [[nodiscard]] static int visible_rows(int height) {
-        return std::clamp(height - kChromeRows, 3, 80);
+    //
+    // The card fallback wraps the panel in padding(1), which costs 2 more
+    // rows than the docked path — unaccounted for, the list overran and
+    // pushed the hint footer off the bottom on every narrow terminal.
+    [[nodiscard]] static int visible_rows(int height, bool docked = true) {
+        return std::clamp(height - kChromeRows - (docked ? 0 : 2), 3, 80);
     }
 
 private:
@@ -219,7 +223,7 @@ private:
 
         const std::vector<std::size_t>& hits = *hits_;
         const int n     = static_cast<int>(hits.size());
-        const int vis   = visible_rows(height_);
+        const int vis   = visible_rows(height_, docked_);
         const int inner = std::max(8, width_ - kPanelChrome);
         const int sel   = n > 0 ? std::clamp(sel_, 0, n - 1) : 0;
         const int top   = n <= vis ? 0 : std::clamp(top_, 0, n - vis);
@@ -322,22 +326,59 @@ private:
             body.push_back((v() | grow(1)).build());
         }
 
-        // ── hints ──
-        // Two lines when there's room, one when there isn't. The keys are
-        // ordered by how often they're wanted, not alphabetically.
+        // ── hint footer: exactly ONE row, always ──
+        //
+        // It was two rows, which is one too many for a strip whose job is to
+        // be glanceable: it cost a list row at every size, and on a short
+        // terminal that is a real fraction of what you can see. One row also
+        // gives the panel a clean single-line base instead of a two-line
+        // block that reads as a second widget.
+        //
+        // The full legend is 55 cells and the inner width runs 30..50 (the
+        // panel is clamped 34..54, less 4 for border + padding), so it never
+        // fits whole and cannot simply be truncated — clipping would silently
+        // eat the dark/light and jump-to-current keys, which are the two
+        // least discoverable things here. Instead it degrades in planned
+        // steps measured against those real widths, dropping the WORDS before
+        // the KEYS: a bare `^d/^l` still says the binding exists and is worth
+        // trying, where a cut-off "^d/^l dark/li" just says the panel is
+        // broken.
         {
             const Style k = Style{}.with_fg(pal::text).with_bold();
             const Style d = Style{}.with_fg(pal::dim);
-            body.push_back((h(
-                text("\xe2\x86\x91\xe2\x86\x93", k) | nowrap, text(" move  ", d) | nowrap,
-                text("\xe2\x8f\x8e", k) | nowrap, text(" keep  ", d) | nowrap,
-                text("esc", k) | nowrap, text(" back", d) | nowrap
-            ) | gap(0)).build());
-            body.push_back((h(
-                text("^d", k) | nowrap, text("/", d) | nowrap,
-                text("^l", k) | nowrap, text(" dark/light  ", d) | nowrap,
-                text("^g", k) | nowrap, text(" current", d) | nowrap
-            ) | gap(0)).build());
+            std::vector<Element> hint;
+            auto key = [&](const char* s) { hint.push_back((text(s, k) | nowrap).build()); };
+            auto lbl = [&](const char* s) { hint.push_back((text(s, d) | nowrap).build()); };
+
+            if (inner >= 50) {          // widest panel (54): everything spelled out
+                key("\xe2\x86\x91\xe2\x86\x93"); lbl(" move  ");
+                key("\xe2\x8f\x8e");             lbl(" keep  ");
+                key("esc");                      lbl(" back  ");
+                key("^d/^l");                    lbl(" d/l  ");
+                key("^g");                       lbl(" cur");
+            } else if (inner >= 41) {   // mid (45): drop the modifier labels
+                key("\xe2\x86\x91\xe2\x86\x93"); lbl(" move  ");
+                key("\xe2\x8f\x8e");             lbl(" keep  ");
+                key("esc");                      lbl(" back  ");
+                key("^d/^l");                    lbl("  ");
+                key("^g");
+            } else if (inner >= 29) {   // narrowest panel (34): inner is 30,
+                                        // so this tier must fit in 29
+                key("\xe2\x86\x91\xe2\x86\x93"); lbl(" move  ");
+                key("\xe2\x8f\x8e");             lbl(" keep  ");
+                key("esc");                      lbl(" ");
+                key("^d/^l");                    lbl(" ");
+                key("^g");
+            } else {                    // card fallback at a tiny width
+                // Keys only. Still complete — nothing is hidden, it has just
+                // stopped explaining itself.
+                key("\xe2\x86\x91\xe2\x86\x93"); lbl(" ");
+                key("\xe2\x8f\x8e");             lbl(" ");
+                key("esc");                      lbl(" ");
+                key("^d/^l");                    lbl(" ");
+                key("^g");
+            }
+            body.push_back((h(std::move(hint)) | gap(0)).build());
         }
 
         // The chip counts the deck so the header carries the scale without

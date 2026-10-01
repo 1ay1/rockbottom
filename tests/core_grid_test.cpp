@@ -1231,9 +1231,16 @@ int main() {
                 if (ThemeMenu::visible_rows(hgt) < 3) rows_ok = false;
             // The row budget must never exceed what the panel can actually
             // paint: rows + chrome has to fit inside the terminal height.
-            bool budget_ok = true;
-            for (int hgt = 12; hgt <= 80; ++hgt)
-                if (ThemeMenu::visible_rows(hgt) + 8 > hgt) budget_ok = false;
+            // The 7 mirrors ThemeMenu::kChromeRows (search, chips, blank,
+            // position bar, ONE hint row, two borders). The card fallback
+            // spends 2 more on its padding, which is why visible_rows takes
+            // the docked flag — it was missing, and the undocked list ran
+            // long enough to push the hint footer off the bottom.
+            bool budget_ok = true, card_budget_ok = true;
+            for (int hgt = 12; hgt <= 80; ++hgt) {
+                if (ThemeMenu::visible_rows(hgt, true) + 7 > hgt) budget_ok = false;
+                if (ThemeMenu::visible_rows(hgt, false) + 9 > hgt) card_budget_ok = false;
+            }
             for (int wid = 40; wid <= 300; ++wid) {
                 const int pw = ThemeMenu::panel_width(wid);
                 if (pw == 0) continue;                 // card fallback: fine
@@ -1246,6 +1253,10 @@ int main() {
             }
             check(rows_ok, "the picker always has at least 3 visible rows");
             check(budget_ok, "the row budget always fits inside the terminal height");
+            check(card_budget_ok,
+                  "the card fallback's budget leaves room for its own padding");
+            check(ThemeMenu::visible_rows(40, false) < ThemeMenu::visible_rows(40, true),
+                  "the card fallback claims fewer rows than the docked panel");
             check(dock_ok, "docking never takes more room than it leaves the dashboard");
             check(name_ok, "a docked panel is always wide enough to read a theme name");
             check(ThemeMenu::panel_width(80) == 0,
