@@ -40,6 +40,7 @@
 #include "../src/ui/proc_order.hpp"
 
 #include <cctype>
+#include <optional>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -1278,13 +1279,13 @@ int main() {
         // adding a longer name should fail here rather than silently clip.
         {
             std::size_t longest = 0;
-            std::string worst;
+            std::string longest_name;
             for (std::size_t i = 0; i < theme_count(); ++i) {
                 const std::size_t len = std::string(theme_name(i)).size();
-                if (len > longest) { longest = len; worst = theme_name(i); }
+                if (len > longest) { longest = len; longest_name = theme_name(i); }
             }
             check(longest <= 30,
-                  "the longest theme name (\"" + worst + "\", " +
+                  "the longest theme name (\"" + longest_name + "\", " +
                   std::to_string(longest) + ") fits the name column");
         }
 
@@ -1739,7 +1740,7 @@ int main() {
                 return detail::luma(detail::chan(c));
             };
             int louder = 0;
-            double worst = 1e9;
+            double worst_ratio = 1e9;
             std::string worst_name;
             // Skip native (index 0): its slots are named ANSI colours the
             // TERMINAL resolves, so to_rgb() answers for a nominal palette
@@ -1758,13 +1759,13 @@ int main() {
                                     theme_name(i), grid, faint);
                 }
                 const double ratio = faint > 0 ? grid / faint : 1.0;
-                if (ratio < worst) { worst = ratio; worst_name = theme_name(i); }
+                if (ratio < worst_ratio) { worst_ratio = ratio; worst_name = theme_name(i); }
             }
             check(louder == 0,
                   std::to_string(theme_count() - 1) +
                   " projected themes: the gridline is always quieter than the "
                   "faintest ink (quietest ratio " +
-                  std::to_string(static_cast<int>(worst * 100)) + "% on \"" +
+                  std::to_string(static_cast<int>(worst_ratio * 100)) + "% on \"" +
                   worst_name + "\")");
 
             // Native's gridline must not be the same slot as its ink. Both
@@ -1775,6 +1776,114 @@ int main() {
                   "native's gridline is a different colour from its faint ink");
             check(!(pal::grid == pal::track),
                   "native's gridline is no longer the meter-groove colour");
+        }
+
+        // PANEL WIDGETS MUST NOT OUTLIVE THE SNAPSHOT THEY POINT AT.
+        //
+        // The panels capture RAW POINTERS into the Snapshot's history rings
+        // (cpu_.total_history.data(), mem_->usage_history.data()) and render
+        // them LAZILY — the element returned here is a closure that reads
+        // those pointers whenever the renderer gets round to it, which is
+        // after the enclosing scope has ended.
+        //
+        // view() used to hand the docked theme picker a `Model shrunk = m;`
+        // with a narrowed width. That local died at its closing brace, so
+        // every graph was then reading freed memory: with the picker open the
+        // CPU trace vanished while the header still said 100%. It looked like
+        // a layout bug and was a lifetime bug.
+        //
+        // Build a panel from a Snapshot that goes out of scope, then render.
+        // Under ASan this is a hard failure; without it, the assertion is that
+        // the trace still paints the data it was given.
+        {
+            std::optional<maya::Element> panel;
+            {
+                CpuInfo cpu;
+                cpu.model = "CPU"; cpu.logical = 4; cpu.total = Ratio{0.75};
+                for (int i = 0; i < 4; ++i) {
+                    CpuCore c; c.usage = Ratio{0.75}; cpu.cores.push_back(c);
+                }
+                cpu.total_hist_len = 96;
+                for (int k = 0; k < 96; ++k) cpu.total_history[k] = 0.75f;
+                // The panel must COPY what it needs, or keep the caller's
+                // storage alive. Either way it has to survive this scope.
+                panel = maya::Element{CpuPanel{cpu, 2, 40, 6}};
+            }
+            const auto rows = render_rows(*panel, 56, 10);
+            int ink = 0;
+            for (const std::string& r : rows)
+                for (char ch : r)
+                    if (ch != ' ' && ch != '.') ++ink;
+            check(ink > 0,
+                  "a panel built from a scope-local Snapshot still renders its "
+                  "data (no dangling history pointer)");
+        }
+
+        // THE ZOOMED USER DASHBOARD IS A DOCUMENT, NOT A TABLE.
+        //
+        // Two faults, both from it being treated as the roster's second mode:
+        //
+        //   1. sync_user_sel() runs on EVERY sample and drags detail_scroll
+        //      along so the roster's row cursor stays on screen. In the zoom
+        //      there is no visible cursor, so it yanked the scroll back to
+        //      wherever the invisible row index sat — about once a second.
+        //      Scroll down, get thrown back up a beat later.
+        //   2. it was the only detail pane that never split into two columns,
+        //      so on a wide terminal eight sections stacked in one ribbon with
+        //      a third of the screen empty beside them.
+        //
+        // The scroll half lives in app.hpp and has no widget to assert on;
+        // what IS checkable here is the layout half and the property that
+        // makes the fix meaningful — the zoom's content must differ between
+        // narrow and ultrawide.
+        {
+            Snapshot zs;
+            zs.hostname = "t"; zs.kernel = "k";
+            zs.cpu.logical = 8;
+            zs.mem.total = Bytes{16ull << 30};
+            zs.mem.used  = Bytes{8ull << 30};
+            for (int i = 0; i < 30; ++i) {
+                ProcInfo p;
+                p.pid = 300 + i; p.name = "p" + std::to_string(i);
+                p.user = "ayush"; p.cpu = 30 - i;
+                p.rss = Bytes{static_cast<std::uint64_t>(i + 1) << 25};
+                p.state = 'S'; p.threads = 2;
+                if (i % 5 == 0) p.ports.push_back(static_cast<std::uint16_t>(9000 + i));
+                zs.procs.push_back(p);
+            }
+            zs.proc_count = 30;
+            UserAccount ua3;
+            ua3.name = "ayush"; ua3.uid = 1000; ua3.home = "/home/ayush";
+            ua3.shell = "/bin/sh"; ua3.can_login = true;
+            zs.accounts.push_back(ua3);
+            LoginSession ls3;
+            ls3.user = "ayush"; ls3.id = "1"; ls3.tty = "pts/0";
+            ls3.type = "pts"; ls3.active = true; ls3.leader = 900;
+            zs.sessions.push_back(ls3);
+
+            auto zoom_at = [&](int w, int h) {
+                return render_rows(
+                    DetailPane{zs, Detail::Users, nullptr, w, h, 0, nullptr,
+                               UserSort::Cpu, 0, "ayush"}, w, h);
+            };
+            // On an ultrawide pane two sections must share a row. MEMORY heads
+            // the left column and LOGIN SESSIONS the right, so they land on
+            // the same line only when the split is active.
+            bool side_by_side = false;
+            for (const std::string& r : zoom_at(170, 44))
+                if (r.find("MEMORY") != std::string::npos
+                    && r.find("LOGIN SESSIONS") != std::string::npos) side_by_side = true;
+            check(side_by_side,
+                  "the zoomed user dashboard uses two columns on a wide pane");
+
+            // And must NOT on a narrow one — a forced split there would make
+            // both columns unreadable.
+            bool narrow_split = false;
+            for (const std::string& r : zoom_at(100, 40))
+                if (r.find("MEMORY") != std::string::npos
+                    && r.find("LOGIN SESSIONS") != std::string::npos) narrow_split = true;
+            check(!narrow_split,
+                  "the zoomed user dashboard stays single-column when narrow");
         }
 
         // set_theme must be total: no index can leave the palette half-applied,

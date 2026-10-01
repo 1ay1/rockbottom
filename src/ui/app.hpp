@@ -2372,6 +2372,21 @@ struct App {
     // re-anchor to whoever is there now, which keeps the cursor on-screen —
     // but the anchor is refreshed, so the next X targets what's under it.
     static void sync_user_sel(Model& m) {
+        // THE ZOOMED DASHBOARD HAS NO ROW CURSOR.
+        //
+        // Everything below keeps the roster's cursor pinned to its anchored
+        // user across a re-sort, and then drags detail_scroll along so the
+        // cursor stays on screen. That is right for a TABLE and actively
+        // wrong for the zoomed view, which is a document: there is no visible
+        // cursor to follow, so the scroll was being yanked back to wherever
+        // the invisible row index happened to sit — every sample, about once
+        // a second. Scrolling down and being thrown back up a beat later is
+        // exactly the reported behaviour.
+        //
+        // The anchor still needs maintaining (esc returns to the roster, and
+        // X/K act on the anchored name), so do that and leave the scroll
+        // alone.
+        const bool zoomed = !m.user_zoom.empty();
         const std::vector<ui::UserStat> us = users_rows(m);
         if (us.empty()) { m.user_sel = 0; m.user_anchor.clear(); return; }
         if (!m.user_anchor.empty()) {
@@ -2385,6 +2400,7 @@ struct App {
         // the top slot keeps floating to the busiest user (htop's default).
         if (!m.user_anchor.empty() || m.user_sel > 0)
             m.user_anchor = us[static_cast<std::size_t>(m.user_sel)].user;
+        if (zoomed) return;                    // document, not table
         const int view = std::max(1, users_view_rows(m));
         if (m.user_sel < m.detail_scroll) m.detail_scroll = m.user_sel;
         if (m.user_sel >= m.detail_scroll + view)
@@ -2627,10 +2643,24 @@ struct App {
             // 80-col terminal would wreck the preview it exists to show.
             const int panel_w = ThemeMenu::panel_width(m.width);
             if (panel_w > 0) {
-                Model shrunk = m;
-                shrunk.width = m.width - panel_w;
+                // NO COPY OF THE MODEL HERE.
+                //
+                // This used to build a `Model shrunk = m;` with a narrowed
+                // width and hand THAT to dashboard(). It looked harmless and
+                // was not: the panels capture RAW POINTERS into the Snapshot
+                // (cpu_.total_history.data(), mem_->usage_history.data()) and
+                // render them lazily, long after this function returns — the
+                // lifetime trap net.hpp and users.hpp both document. `shrunk`
+                // died at the closing brace, so every graph was reading freed
+                // memory and painted a flat floor: with the picker open the
+                // CPU trace vanished while the header still said 100%.
+                //
+                // dashboard() only reads m.width to pick its layout, so pass
+                // the real model and tell it the width separately. Nothing
+                // outlives `m`, which the caller owns for the whole frame.
                 return canvas((h(
-                    (Element{dashboard(shrunk)} | width(shrunk.width)).build(),
+                    (Element{dashboard(m, m.width - panel_w)}
+                     | width(m.width - panel_w)).build(),
                     (Element{ThemeMenu{panel_w, m.height, m.thememenu->sel,
                                        m.thememenu->query, m.thememenu->hits,
                                        m.thememenu->mode, m.thememenu->hover,
@@ -2665,23 +2695,41 @@ struct App {
     //
     // It takes the Model by value-ish reference and reads m.width, so the
     // caller shrinks the width and everything below reflows on its own.
-    static maya::Element dashboard(const Model& m) {
+    // The main dashboard: header, verdict, the stat band, the process table,
+    // footer. Split out of view() so the theme picker can render it BESIDE
+    // itself at a reduced width — a docked picker has to draw the very thing
+    // it is previewing, and that is only possible if the dashboard is a
+    // function of a Model rather than the tail of view().
+    //
+    // `render_w` overrides m.width for layout, and exists instead of the
+    // obvious `Model shrunk = m; shrunk.width = ...`. The panels capture raw
+    // pointers into the Snapshot and render them lazily (see the lifetime
+    // notes in cpu_panel.hpp / net.hpp), so a local Model copy dangles the
+    // moment the caller's scope ends — which is exactly how the graphs went
+    // blank with the picker open. Pass the caller's model, change only the
+    // number.
+    static maya::Element dashboard(const Model& m, int render_w = 0) {
         using namespace maya;
         using namespace maya::dsl;
         using namespace rockbottom::ui;
 
         const Snapshot& s = m.snap;
-        const bool narrow = m.width < 96;
+        // Layout width. Defaults to the model's, but the docked theme picker
+        // passes a narrower one so the dashboard reflows into the space left
+        // beside the panel. Everything below reads THIS, never m.width — see
+        // the lifetime note on the signature for why this isn't a Model copy.
+        const int view_w = render_w > 0 ? render_w : m.width;
+        const bool narrow = view_w < 96;
 
         // ── Height budget ──
         // Fixed rows: header(1) + verdict(3) + footer(1) + outer padding.
         // Top band: CPU panel (graph 4 + blank + cores) vs MEM+NET+DISK stack.
         const int ncores = static_cast<int>(s.cpu.cores.size());
-        const bool wide_screen = m.width >= 200;
+        const bool wide_screen = view_w >= 200;
         // In the wide-2col layout the CPU card lives in a ~narrow left column,
         // so keep the core grid to 2-3 columns (meters need room); only the
         // legacy full-width wide layout packs them 6-8 wide.
-        const bool wide2_cores = m.width >= 200;
+        const bool wide2_cores = view_w >= 200;
         const int cpu_cols = wide2_cores ? (ncores > 16 ? 3 : 2)
                            : wide_screen ? (ncores > 32 ? 8 : ncores > 8 ? 6 : 2)
                                          : (ncores > 24 ? 4 : ncores > 12 ? 3 : 2);
@@ -2743,7 +2791,7 @@ struct App {
         // vertically (CPU · MEM · NET · DISK · TRENDS), col 2 is the process
         // table running the FULL band height beside them. The band spans from
         // just under the verdict banner down to the footer.
-        const bool wide2 = m.width >= 200;
+        const bool wide2 = view_w >= 200;
         const int band_h = std::max(6, m.height - 5);   // minus header(1)+verdict(3)+footer(1)
         // In wide-2col the proc table owns the band height; otherwise it's the
         // classic strip beneath the top band.
@@ -2753,9 +2801,9 @@ struct App {
         // Process-table inner width. In wide-2col the table lives in the right
         // column, so it's narrower than the full frame; compute it from the
         // same col1 slice the body uses. (col1_w is derived again below; keep
-        // the two in sync — both read m.width.)
-        const bool wide2_pv = m.width >= 200;
-        const int inner_pv = std::max(20, m.width - 2);
+        // the two in sync — both read view_w.)
+        const bool wide2_pv = view_w >= 200;
+        const int inner_pv = std::max(20, view_w - 2);
         // Mirror the col1_w formula below: on ultra-wide screens col 1 widens
         // to absorb the excess so the table doesn't leave a gap on the right.
         const int proc_useful_pv = 150;
@@ -2765,7 +2813,7 @@ struct App {
             ? std::min(col1_floor_pv + col1_excess_pv, inner_pv - 1 - 60) : 0;
         const int proc_inner_w = wide2_pv
             ? std::max(40, inner_pv - col1_pv - 1 - 4)   // minus gap + panel border/pad
-            : std::max(20, m.width - 6);
+            : std::max(20, view_w - 6);
 
         const ui::OrderedProcs& ord = ordered(m);
         ProcView pv{
@@ -2795,7 +2843,7 @@ struct App {
         // ── Column split ──
         // Wide 2-col: col 1 (stats, stacked) gets a fixed readable slice, col 2
         // (proc table) takes the rest. Otherwise the classic CPU|stats split.
-        const int inner = std::max(20, m.width - 2);      // minus outer padding
+        const int inner = std::max(20, view_w - 2);      // minus outer padding
         const int gap_w = 1;
         // Stats column width: wide enough for the CPU cores + graphs to
         // breathe. On a normal wide screen it's ~40% of the frame; on an

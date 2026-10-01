@@ -317,7 +317,27 @@ inline int users_view_rows(const Ctx& cx, bool filter_row = false) {
 inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
                                            const Ctx& cx, double total_cpu) {
     using namespace maya; using namespace maya::dsl;
-    std::vector<Element> b;
+
+    // TWO-COLUMN ON A WIDE PANE, like every other detail view.
+    //
+    // This pane was the only one that always stacked. On a 1400px terminal
+    // that left eight sections in one tall ribbon with a third of the screen
+    // empty to the right and the interesting parts (ports, the per-user
+    // process tables) pushed below the fold. Same `hero` + `L` + `R` split
+    // the MEM and CPU panes already use, so the whole pane stack now agrees
+    // about what a wide terminal is for.
+    //
+    // Column assignment follows the question each half answers:
+    //   L  what is this user DOING  — memory, workload, disk i/o, storage
+    //   R  who they ARE and what they RUN — sessions, ports, heaviest procs
+    // The verdict stays full-width at the bottom, where a conclusion belongs.
+    std::vector<Element> single;
+    std::vector<Element> hero, left, right;
+    const bool split = cx.ultrawide;
+    std::vector<Element>& H = split ? hero  : single;
+    std::vector<Element>& L = split ? left  : single;
+    std::vector<Element>& R = split ? right : single;
+    std::vector<Element>& b = H;        // title + hero ride the full width
 
     const double cpu_share = share_of(u.cpu, total_cpu);
     const maya::LitColor cpu_c = load_color(cpu_share);
@@ -407,35 +427,35 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
     {
         const double total = static_cast<double>(s.mem.total.value);
         const double others = std::max(0.0, static_cast<double>(s.mem.used.value) - static_cast<double>(u.rss));
-        b.push_back(section("MEMORY", pal::mem_ac,
+        L.push_back(section("MEMORY", pal::mem_ac,
                             humanize_bytes(Bytes{u.rss}) + " resident"));
-        b.push_back(comp_bar({
+        L.push_back(comp_bar({
             {total > 0 ? static_cast<double>(u.rss) / total : 0.0, pal::mem_ac},
             {total > 0 ? others / total : 0.0, mix(pal::mem_ac, pal::bg_panel, 0.62)},
         }));
-        b.push_back(comp_legend({
+        L.push_back(comp_legend({
             {u.user, std::string(humanize_bytes(Bytes{u.rss})), pal::mem_ac},
             {"everyone else", std::string(humanize_bytes(Bytes{static_cast<std::uint64_t>(others)})),
              mix(pal::mem_ac, pal::bg_panel, 0.62)},
             {"free", std::string(humanize_bytes(s.mem.available)), pal::faint},
         }));
-        b.push_back(kv3(
+        L.push_back(kv3(
             "share of ram", fmt::pct1(u.mem_share), mem_c,
             "virtual", std::string(humanize_bytes(Bytes{u.virt})), pal::label,
             "page faults", fmt::count(u.faults_ps) + "/s",
             u.faults_ps > 2000 ? pal::hot : pal::label));
     }
-    b.push_back(gap_row());
+    L.push_back(gap_row());
 
     // ── workload shape ──
     // Process-state mix is the difference between "busy" and "stuck": a D
     // herd is waiting on I/O and no amount of CPU will help it.
     {
-        b.push_back(section("WORKLOAD", pal::cpu_ac,
+        L.push_back(section("WORKLOAD", pal::cpu_ac,
                             std::to_string(u.procs) + " procs \xc2\xb7 "
                             + std::to_string(u.threads) + " threads"));
         const double np = u.procs > 0 ? static_cast<double>(u.procs) : 1.0;
-        b.push_back(comp_bar({
+        L.push_back(comp_bar({
             {u.running  / np, pal::good},
             {u.sleeping / np, mix(pal::cpu_ac, pal::bg_panel, 0.55)},
             {u.dstate   / np, pal::hot},
@@ -449,8 +469,8 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
         if (u.dstate)  legend.push_back({"uninterruptible", std::to_string(u.dstate), pal::hot});
         if (u.stopped) legend.push_back({"stopped", std::to_string(u.stopped), pal::warn});
         if (u.zombies) legend.push_back({"zombie", std::to_string(u.zombies), pal::crit});
-        b.push_back(comp_legend(std::move(legend)));
-        b.push_back(kv3(
+        L.push_back(comp_legend(std::move(legend)));
+        L.push_back(kv3(
             "cpu of box", fmt::pct1(cpu_share), cpu_c,
             "ctx switches", fmt::count(u.csw_ps) + "/s",
             u.csw_ps > 50000 ? pal::hot : pal::label,
@@ -459,41 +479,41 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
                   : std::to_string(u.nice_min) + "\xe2\x80\xa6" + std::to_string(u.nice_max),
             pal::label));
     }
-    b.push_back(gap_row());
+    L.push_back(gap_row());
 
     // ── I/O, split ── read-heavy and write-heavy are different problems.
     {
-        b.push_back(section("DISK I/O", pal::disk_ac,
+        L.push_back(section("DISK I/O", pal::disk_ac,
                             u.io > 1024 ? std::string(humanize_rate(ByteRate{u.io})) : "idle"));
         const double io_scale = std::max(1.0, u.io_read + u.io_write);
-        b.push_back(comp_bar({
+        L.push_back(comp_bar({
             {u.io_read  / io_scale, pal::disk_ac},
             {u.io_write / io_scale, pal::amber},
         }));
-        b.push_back(comp_legend({
+        L.push_back(comp_legend({
             {"read", std::string(humanize_rate(ByteRate{u.io_read})), pal::disk_ac},
             {"write", std::string(humanize_rate(ByteRate{u.io_write})), pal::amber},
             {"open fds", u.fds > 0 ? std::to_string(u.fds) : "\xe2\x80\x94", pal::label},
         }));
     }
-    b.push_back(gap_row());
+    L.push_back(gap_row());
 
     // ── storage footprint ── the "who is filling /home" half.
     {
         std::string chip = !u.disk_known ? "not measured"
                          : std::string(u.disk_partial ? "\xe2\x89\xa5" : "")
                            + std::string(humanize_bytes(Bytes{u.disk_bytes}));
-        b.push_back(section("STORAGE", pal::disk_ac, chip));
+        L.push_back(section("STORAGE", pal::disk_ac, chip));
         if (!u.disk_known) {
             // Say WHY it's blank rather than printing a confident zero.
-            b.push_back(kv("home usage", u.home.empty()
+            L.push_back(kv("home usage", u.home.empty()
                            ? "no home directory on record"
                            : "no quota, and no scan has completed yet", pal::dim));
         } else {
             if (u.disk_quota) {
                 const double qshare = share_of(static_cast<double>(u.disk_bytes),
                                                static_cast<double>(u.disk_quota));
-                b.push_back(bar("of quota", qshare,
+                L.push_back(bar("of quota", qshare,
                                 humanize_bytes(Bytes{u.disk_bytes}) + " / "
                                 + humanize_bytes(Bytes{u.disk_quota}),
                                 load_color(qshare)));
@@ -502,7 +522,7 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
                 // when we know its size. "145G" alone can't tell you whether
                 // that's a rounding error or most of the disk.
                 if (u.disk_share > 0) {
-                    b.push_back(bar("of filesystem", u.disk_share,
+                    L.push_back(bar("of filesystem", u.disk_share,
                                     std::string(u.disk_partial ? "\xe2\x89\xa5" : "")
                                     + std::string(humanize_bytes(Bytes{u.disk_bytes}))
                                     + " of " + std::string(humanize_bytes(
@@ -510,26 +530,26 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
                                               static_cast<double>(u.disk_bytes) / u.disk_share)})),
                                     load_color(u.disk_share)));
                 } else {
-                    b.push_back(kv("home usage",
+                    L.push_back(kv("home usage",
                                    std::string(u.disk_partial ? "\xe2\x89\xa5" : "")
                                    + std::string(humanize_bytes(Bytes{u.disk_bytes}))
                                    + (u.disk_partial ? "  (walk still running \xe2\x80\x94 this is a floor)" : ""),
                                    u.disk_partial ? pal::dim : pal::disk_ac));
                 }
             }
-            b.push_back(kv3(
+            L.push_back(kv3(
                 "source", u.disk_source != DiskSource::None ? disk_source_label(u.disk_source) : "\xe2\x80\x94",
                 pal::label,
                 "home", u.home.empty() ? "\xe2\x80\x94" : u.home, pal::label,
                 "shell", u.shell.empty() ? "\xe2\x80\x94" : u.shell, pal::label));
         }
     }
-    b.push_back(gap_row());
+    L.push_back(gap_row());
 
     // ── sessions ── "is a human sitting at this machine right now", and from
     // where. The remote column is the one an admin actually wants.
     if (!u.session_list.empty()) {
-        b.push_back(section("LOGIN SESSIONS", pal::good,
+        R.push_back(section("LOGIN SESSIONS", pal::good,
                             std::to_string(u.sessions) + " live"));
         for (const LoginSession& ls : u.session_list) {
             std::string where = ls.tty.empty() ? "?" : ls.tty;
@@ -537,20 +557,20 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
             else                    where += "  local";
             if (!ls.type.empty() && ls.type != "unspecified") where += "  \xc2\xb7 " + ls.type;
             if (ls.leader > 0) where += "  \xc2\xb7 leader " + std::to_string(ls.leader);
-            b.push_back((h(
+            R.push_back((h(
                 text("  ") | nowrap,
                 text(ls.active ? "\xe2\x97\x8f" : "\xe2\x97\x8b") | nowrap
                     | fgc(ls.active ? pal::good : pal::dim),
                 text(" " + where) | nowrap | fgc(pal::text)
             )).build());
         }
-        b.push_back(gap_row());
+        R.push_back(gap_row());
     }
 
     // ── exposure ── which ports this user has open. On a shared box this is
     // the security question, and it is nowhere else in the UI per-user.
     if (u.port_count > 0) {
-        b.push_back(section("LISTENING PORTS", pal::net_ac,
+        R.push_back(section("LISTENING PORTS", pal::net_ac,
                             std::to_string(u.port_count) + " bound"));
         std::string list;
         const int show = std::min<int>(u.port_count, 24);
@@ -559,38 +579,38 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
             list += std::to_string(u.ports[static_cast<std::size_t>(i)]);
         }
         if (u.port_count > show) list += "  +" + std::to_string(u.port_count - show) + " more";
-        b.push_back(kv("ports", list, pal::net_ac));
-        b.push_back(gap_row());
+        R.push_back(kv("ports", list, pal::net_ac));
+        R.push_back(gap_row());
     }
 
     // ── their heaviest processes, both ways ──
     // CPU and RAM disagree about "biggest" often enough that showing one is
     // misleading; the two lists together are the actual answer.
     if (!u.heaviest_cpu.empty()) {
-        b.push_back(section("HEAVIEST BY CPU", pal::cpu_ac, ""));
+        R.push_back(section("HEAVIEST BY CPU", pal::cpu_ac, ""));
         const double peak = u.heaviest_cpu.front().cpu;
         int rank = 1;
         for (const UserStat::TopProc& t : u.heaviest_cpu) {
-            b.push_back(rank_row(rank++, std::to_string(t.pid), t.name,
+            R.push_back(rank_row(rank++, std::to_string(t.pid), t.name,
                                  peak > 0 ? t.cpu / peak : 0.0, pal::cpu_ac,
                                  fmt::pct1(share_of(t.cpu, total_cpu)), load_color(share_of(t.cpu, total_cpu)), 6,
                                  std::string(humanize_bytes(Bytes{t.rss})), pal::label, 8));
         }
-        b.push_back(gap_row());
+        R.push_back(gap_row());
     }
     if (!u.heaviest_mem.empty()) {
-        b.push_back(section("HEAVIEST BY MEMORY", pal::mem_ac, ""));
+        R.push_back(section("HEAVIEST BY MEMORY", pal::mem_ac, ""));
         const double peak = static_cast<double>(u.heaviest_mem.front().rss);
         int rank = 1;
         for (const UserStat::TopProc& t : u.heaviest_mem) {
             const double sh = s.mem.total.value
                 ? static_cast<double>(t.rss) / static_cast<double>(s.mem.total.value) : 0.0;
-            b.push_back(rank_row(rank++, std::to_string(t.pid), t.name,
+            R.push_back(rank_row(rank++, std::to_string(t.pid), t.name,
                                  peak > 0 ? static_cast<double>(t.rss) / peak : 0.0, pal::mem_ac,
                                  std::string(humanize_bytes(Bytes{t.rss})), load_color(sh), 8,
                                  fmt::pct1(sh), pal::label, 6));
         }
-        b.push_back(gap_row());
+        R.push_back(gap_row());
     }
 
     // ── read the room, for this one user ──
@@ -627,10 +647,22 @@ inline std::vector<Element> user_dash_body(const UserStat& u, const Snapshot& s,
             msg = u.user + " is not straining this machine";
             vc = pal::good;
         }
-        b.push_back(verdict(msg, vc));
+        // The verdict is the conclusion, so it rides the FULL width BELOW
+        // both columns rather than being stranded at the foot of one of them.
+        // hero_split() stacks its hero argument ABOVE the pair, so the
+        // verdict can't go there — it is appended to the assembled result.
+        if (split) {
+            std::vector<Element> out =
+                hero_split(std::move(hero), std::move(left), std::move(right));
+            out.push_back(gap_row());
+            out.push_back(verdict(msg, vc));
+            return out;
+        }
+        single.push_back(verdict(msg, vc));
     }
 
-    return b;
+    if (split) return hero_split(std::move(hero), std::move(left), std::move(right));
+    return single;
 }
 
 // ── the pane body ─────────────────────────────────────────────────
