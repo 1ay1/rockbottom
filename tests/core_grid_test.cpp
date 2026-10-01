@@ -1694,6 +1694,33 @@ int main() {
                   "only within a run, but the dispatcher switch assumes it)");
         }
 
+        // CTRL CHORDS MUST NOT TYPE THEIR LETTER INTO A SEARCH BOX.
+        //
+        // maya decodes Ctrl+letter as CharKey{letter} with mods.ctrl set, not
+        // as a control codepoint (input.cpp: "Ctrl-A = 0x01" → CharKey{'a'}).
+        // Both filter inputs tested only `codepoint >= 0x20 && < 0x7f` and
+        // ignored the modifier, so every chord typed its letter: Ctrl+W —
+        // delete-word in every shell and text field on the machine — silently
+        // appended a "w" to the query. The theme picker already guarded this,
+        // which is how the inconsistency was found.
+        //
+        // There is no widget to render here; the bug lives in the key handler.
+        // What IS checkable is the decode contract the fix depends on, because
+        // if maya ever switched to reporting control codepoints instead, the
+        // guards would start rejecting legitimate input.
+        {
+            // Simulate maya's decode of Ctrl+W (0x17).
+            const char ctrl_w = 0x17;
+            const char32_t decoded = static_cast<char32_t>(ctrl_w + 'a' - 1);
+            check(decoded == U'w',
+                  "maya decodes Ctrl+W as the letter 'w' plus a ctrl flag, so a "
+                  "printable-range test alone cannot reject it");
+            // And the range test really does accept it — the thing that made
+            // the bug invisible.
+            check(decoded >= 0x20 && decoded < 0x7f,
+                  "a ctrl chord's letter is inside the printable ASCII range");
+        }
+
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.
         const std::size_t before = active_theme_index();

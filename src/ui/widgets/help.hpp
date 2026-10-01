@@ -39,6 +39,7 @@ public:
                 {"PgUp PgDn", "page up / down by one screenful"},
                 {"H / M / L", "cursor to top / middle / bottom of the screen"},
                 {"/", "filter: name/pid, or user: state: port: cpu: mem: !neg"},
+                {"^w / ^u", "filter: delete last term / clear it"},
                 {"t", "toggle FLOW tree ↔ flat list"},
                 {"← →", "collapse / expand subtree (flow)"},
                 {"= / +", "collapse-all / expand-all (flow)"},

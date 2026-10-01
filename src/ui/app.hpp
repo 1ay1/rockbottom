@@ -1346,6 +1346,17 @@ struct App {
                 refilter_themes(m);
                 return {};
             }
+            // Ctrl+W deletes the last word, so all three search boxes in the
+            // app (this, the process filter, the users roster filter) take the
+            // same readline edits. A text input that accepts Ctrl+U but not
+            // Ctrl+W is the kind of half-measure that trains you to distrust
+            // the whole set.
+            if (ke.mods.ctrl && cp == U'w') {
+                while (!tm.query.empty() && tm.query.back() == ' ') tm.query.pop_back();
+                while (!tm.query.empty() && tm.query.back() != ' ') tm.query.pop_back();
+                refilter_themes(m);
+                return {};
+            }
             // Ctrl+D / Ctrl+L cycle the dark/light filter. On Ctrl rather than
             // bare d/l for the same reason j/k are unbound: they are letters,
             // and "dracula" starts with one of them.
@@ -1508,13 +1519,44 @@ struct App {
 
         // 2. Filter typing mode.
         if (m.filtering) {
+            const auto* ck = std::get_if<maya::CharKey>(&ke.key);
+            const char32_t cp = ck ? ck->codepoint : 0;
             if (key(ev, maya::SpecialKey::Escape)) { m.filtering = false; m.filter.clear(); }
             else if (key(ev, maya::SpecialKey::Enter)) { m.filtering = false; }
             else if (key(ev, maya::SpecialKey::Backspace)) {
                 if (!m.filter.empty()) m.filter.pop_back();
-            } else if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
-                       ck && ck->codepoint >= 0x20 && ck->codepoint < 0x7f) {
-                m.filter += static_cast<char>(ck->codepoint);
+            }
+            // CTRL CHORDS, handled before the printable branch.
+            //
+            // maya decodes Ctrl+letter as CharKey{letter} with mods.ctrl set
+            // (see input.cpp: "Ctrl-A = 0x01"), NOT as a control codepoint. So
+            // the printable test below — which only looked at the codepoint —
+            // accepted every chord and typed its letter: Ctrl+W, which deletes
+            // a word in every shell and text field on the machine, silently
+            // appended a "w" to the query. The theme picker already guarded
+            // this; these two filters did not.
+            //
+            // Having to guard anyway, the obvious thing is to make the chords
+            // do what they do everywhere else rather than just swallow them.
+            else if (ck && ke.mods.ctrl && cp == U'u') { m.filter.clear(); }
+            else if (ck && ke.mods.ctrl && cp == U'w') {
+                // Delete the last word: trailing spaces, then back to the
+                // previous space. Filter queries are space-separated terms
+                // ("user:ayush cpu:>5"), so this drops exactly one term.
+                while (!m.filter.empty() && m.filter.back() == ' ') m.filter.pop_back();
+                while (!m.filter.empty() && m.filter.back() != ' ') m.filter.pop_back();
+            }
+            else if (ck && ke.mods.ctrl && (cp == U'c' || cp == U'g')) {
+                // Ctrl+C / Ctrl+G cancel, matching Esc. Reflex for anyone who
+                // has ever used a shell prompt or emacs.
+                m.filtering = false; m.filter.clear();
+            }
+            // Printable ASCII, but only UNMODIFIED. Alt chords are left alone
+            // too: nothing binds them here, and typing their letter would be
+            // the same bug one modifier over.
+            else if (ck && !ke.mods.ctrl && !ke.mods.alt
+                     && cp >= 0x20 && cp < 0x7f) {
+                m.filter += static_cast<char>(cp);
             }
             m.sel = 0;
             m.scroll_top = 0;
@@ -1592,12 +1634,34 @@ struct App {
                         m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
                         return {};
                     }
-                    if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
-                        ck && ck->codepoint >= 0x20 && ck->codepoint < 0x7f) {
-                        m.user_filter += static_cast<char>(ck->codepoint);
-                        // Every keystroke re-narrows the list, so the cursor
-                        // goes home rather than pointing at a stale row.
+                    // Same ctrl handling as the process filter above, for the
+                    // same reason: maya reports Ctrl+W as CharKey{'w'}+ctrl,
+                    // so an unguarded printable test types the letter.
+                    const auto* uck = std::get_if<maya::CharKey>(&ke.key);
+                    const char32_t ucp = uck ? uck->codepoint : 0;
+                    auto narrowed = [&] {
+                        // Every edit re-narrows the roster, so the cursor goes
+                        // home rather than pointing at a stale row.
                         m.user_sel = 0; m.detail_scroll = 0; m.user_anchor.clear();
+                    };
+                    if (uck && ke.mods.ctrl && ucp == U'u') {
+                        m.user_filter.clear(); narrowed(); return {};
+                    }
+                    if (uck && ke.mods.ctrl && ucp == U'w') {
+                        while (!m.user_filter.empty() && m.user_filter.back() == ' ')
+                            m.user_filter.pop_back();
+                        while (!m.user_filter.empty() && m.user_filter.back() != ' ')
+                            m.user_filter.pop_back();
+                        narrowed(); return {};
+                    }
+                    if (uck && ke.mods.ctrl && (ucp == U'c' || ucp == U'g')) {
+                        m.user_filtering = false; m.user_filter.clear();
+                        narrowed(); return {};
+                    }
+                    if (uck && !ke.mods.ctrl && !ke.mods.alt
+                        && ucp >= 0x20 && ucp < 0x7f) {
+                        m.user_filter += static_cast<char>(ucp);
+                        narrowed();
                         return {};
                     }
                     return {};
