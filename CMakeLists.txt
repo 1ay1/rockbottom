@@ -314,7 +314,26 @@ set_target_properties(rockbottom PROPERTIES OUTPUT_NAME rb)
 # libraries is the correct behaviour.
 # NOTE: the option() itself is declared earlier (next to the maya block, so the
 # portability-floor logic can read it); this is just where we act on it.
-if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+#
+# WHICH COMPILERS MAY LINK STANDALONE: GCC anywhere, Clang on Linux only.
+#
+# This used to demand GCC unconditionally. That was right when the floor was
+# GCC, but jaal needs C++26 structured binding packs (P1061), which means
+# GCC 16+ or Clang 22+ — and alpine:edge, where the musl releases are built,
+# ships g++ 15 and clang 22. So the only toolchain on that image that can
+# compile us at all is Clang, and refusing it refused the musl release.
+#
+# Clang 22 was checked against the thing that actually matters: `-static
+# -no-pie` emits a classic static ELF ("statically linked", no PT_DYNAMIC, no
+# interpreter), which is exactly what assert_standalone.cmake demands, and the
+# resulting rb passes --selfcheck and rb_tests.
+#
+# macOS stays GCC-only, and that is a measured constraint rather than inertia:
+# Apple Clang's libc++ has no std::move_only_function, which maya requires, so
+# a Clang build there does not compile — see the warning earlier in this file.
+if(RB_STANDALONE AND (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+                      OR (CMAKE_SYSTEM_NAME STREQUAL "Linux"
+                          AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")))
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # -no-pie is load-bearing, not cosmetic. Modern GCC (Alpine edge's
         # gcc 15, recent Debian/Ubuntu) defaults to -fPIE -pie, so a bare
@@ -350,17 +369,19 @@ if(RB_STANDALONE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
                 -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
         endif()
     endif()
-elseif(RB_STANDALONE AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    # RB_STANDALONE is ON but the compiler is not GCC, so NONE of the static
-    # link flags above were applied and the binary will silently depend on the
-    # build host's C++ runtime. That is the precise failure the standalone
-    # promise exists to prevent, so refuse to pretend — fail configure with a
-    # pointer to the fix rather than emit a non-portable "standalone" build.
+elseif(RB_STANDALONE)
+    # RB_STANDALONE is ON but the compiler is neither GCC nor Linux Clang, so
+    # NONE of the static link flags above were applied and the binary will
+    # silently depend on the build host's C++ runtime. That is the precise
+    # failure the standalone promise exists to prevent, so refuse to pretend —
+    # fail configure with a pointer to the fix rather than emit a non-portable
+    # "standalone" build.
     message(FATAL_ERROR
-        "RB_STANDALONE=ON needs GCC (got ${CMAKE_CXX_COMPILER_ID}). "
-        "maya also requires it (Apple Clang's libc++ lacks std::move_only_function). "
-        "Install Homebrew gcc / g++-14 and pass -DCMAKE_CXX_COMPILER=g++-14, "
-        "or build a system-linked binary with -DRB_STANDALONE=OFF.")
+        "RB_STANDALONE=ON needs GCC on this platform (got ${CMAKE_CXX_COMPILER_ID} "
+        "on ${CMAKE_SYSTEM_NAME}). maya needs std::move_only_function, which "
+        "Apple Clang's libc++ lacks. Install Homebrew gcc / g++-14 and pass "
+        "-DCMAKE_CXX_COMPILER=g++-14, or build a system-linked binary with "
+        "-DRB_STANDALONE=OFF. (On Linux, Clang 22+ is supported.)")
 endif()
 
 # Strip the Release binary. Unstripped, `rb` is ~33MB (94% debug symbols); the
