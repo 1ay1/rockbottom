@@ -1721,6 +1721,62 @@ int main() {
                   "a ctrl chord's letter is inside the printable ASCII range");
         }
 
+        // GRIDLINES MUST RECEDE BEHIND THE DATA, ON EVERY THEME.
+        //
+        // Graph gridlines used pal::track — the METER-GROOVE colour, a filled
+        // surface tier, not a hairline. On projected themes that happens to
+        // sit ~11 luma off the canvas and reads fine; on `native`, where
+        // track, dim and faint are ALL the terminal's one bright_black, the
+        // 25/50/75 rules came out exactly as bright as the faintest ink. At
+        // low load — a thin trace near the floor, which is the common case —
+        // the graph then read as a dotted mesh with no discernible shape.
+        //
+        // pal::grid is its own slot now. Assert the ordering it exists to
+        // guarantee: the gridline is strictly quieter than the faint ink tier,
+        // so a rule can never compete with a trace drawn over it.
+        {
+            auto lum = [](maya::LitColor c) {
+                return detail::luma(detail::chan(c));
+            };
+            int louder = 0;
+            double worst = 1e9;
+            std::string worst_name;
+            // Skip native (index 0): its slots are named ANSI colours the
+            // TERMINAL resolves, so to_rgb() answers for a nominal palette
+            // rather than the user's real one — luma comparisons there measure
+            // our guess, not what renders. Native is pinned separately below.
+            for (std::size_t i = 1; i < theme_count(); ++i) {
+                set_theme(i);
+                const double canvas = lum(pal::bg_panel);
+                const double grid  = std::fabs(lum(pal::grid)  - canvas);
+                const double faint = std::fabs(lum(pal::faint) - canvas);
+                if (grid >= faint) {
+                    ++louder;
+                    if (louder <= 4)
+                        std::printf("       \xe2\x86\x92 %s: gridline (d=%.0f) is not "
+                                    "quieter than faint ink (d=%.0f)\n",
+                                    theme_name(i), grid, faint);
+                }
+                const double ratio = faint > 0 ? grid / faint : 1.0;
+                if (ratio < worst) { worst = ratio; worst_name = theme_name(i); }
+            }
+            check(louder == 0,
+                  std::to_string(theme_count() - 1) +
+                  " projected themes: the gridline is always quieter than the "
+                  "faintest ink (quietest ratio " +
+                  std::to_string(static_cast<int>(worst * 100)) + "% on \"" +
+                  worst_name + "\")");
+
+            // Native's gridline must not be the same slot as its ink. Both
+            // were bright_black, which is the whole bug; `black` is the one
+            // ANSI slot quieter than that.
+            set_theme(0);
+            check(!(pal::grid == pal::faint),
+                  "native's gridline is a different colour from its faint ink");
+            check(!(pal::grid == pal::track),
+                  "native's gridline is no longer the meter-groove colour");
+        }
+
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.
         const std::size_t before = active_theme_index();

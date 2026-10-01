@@ -335,7 +335,22 @@ public:
                         const double frac = std::clamp(avg_gy / std::max(1, gh - 1), 0.0, 1.0);
                         cc = mix(bright, pal::bg_panel, 0.42 + 0.46 * frac);
                     } else {
-                        cc = pal::track;   // gridline dots
+                        // GRIDLINE DOTS — structure, not data.
+                        //
+                        // This was pal::track, the METER-GROOVE colour, which
+                        // is a filled surface tier rather than a hairline. On
+                        // `native`, where track, dim and faint are ALL the
+                        // terminal's one bright_black, the gridlines came out
+                        // exactly as bright as the faintest ink — so at low
+                        // load, when the trace is a thin line near the floor,
+                        // the 25/50/75 rules were as loud as the data and the
+                        // graph read as a dotted mesh with no shape.
+                        //
+                        // pal::grid is its own slot now (theme.hpp): a blend
+                        // below the faint tier on projected themes, and plain
+                        // `black` on native — the one ANSI slot quieter than
+                        // bright_black.
+                        cc = pal::grid;
                     }
                     runs.push_back({off, content.size() - off, Style{}.with_fg(cc)});
                 } else {

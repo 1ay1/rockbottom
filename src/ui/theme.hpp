@@ -66,6 +66,16 @@ struct Theme {
 
     // Surfaces / structure.
     maya::LitColor bg, bg_panel, border, track, rail, sel_bg;
+    // The faintest structural hairline in the app: graph gridlines at
+    // 25/50/75%, and anything else that must be visible without competing
+    // with data. Its own slot rather than a derivation of `track`, because
+    // `track` is a filled METER GROOVE — on `native`, where every surface
+    // tier is the terminal's one bright_black, a derived gridline came out
+    // exactly as bright as the faintest ink and a low-load graph read as a
+    // dotted mesh with no shape. A projected theme blends this below its own
+    // faint ink; native gives it `black`, which is the only ANSI slot quieter
+    // than bright_black.
+    maya::LitColor grid;
     // Ink tiers.
     maya::LitColor white, text, label, dim, faint;
     // Semantic ramp + spectral accents.
@@ -167,6 +177,9 @@ struct Rgb { double r, g, b; };  // channels in 0..255
     t.track  = differs(m.surface, 4.0)   ? from_rgb(chan(m.surface))   : up(0.14);
     t.rail   = differs(m.surface, 4.0)   ? from_rgb(chan(m.surface))   : up(0.16);
     t.sel_bg = differs(m.selection, 4.0) ? from_rgb(chan(m.selection)) : up(0.20);
+    // Gridlines: a true hairline, deliberately BELOW the faint ink tier so a
+    // 25/50/75 rule never competes with the trace drawn over it.
+    t.grid = up(0.09);
 
     // Ink tiers — bright headline down to faint structure. On a light theme
     // "brighten toward white" would REDUCE contrast, so the headline moves
@@ -329,6 +342,12 @@ struct Rgb { double r, g, b; };  // channels in 0..255
     return Theme{"native",
         C::default_color(), C::default_color(), C::bright_black(),
         C::bright_black(), C::bright_black(), C::bright_black(),
+        // grid: plain `black`, not bright_black. It is the one ANSI slot
+        // quieter than the surface tiers above, which is exactly what a
+        // gridline needs — with bright_black here the 25/50/75 rules were as
+        // loud as `dim` and `faint` (also bright_black) and a low-load graph
+        // read as a dotted mesh.
+        C::black(),
         C::bright_white(), C::white(), C::white(),
         C::bright_black(), C::bright_black(),
         C::green(), C::yellow(), C::bright_red(), C::red(),
@@ -653,6 +672,7 @@ inline maya::LitColor& bg       = g_active.bg;
 inline maya::LitColor& bg_panel = g_active.bg_panel;
 inline maya::LitColor& border   = g_active.border;
 inline maya::LitColor& track    = g_active.track;   // meter groove
+inline maya::LitColor& grid     = g_active.grid;    // graph gridline hairline
 inline maya::LitColor& rail     = g_active.rail;    // table header band
 inline maya::LitColor& sel_bg   = g_active.sel_bg;  // selected-row strip
 
