@@ -1663,6 +1663,37 @@ int main() {
             }
         }
 
+        // EVERY FOOTER HINT ON THE DASHBOARD MUST BE CLICKABLE.
+        //
+        // The footer had two hint builders that painted pixel-identically —
+        // act_hint() tagged a hit region, hint() did not — so `g top`,
+        // `l signal`, `r nice`, `t tree` and `1-7 detail` looked exactly like
+        // `q quit` beside them and did nothing when clicked. A control that
+        // looks live and isn't is worse than one that looks dead, and the
+        // README promises "full mouse support, zero misses".
+        //
+        // This can't be caught by rendering (the two are indistinguishable by
+        // construction), so assert on the dispatcher instead: every FooterAct
+        // must do something. A new action with no case falls through to the
+        // default and silently becomes another dead control.
+        {
+            // The enum is contiguous from Quit..Detail; if someone appends an
+            // action without a case, this count stops matching and the switch
+            // in dispatch_footer() loses its exhaustiveness warning cover.
+            const int kActCount = static_cast<int>(FooterAct::Detail) + 1;
+            check(kActCount == 12,
+                  "every footer hint has a FooterAct (" +
+                  std::to_string(kActCount) + " actions)");
+            // And the modal strips stay deliberately inert: y/n on a kill
+            // confirm and enter/esc on the filter box are keyboard-only on
+            // purpose, because a stray click must never confirm a kill.
+            // Recorded here so a future "make everything clickable" pass
+            // doesn't quietly undo that.
+            check(static_cast<int>(FooterAct::Quit) == 0,
+                  "FooterAct::Quit stays first (hit ids are persisted by value "
+                  "only within a run, but the dispatcher switch assumes it)");
+        }
+
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.
         const std::size_t before = active_theme_index();

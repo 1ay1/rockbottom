@@ -628,7 +628,7 @@ its own error hue — so it keeps its character and still tells you the truth.
 | **click inside a detail pane** | works the pane (selects a row, drags the scrollbar) — it does **not** close it; `esc` or a click outside does |
 | **click a user row** | selects that user · **double-click** opens their full dashboard |
 | **click a users column header** | sorts the roster by it — including `DISK%`; click again to reverse (▼ / ▲) |
-| **click a footer hint** | fires that action — `?·help`, `space·pause`, `s·sort`, `x·end`, `K·kill`, `/·filter`, `q·quit` |
+| **click a footer hint** | fires that action — **every hint in the strip is live**, not just some: `q`, `g`, `/`, `x`, `K`, `l`, `r`, `t`, `s`, `1-7`, `space`, `?`. (The `y`/`n` on a kill confirm are deliberately keyboard-only; a stray click must never confirm a kill.) |
 | **right-click a process** | arms an end (SIGTERM — still asks first) |
 | **right-click anywhere else** | **go back** — one level per click, same as `Esc`. Closes a detail pane, the theme picker, help, a signal menu; a zoomed user drops to the roster first. Left-click *works* an overlay, so this is the way out of one without reaching for the keyboard. |
 | **drag a scrollbar** | slides that list or pane to any position — the process list, every detail pane, and this help all grab-and-slide |

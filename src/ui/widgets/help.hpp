@@ -91,14 +91,14 @@ public:
             }},
             {"GENERAL", {
                 {"p / Space", "pause / resume"},
-                {"< / >", "slower / faster refresh (250ms–5s)"},
+                {"< / > (or , / .)", "slower / faster refresh (250ms–5s)"},
                 {"T", "theme picker \xe2\x80\x94 docked, type to search 616, live"},
                 {"? / h", "toggle this help (h = collapse in flow tree)"},
                 {"q / Esc", "quit"},
             }},
             {"MOUSE", {
                 {"hover row", "highlight the process under the pointer"},
-                {"click row", "pin + select it · header sorts · footer acts"},
+                {"click row", "pin + select · headers sort · every hint is live"},
                 {"double-click", "open the process detail pane"},
                 {"right-click", "a process: end it \xc2\xb7 anywhere else: go back"},
                 {"drag scrollbar", "slide any list / pane to any position"},

@@ -192,21 +192,22 @@ public:
             // back to the busiest process is the thing you actually want
             // after scrolling and can't guess. G is its mirror, documented
             // in `?`.
-            parts.push_back({hint("g", "top"), 2});
+            parts.push_back({act_hint("g", "top", FooterAct::Top), 2});
             parts.push_back({act_hint("/", "filter", FooterAct::Filter), 7});
             parts.push_back({sep(), 1});
             parts.push_back({act_hint("x", "end", FooterAct::End)});            // essential
             parts.push_back({act_hint("K", "kill", FooterAct::Kill), 5});
-            parts.push_back({hint("l", "signal"), 3});
-            parts.push_back({hint("r", "nice"), 2});
-            parts.push_back({hint("t", "tree"), 4});
+            parts.push_back({act_hint("l", "signal", FooterAct::Signal), 3});
+            parts.push_back({act_hint("r", "nice", FooterAct::Nice), 2});
+            parts.push_back({act_hint("t", "tree", FooterAct::Tree), 4});
             parts.push_back({act_hint("s", "sort", FooterAct::Sort), 4});
             parts.push_back({sep(), 1});
             // 1-7, not 1-6: the USERS pane is the seventh and was left out
             // of this label when it shipped, so the only way to find it was
             // the help screen. A pane nobody can discover may as well not
-            // exist.
-            parts.push_back({hint("1-7", "detail"), 3});
+            // exist. A click opens the FIRST pane (cpu) — the tab bar inside
+            // takes you anywhere else, so one click gets you in.
+            parts.push_back({act_hint("1-7", "detail", FooterAct::Detail), 3});
             parts.push_back({act_hint("space", "pause", FooterAct::Pause), 5});
             parts.push_back({act_hint("?", "help", FooterAct::Help), 6});
         }

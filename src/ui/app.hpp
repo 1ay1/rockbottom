@@ -458,6 +458,20 @@ struct App {
             case FooterAct::Sort:  m.sort = static_cast<SortKey>((static_cast<int>(m.sort) + 1) % 6); return resample(m);
             case FooterAct::Pause: m.paused = !m.paused; return {};
             case FooterAct::Help:  m.show_help = true; return {};
+            // These four used to be inert labels that looked identical to the
+            // clickable ones beside them. Each reuses the SAME helper the
+            // keyboard path calls, so a click and a keypress can't diverge.
+            case FooterAct::Top:
+                m.sel = 0; m.scroll_top = 0; m.follow_pid = 0; return {};
+            case FooterAct::Signal: return open_sigmenu(m);
+            case FooterAct::Nice:   return open_nicemenu(m);
+            case FooterAct::Tree:   return toggle_tree(m);
+            case FooterAct::Detail:
+                // The label says "1-7", so a click opens the first of the
+                // seven; the pane's own tab bar reaches the rest in one more
+                // click. Opening nothing would make the only discoverable
+                // pointer to the detail panes a dead control.
+                m.detail = ui::Detail::Cpu; m.detail_scroll = 0; return {};
         }
         return {};
     }

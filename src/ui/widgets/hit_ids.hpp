@@ -38,7 +38,21 @@ enum HitKind : std::uint32_t {
 
 // Footer actions that a click can trigger. Kept here (not nested in App) so
 // both the footer widget and the dispatcher name the same values.
-enum class FooterAct : std::uint32_t { Quit, Filter, End, Kill, Sort, Pause, Help };
+//
+// EVERY hint in the strip is in here. The footer used to mix two kinds of
+// hint that painted identically — one clickable, one inert — so `g top`,
+// `l signal`, `r nice` and `t tree` looked exactly like `q quit` next to them
+// and did nothing when clicked. A control that looks live and isn't is worse
+// than one that looks dead, and the README promises "full mouse support, zero
+// misses".
+enum class FooterAct : std::uint32_t {
+    Quit, Filter, End, Kill, Sort, Pause, Help,
+    Top,      // g — jump the cursor to the top of the list
+    Signal,   // l — open the signal picker
+    Nice,     // r — open the renice dial
+    Tree,     // t — toggle flow-tree / flat
+    Detail,   // 1-7 — opens the CPU pane (the first of the seven)
+};
 
 [[nodiscard]] inline maya::HitId hit_proc_row(int idx) {
     return maya::hit_id(HK_ProcRow, static_cast<std::uint32_t>(idx));
