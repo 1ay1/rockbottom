@@ -35,6 +35,8 @@
 #include "../src/ui/widgets/detail/users.hpp"
 #include "../src/ui/widgets/detail.hpp"
 #include "../src/ui/widgets/help.hpp"
+#include "../src/ui/widgets/footer.hpp"
+#include "../src/ui/widgets/verdict.hpp"
 #include "../src/ui/proc_order.hpp"
 
 #include <cctype>
@@ -1522,6 +1524,142 @@ int main() {
                       "an ultrawide pane never hides content below its ceiling "
                       "(ceiling " + std::to_string(mx) + ", last useful " +
                       std::to_string(last) + ")");
+            }
+        }
+
+        // ── THE MODAL FOOTER STRIPS MUST NOT CLIP THEIR POINT ─────────────────
+        //
+        // The footer is a fit_row, which sheds whole items by `keep` rank — but
+        // an item at keep-always that is simply too wide just gets clipped by
+        // the row. Three strips were built that way and all three clipped the
+        // one thing that mattered:
+        //
+        //   kill confirm  the process name was unbounded, so "y confirm" and
+        //                 "n cancel" sheared off the right edge. A dialog that
+        //                 kills things showed half an answer.
+        //   filter box    the query clipped at the END, taking the caret with
+        //                 it. You cannot edit text you cannot see.
+        //   error toast   clipped at the end, which is where the REASON lives
+        //                 ("Operation not permitted") — the only actionable
+        //                 part of the message.
+        {
+            auto strip = [](const Footer& f, int w) {
+                const auto r = render_rows(f, w, 1);
+                return r.empty() ? std::string{} : r[0];
+            };
+
+            // Both answers readable at every width, with a hostile name.
+            PendingKill pk;
+            pk.pid = 1234;
+            pk.name = "some-absurdly-long-process-name-from-a-container";
+            pk.sig = SIGKILL;
+            pk.pids = {1234};
+            int kill_bad = 0;
+            for (int w : {50, 60, 80, 120, 200}) {
+                const std::string s = strip(
+                    Footer{false, 7, nullptr, &pk, false, ""}, w);
+                // "confirm" and "cancel" in full, and the signal named.
+                if (s.find("confirm") == std::string::npos
+                    || s.find("cancel") == std::string::npos
+                    || s.find("SIGKILL") == std::string::npos) {
+                    ++kill_bad;
+                    std::printf("       \xe2\x86\x92 kill strip at %d: %s\n", w, s.c_str());
+                }
+            }
+            check(kill_bad == 0,
+                  "the kill confirmation keeps the signal and BOTH answers at "
+                  "every width");
+
+            // The filter caret survives, and so does the tail being typed.
+            const std::string q = "user:ayush state:R port:443 cpu:>5 mem:>10 !kernel";
+            int filt_bad = 0;
+            for (int w : {50, 60, 80, 120, 200}) {
+                const std::string s = strip(
+                    Footer{false, 7, nullptr, nullptr, true, q}, w);
+                // The last thing typed must be on screen — head-clipped, not
+                // tail-clipped.
+                if (s.find("!kernel") == std::string::npos) {
+                    ++filt_bad;
+                    std::printf("       \xe2\x86\x92 filter strip at %d lost the caret end: %s\n",
+                                w, s.c_str());
+                }
+            }
+            check(filt_bad == 0,
+                  "the filter box always shows the end of what you typed");
+
+            // An error keeps its reason.
+            Toast err{"could not signal 1234: Operation not permitted", true};
+            int toast_bad = 0;
+            for (int w : {50, 60, 80, 120, 200}) {
+                const std::string s = strip(
+                    Footer{false, 7, &err, nullptr, false, ""}, w);
+                if (s.find("not permitted") == std::string::npos) {
+                    ++toast_bad;
+                    std::printf("       \xe2\x86\x92 error toast at %d lost the reason: %s\n",
+                                w, s.c_str());
+                }
+            }
+            check(toast_bad == 0,
+                  "an error toast always shows the reason, clipping the prefix "
+                  "instead");
+        }
+
+        // The verdict banner's separator is only a separator when there are
+        // two things to separate. It was unconditional, so a verdict with no
+        // culprit ("Out of memory" — nothing to blame) rendered as
+        // "Out of memory  ·" with a dangling dot, which reads as a sentence
+        // that got cut off. That is the worst possible impression for the one
+        // line whose whole job is to sound certain.
+        {
+            Snapshot v;
+            v.hostname = "t"; v.kernel = "k";
+            v.cpu.logical = 1; v.cpu.cores.push_back(CpuCore{});
+            v.mem.total = Bytes{1ull << 30}; v.mem.used = Bytes{1ull << 30};
+            v.verdict.level = Health::Critical;
+            v.verdict.headline = "Out of memory";
+            v.verdict.detail = "";                 // no culprit
+            // Assert on CONTENT, not on the painted row.
+            //
+            // Three attempts to spot a stray "·" in the rendered line all
+            // produced false positives: render_rows folds the health bullet,
+            // the separator, and the rounded border to the same ASCII dot, so
+            // every pattern that caught a dangling separator also caught the
+            // glyph or the frame. Comparing the two renders is unambiguous —
+            // if the separator is conditional, dropping the detail must make
+            // the line strictly shorter by the separator plus the detail.
+            auto content_end = [](const Snapshot& sn) {
+                const auto r = render_rows(VerdictBanner{sn, 0}, 100, 3);
+                for (const std::string& line : r) {
+                    const std::size_t h = line.find("Out of memory");
+                    if (h == std::string::npos) continue;
+                    // Walk forward from the headline to the last non-space
+                    // BEFORE the run of padding that precedes the right
+                    // border — i.e. the end of the text, not the end of the
+                    // frame. A 3+ space gap marks where content stops.
+                    std::size_t i = h;
+                    std::size_t last = h;
+                    while (i < line.size()) {
+                        if (line[i] != ' ') { last = i; ++i; continue; }
+                        if (line.compare(i, 3, "   ") == 0) break;
+                        ++i;
+                    }
+                    return last - h;
+                }
+                return std::size_t{0};
+            };
+            Snapshot with = v;
+            with.verdict.detail = "swap thrashing at 40M/s";
+            check(content_end(with) > content_end(v),
+                  "a verdict with a culprit is wider than one without — the "
+                  "separator is conditional, not always printed");
+            // And the detail really is on screen when present.
+            {
+                const auto r = render_rows(VerdictBanner{with, 0}, 100, 3);
+                bool joined = false;
+                for (const std::string& line : r)
+                    if (line.find("Out of memory") != std::string::npos
+                        && line.find("swap thrashing") != std::string::npos) joined = true;
+                check(joined, "a verdict WITH a culprit still prints both halves");
             }
         }
 

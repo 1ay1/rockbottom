@@ -78,8 +78,17 @@ public:
             Style{}.with_bold().with_fg(pal::bg).with_bg(c));
         add("  ", Style{});
         add(v.headline, Style{}.with_bold().with_fg(c));
-        add("  ·  ", Style{}.with_fg(pal::faint));
-        add(v.detail, Style{}.with_fg(pal::label));
+        // Separator only when there IS a detail to separate from. The `add`
+        // lambda already skips empty strings, but the separator itself is not
+        // empty, so an empty detail left a dangling "  ·  " hanging off the
+        // end of the headline — which reads as a truncated sentence, exactly
+        // the wrong impression for the one line that is meant to be the
+        // confident answer. (Plenty of verdicts have no culprit: "Out of
+        // memory" with nothing to blame is a complete thought.)
+        if (!v.detail.empty()) {
+            add("  \xc2\xb7  ", Style{}.with_fg(pal::faint));
+            add(v.detail, Style{}.with_fg(pal::label));
+        }
 
         std::vector<Element> line;
         line.push_back(Element{TextElement{
