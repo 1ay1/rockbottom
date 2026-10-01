@@ -1,7 +1,8 @@
 // widgets/signal_menu.hpp — the "send a signal" picker (htop's F9 menu).
 //
-// A centered overlay listing the curated signal catalog. The number keys 1-9
-// and ↑↓ move the highlight; Enter / y arms a PendingKill with the chosen
+// A centered overlay listing the curated signal catalog. Every row has a
+// hotkey (1-9, then 0, a, b for the last three), rows are clickable, and
+// ↑↓ move the highlight; Enter / y arms a PendingKill with the chosen
 // signal, routing back through the ordinary confirm flow so ANY signal — not
 // just TERM/KILL — gets the same "are you sure" guard and group semantics.
 
@@ -11,6 +12,7 @@
 
 #include "../theme.hpp"
 #include "../state.hpp"
+#include "hit_ids.hpp"
 #include "panel.hpp"
 #include "detail/common.hpp"
 
@@ -58,8 +60,18 @@ private:
         for (std::size_t i = 0; i < cat.size(); ++i) {
             const SignalDef& s = cat[i];
             const bool on = static_cast<int>(i) == sel_;
-            // A hotkey rides the first nine rows (1-9); the rest are ↑↓ only.
-            const std::string hot = i < 9 ? std::to_string(i + 1) : " ";
+            // EVERY row carries a hotkey. The first nine are 1-9, then 0 for
+            // the tenth and a/b for the eleventh and twelfth. It used to stop
+            // at nine and print a blank for the rest, which read as "these
+            // three are not selectable" — SIGABRT, SIGWINCH and SIGTSTP were
+            // reachable only by arrow key, in the one dialog where you most
+            // want to hit the thing you meant on the first try.
+            const std::string hot =
+                i < 9  ? std::to_string(i + 1)
+              : i == 9 ? std::string("0")
+              : i == 10 ? std::string("a")
+              : i == 11 ? std::string("b")
+                        : std::string(" ");
             const Color ac  = pal::hot;
             const Color ink = on ? pal::white : pal::text;
             std::vector<Element> row;
@@ -76,7 +88,10 @@ private:
             const int gloss_w = std::max(6, card_w - 2 /*pad*/ - 19);
             row.push_back((text("  " + std::string(truncate_end(s.gloss, gloss_w))) | nowrap
                            | fgc(on ? pal::label : pal::dim)).build());
-            Element r = h(std::move(row)) | gap(0);
+            // Clickable, like every other list in the app. This widget had no
+            // hit regions at all, so the mouse was dead in it — which is a
+            // real gap in a dialog you reach FROM a mouse-driven table.
+            Element r = h(std::move(row)) | gap(0) | hit(hit_signal_row(static_cast<int>(i)));
             if (on) r = std::move(r) | bgc(pal::track);
             body.push_back(r.build());
         }
@@ -90,7 +105,7 @@ private:
             const Style d = Style{}.with_fg(pal::dim);
             Element full = (h(
                 text("  ") | nowrap,
-                text("1-9 / ↑↓", k) | nowrap, text(" pick   ", d) | nowrap,
+                text("1-9 0 a b / ↑↓", k) | nowrap, text(" pick   ", d) | nowrap,
                 text("enter / y", k) | nowrap, text(" send   ", d) | nowrap,
                 text("esc", k) | nowrap, text(" cancel", d) | nowrap
             ) | gap(0)).build();

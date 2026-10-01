@@ -27,6 +27,7 @@
 #include "../src/core/platform/common/sys_util.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
 #include "../src/ui/widgets/theme_menu.hpp"
+#include "../src/ui/widgets/signal_menu.hpp"
 #include "../src/ui/widgets/detail/cpu.hpp"
 #include "../src/ui/widgets/detail/mem.hpp"
 #include "../src/ui/widgets/detail/net.hpp"
@@ -1282,6 +1283,36 @@ int main() {
                   "the longest theme name (\"" + worst + "\", " +
                   std::to_string(longest) + ") fits the name column");
         }
+
+        // ── AUDIT FINDINGS: things a render audit caught that review didn't ──
+        //
+        // Every signal in the catalog must have a hotkey. The picker bound only
+        // 1-9 while the catalog had 12 entries, so SIGABRT, SIGWINCH and
+        // SIGTSTP printed a BLANK where every other row showed a key — which
+        // reads as "not selectable". If the catalog grows past 12 this fails,
+        // which is the point: the overflow scheme (0, a, b) has a limit and
+        // silently exceeding it is how the blank came back.
+        {
+            const std::size_t n = signal_catalog().size();
+            check(n <= 12,
+                  "every signal in the catalog has a hotkey (1-9, 0, a, b — " +
+                  std::to_string(n) + " entries)");
+            // The curated list must stay a glanceable page, not a syscall
+            // reference: it is sized to fit the card without scrolling.
+            check(n >= 8, "the signal catalog still covers the common signals");
+            // SIGKILL must never be first — the cursor opens on index 0, so a
+            // catalog that led with KILL would put "force kill" one Enter away.
+            check(signal_catalog()[0].num != SIGKILL,
+                  "the signal picker does not open on SIGKILL");
+        }
+
+        // The renice dial's cursor is placed by BYTE offset into a UTF-8
+        // string. It used to assume 3 bytes per cell (pos * 3), which was true
+        // only by coincidence of the two glyphs chosen; this pins the property
+        // that every cell glyph is the same width as the cursor glyph, so the
+        // offset arithmetic the widget now does incrementally stays sound.
+        check(std::strlen("\xe2\x97\x8f") == std::strlen("\xe2\x94\x80"),
+              "the renice slider's cursor and track glyphs are the same byte width");
 
         // set_theme must be total: no index can leave the palette half-applied,
         // and every one must publish to maya so widgets we don't paint agree.

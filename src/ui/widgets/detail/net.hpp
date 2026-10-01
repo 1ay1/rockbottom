@@ -372,22 +372,31 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
         ifcol.push_back(section(maya::truncate_end(ni.name, 14), pal::net_ac,
                             ni.up ? "● up" : "○ down"));
         if (!ni.ip4.empty() || !ni.mac.empty()) {
+            // ip / mac / mtu on one line, but DROP WHOLE FIELDS rather than let
+            // the line overflow. It used to emit all three unconditionally and
+            // the column hard-clipped the tail, so a 17-char MAC rendered as
+            // "aa:bb:cc:dd:ee:0" — a truncated MAC is not a cosmetic problem,
+            // it is wrong data that looks like right data. Priority order is
+            // ip, then mac, then mtu: the address is what you came to read,
+            // and mtu is the one you can live without.
+            const int avail = std::max(0, (split ? cx.w / 2 : cx.w) - 8);
+            int used = 2;                              // leading indent
             std::vector<Element> idr;
             idr.push_back((text("  ") | nowrap).build());
-            if (!ni.ip4.empty()) {
-                idr.push_back((text("ip ") | nowrap | fgc(pal::faint)).build());
-                idr.push_back((text(ni.ip4) | nowrap | Bold | fgc(pal::sky)).build());
+            auto field = [&](const char* label, const std::string& val,
+                             maya::LitColor c, bool bold) {
+                const int cost = static_cast<int>(std::strlen(label)) +
+                                 static_cast<int>(val.size()) + 3;
+                if (used + cost > avail) return;
+                idr.push_back((text(label) | nowrap | fgc(pal::faint)).build());
+                Element v = text(val) | nowrap | fgc(c);
+                idr.push_back((bold ? (std::move(v) | Bold) : std::move(v)).build());
                 idr.push_back((text("   ") | nowrap).build());
-            }
-            if (!ni.mac.empty()) {
-                idr.push_back((text("mac ") | nowrap | fgc(pal::faint)).build());
-                idr.push_back((text(ni.mac) | nowrap | fgc(pal::label)).build());
-                idr.push_back((text("   ") | nowrap).build());
-            }
-            if (ni.mtu > 0) {
-                idr.push_back((text("mtu ") | nowrap | fgc(pal::faint)).build());
-                idr.push_back((text(std::to_string(ni.mtu)) | nowrap | fgc(pal::label)).build());
-            }
+                used += cost;
+            };
+            if (!ni.ip4.empty()) field("ip ", ni.ip4, pal::sky, true);
+            if (!ni.mac.empty()) field("mac ", ni.mac, pal::label, false);
+            if (ni.mtu > 0)      field("mtu ", std::to_string(ni.mtu), pal::label, false);
             // (Errors/drops are shown as their own labelled row + live-rate
             // warning below — not duplicated as raw lifetime chips here.)
             ifcol.push_back((h(std::move(idr))).build());

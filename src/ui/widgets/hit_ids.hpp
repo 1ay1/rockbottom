@@ -31,6 +31,9 @@ enum HitKind : std::uint32_t {
     HK_UserSortCol,  // index = COLUMN index in the USERS table (click sorts)
     HK_ThemeRow,     // index = row index into the picker's FILTERED hits
     HK_ThemeMode,    // index = ui::ThemeMode (the all/dark/light chips)
+    HK_SignalRow,    // index = row index into the signal catalog
+    HK_NiceStep,     // index = 0 lower / 1 raise (the renice dial's arrows)
+    HK_NicePreset,   // index = preset slot in the renice dial
 };
 
 // Footer actions that a click can trigger. Kept here (not nested in App) so
@@ -72,6 +75,17 @@ enum class FooterAct : std::uint32_t { Quit, Filter, End, Kill, Sort, Pause, Hel
 }
 [[nodiscard]] inline maya::HitId hit_theme_mode(std::uint32_t mode) {
     return maya::hit_id(HK_ThemeMode, mode);
+}
+// A row in the signal picker — index into signal_catalog(), which is also the
+// space the picker's cursor lives in.
+[[nodiscard]] inline maya::HitId hit_signal_row(int row) {
+    return maya::hit_id(HK_SignalRow, static_cast<std::uint32_t>(row));
+}
+[[nodiscard]] inline maya::HitId hit_nice_step(int dir) {
+    return maya::hit_id(HK_NiceStep, dir > 0 ? 1u : 0u);
+}
+[[nodiscard]] inline maya::HitId hit_nice_preset(int slot) {
+    return maya::hit_id(HK_NicePreset, static_cast<std::uint32_t>(slot));
 }
 
 }  // namespace rockbottom::ui

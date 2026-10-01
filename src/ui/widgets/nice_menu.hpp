@@ -12,9 +12,11 @@
 #include <maya/maya.hpp>
 
 #include "../theme.hpp"
+#include "hit_ids.hpp"
 #include "panel.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -78,18 +80,31 @@ private:
             const int cells = std::clamp(card_w - 6, 20, 40);
             const int pos = (val_ - lo) * (cells - 1) / span;
             std::string bar;
-            for (int i = 0; i < cells; ++i) bar += (i == pos) ? "●" : "─";
+            std::size_t bytepos = 0;
+            for (int i = 0; i < cells; ++i) {
+                // Record the cursor's BYTE offset as the string is built rather
+                // than computing pos*3. Both glyphs happen to be 3 bytes today,
+                // so the arithmetic worked by coincidence; swap either for a
+                // 1-byte or 4-byte glyph and the highlight silently lands on
+                // the wrong cell (or splits a codepoint).
+                if (i == pos) bytepos = bar.size();
+                bar += (i == pos) ? "\xe2\x97\x8f" : "\xe2\x94\x80";
+            }
+            const std::size_t cursor_len = std::strlen("\xe2\x97\x8f");
             std::vector<StyledRun> runs;
             runs.push_back({0, bar.size(), Style{}.with_fg(mix(pal::border, band(val_), 0.5))});
-            // Tint the cursor cell in the band color.
-            // (runs are byte offsets; ● is 3 bytes, find its byte start.)
-            std::size_t bytepos = static_cast<std::size_t>(pos) * 3;
-            runs.push_back({bytepos, 3, Style{}.with_bold().with_fg(band(val_))});
+            runs.push_back({bytepos, cursor_len, Style{}.with_bold().with_fg(band(val_))});
+            // The track is clickable: a click jumps straight to that value,
+            // which is the whole point of drawing a slider instead of a number.
+            // Clicking the left/right halves also steps, via the hit ids below,
+            // so the dial is usable without touching the keyboard at all.
             body.push_back((h(
-                text("  -20 ") | nowrap | fgc(pal::faint),
+                (text("  -20 ") | nowrap | fgc(pal::faint)
+                 | hit(hit_nice_step(-1))).build(),
                 Element{TextElement{.content = std::move(bar), .style = {},
                                     .wrap = TextWrap::NoWrap, .runs = std::move(runs)}},
-                text(" +19") | nowrap | fgc(pal::faint)
+                (text(" +19") | nowrap | fgc(pal::faint)
+                 | hit(hit_nice_step(+1))).build()
             )).build());
         }
         body.push_back(blank());

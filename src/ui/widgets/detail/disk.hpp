@@ -131,7 +131,12 @@ inline std::vector<Element> disk_body(const Snapshot& s, const Ctx& cx) {
         "read iops", fmt::count(s.disk_io.read_iops) + "/s",
         s.disk_io.read_iops > 5000 ? pal::hot : pal::teal,
         "write iops", fmt::count(s.disk_io.write_iops) + "/s",
-        s.disk_io.write_iops > 5000 ? pal::hot : pal::hot,
+        // Both branches used to be pal::hot, so write-iops rendered as an
+        // alarm at every value including zero — the one colour in this pane
+        // that means "look at this" was permanently on, which is the same as
+        // having no signal at all. Writes get their own hue below the
+        // threshold (they are the half that wears an SSD out), hot above it.
+        s.disk_io.write_iops > 5000 ? pal::hot : pal::amber,
         "total iops", fmt::count(s.disk_io.read_iops + s.disk_io.write_iops) + "/s",
         pal::label));
     if (s.psi.io.available) {

@@ -462,6 +462,19 @@ struct App {
         return {};
     }
 
+    // Arm the confirm strip for the signal the picker is sitting on, and close
+    // it. ONE place, because the keyboard (enter/y) and the mouse (click the
+    // selected row) both do this and the PendingKill carries start-times used
+    // to prove the pid hasn't been recycled — two copies of that would be two
+    // chances to forget the proof.
+    static void arm_signal_from_menu(Model& m, int sig) {
+        if (!m.sigmenu) return;
+        auto starts = starts_of(m, m.sigmenu->pids);
+        m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
+                                sig, m.sigmenu->pids, std::move(starts)};
+        m.sigmenu.reset();
+    }
+
     // ── mouse handling ───────────────────────────────────────────────────────
     static Cmd on_mouse(Model& m, const maya::MouseEvent& me) {
         using maya::MouseButton;
@@ -478,6 +491,31 @@ struct App {
         // process table it moves the selection; anywhere else it still scrolls
         // the list so the wheel is never a dead input.
         if (me.button == MouseButton::ScrollDown) {
+            // MODALS SWALLOW THE WHEEL.
+            //
+            // The signal and nice pickers used to fall through to `m.sel += 3`
+            // below, so spinning the wheel with a picker open silently moved
+            // the process cursor BEHIND the modal. The pid is captured when
+            // the picker opens, so it couldn't mis-target the signal — but you
+            // dismissed the picker to find the cursor somewhere else, and in a
+            // tool whose next keystroke might be SIGKILL, "the selection moved
+            // while a kill dialog was up" is not a thing to leave working.
+            //
+            // In the signal picker the wheel now moves its own cursor, which
+            // is what a list under a pointer should do. The nice dial has one
+            // value, so the wheel nudges it. Neither reaches the table.
+            if (m.sigmenu) {
+                m.sigmenu->sel = std::min(m.sigmenu->sel + 1,
+                                          static_cast<int>(signal_catalog().size()) - 1);
+                return {};
+            }
+            if (m.nicemenu) {
+                // Wheel DOWN lowers the nice value, matching the Down arrow at
+                // line ~1322 — a dial where the wheel and the arrow keys
+                // disagree about direction is worse than no wheel at all.
+                m.nicemenu->val = std::max(-20, m.nicemenu->val - 1);
+                return {};
+            }
             // The picker owns the wheel while it's open: it is the thing you
             // are looking at, and scrolling the process table behind it would
             // be both useless and confusing. Scrolling moves the WINDOW, not
@@ -496,6 +534,14 @@ struct App {
             return {};
         }
         if (me.button == MouseButton::ScrollUp) {
+            if (m.sigmenu) {
+                m.sigmenu->sel = std::max(0, m.sigmenu->sel - 1);
+                return {};
+            }
+            if (m.nicemenu) {
+                m.nicemenu->val = std::min(19, m.nicemenu->val + 1);
+                return {};
+            }
             if (m.thememenu) { scroll_theme_list(m, -3); return {}; }
             if (m.show_help) {
                 m.help_scroll -= 3; clamp_help_scroll(m); return {};
@@ -681,6 +727,34 @@ struct App {
         if (m.sigmenu) {
             // Same safety rule for the signal picker: a click dismisses it;
             // the destructive choice stays keyboard-only.
+            m.sigmenu.reset();
+            return {};
+        }
+        // The signal picker is a LIST, so a click should work in it the way a
+        // click works in every other list here: first click selects, a second
+        // click on the already-selected row confirms. It had no hit regions at
+        // all before, which meant the mouse was dead in a dialog you usually
+        // arrive at from a mouse-driven table — and the only escape was a key.
+        if (m.sigmenu && hit && maya::hit_kind(*hit) == ui::HK_SignalRow) {
+            const auto& cat = signal_catalog();
+            const int row = static_cast<int>(maya::hit_index(*hit));
+            if (row >= 0 && row < static_cast<int>(cat.size())) {
+                if (row == m.sigmenu->sel && me.button == MouseButton::Left) {
+                    arm_signal_from_menu(m, cat[static_cast<std::size_t>(row)].num);
+                    return {};
+                }
+                m.sigmenu->sel = row;
+            }
+            return {};
+        }
+        if (m.nicemenu && hit && maya::hit_kind(*hit) == ui::HK_NiceStep) {
+            m.nicemenu->val = maya::hit_index(*hit) == 1
+                ? std::min(19, m.nicemenu->val + 1)
+                : std::max(-20, m.nicemenu->val - 1);
+            return {};
+        }
+        if (m.sigmenu) {
+            // A click anywhere else dismisses, matching the other overlays.
             m.sigmenu.reset();
             return {};
         }
@@ -1249,7 +1323,8 @@ struct App {
         }
 
         // 0. Signal picker intercepts everything. Number keys 1-9 jump to a
-        //    signal; ↑↓ move; enter/y arms the confirm; esc/n backs out.
+        //    signal, 0 reaches the 10th and a/b the 11th and 12th; ↑↓ move;
+        //    enter/y arms the confirm; esc/n backs out.
         if (m.sigmenu) {
             const auto& cat = signal_catalog();
             const int n = static_cast<int>(cat.size());
@@ -1263,19 +1338,38 @@ struct App {
             if (key(ev, maya::SpecialKey::Up) || key(ev, 'k')) {
                 m.sigmenu->sel = std::max(0, m.sigmenu->sel - 1); return {};
             }
-            if (auto* ck = std::get_if<maya::CharKey>(&ke.key);
-                ck && ck->codepoint >= '1' && ck->codepoint <= '9') {
-                const int idx = static_cast<int>(ck->codepoint - '1');
-                if (idx < n) m.sigmenu->sel = idx;
-                return {};
+            // Home/End/PageUp/PageDown, because every other list in this app
+            // has them and a picker that ignores Home is a small surprise in
+            // the one dialog where surprises are expensive.
+            if (key(ev, maya::SpecialKey::Home) || key(ev, 'g')) { m.sigmenu->sel = 0; return {}; }
+            if (key(ev, maya::SpecialKey::End)  || key(ev, 'G')) { m.sigmenu->sel = n - 1; return {}; }
+            if (key(ev, maya::SpecialKey::PageDown)) {
+                m.sigmenu->sel = std::min(n - 1, m.sigmenu->sel + 5); return {};
+            }
+            if (key(ev, maya::SpecialKey::PageUp)) {
+                m.sigmenu->sel = std::max(0, m.sigmenu->sel - 5); return {};
+            }
+            // Direct selection. The catalog has 12 entries but only 1-9 were
+            // bound, so SIGABRT, SIGWINCH and SIGTSTP had no shortcut at all —
+            // the menu listed them with a blank where every other row showed a
+            // key, which reads as "these are not selectable". 0 continues the
+            // run to the 10th, then a/b for 11 and 12 (the same overflow
+            // convention the widget now prints beside those rows).
+            if (auto* ck = std::get_if<maya::CharKey>(&ke.key); ck) {
+                int idx = -1;
+                const char32_t cp = ck->codepoint;
+                if (cp >= '1' && cp <= '9')      idx = static_cast<int>(cp - '1');
+                else if (cp == '0')              idx = 9;
+                else if (cp == 'a' || cp == 'A') idx = 10;
+                else if (cp == 'b' || cp == 'B') idx = 11;
+                if (idx >= 0) {
+                    if (idx < n) m.sigmenu->sel = idx;
+                    return {};
+                }
             }
             if (key(ev, maya::SpecialKey::Enter) || key(ev, 'y')) {
-                const int sig = cat[static_cast<std::size_t>(
-                    std::clamp(m.sigmenu->sel, 0, n - 1))].num;
-                auto starts = starts_of(m, m.sigmenu->pids);
-                m.pending = PendingKill{m.sigmenu->anchor_pid, m.sigmenu->name,
-                                        sig, m.sigmenu->pids, std::move(starts)};
-                m.sigmenu.reset();
+                arm_signal_from_menu(m, cat[static_cast<std::size_t>(
+                    std::clamp(m.sigmenu->sel, 0, n - 1))].num);
                 return {};
             }
             return {};
