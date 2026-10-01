@@ -391,18 +391,30 @@ part of the problem it's describing — a smoke detector that's on fire. So rb i
 
 | At 1s refresh, idle desktop | steady-state CPU | RSS |
 |-----------------------------|:----------------:|:---:|
-| **rb** | **~0.3% of one core** | **9 MB** |
+| **rb** | **~3.4% of one core** | **14 MB** |
 | btop | ~1.6% | 38 MB |
 | htop | ~0.7% (no GPU) | 6 MB |
 
-**Five times cheaper than btop on CPU at a quarter of the memory**, and it's
-reading your GPU the whole time — htop isn't. Three things buy that:
+Honest reading of that table: **btop is cheaper on CPU than we are**, and htop
+is cheaper than both. We buy back a third of btop's memory and we're reading
+your GPU the whole time — htop isn't, and btop's GPU support is newer than this
+sentence. If raw idle CPU is the only axis you care about, htop wins and you
+should use htop.
 
-- **The render is basically free.** `view()` is a pure function and maya only
-  repaints the cells that actually changed, so a frame costs **~0.95ms** and — the
-  part every *other* monitor gets wrong — that cost is **flat as your terminal
-  grows**. Stretch rb across a 300-column ultrawide and it does *not* quietly start
-  eating a core the way a certain gorgeous braille-fireworks monitor does; the
+(Measured on a 12-core i5-12400F at 120×30, GCC 16 `-O3`, over a 35-second
+window on a settled machine. An earlier version of this table claimed ~0.3%
+and 9 MB; that was measured before the users pane, the GPU collector and
+maya's jaal runtime landed, and it had stopped being true. Numbers in a README
+that nobody re-measures are just advertising.)
+
+What we do still claim, and what we re-measure every release:
+
+- **The render is basically free, and FLAT.** `view()` is a pure function and
+  maya only repaints the cells that actually changed, so a frame costs
+  **~1.2ms** — and the part every *other* monitor gets wrong — that cost barely
+  moves as your terminal grows. 80×24 to 170×45 is 3.4% to 4.1%. Stretch rb
+  across a 300-column ultrawide and it does *not* quietly start eating a core
+  the way a certain gorgeous braille-fireworks monitor does; the
   process table only builds the rows in the visible window, so 400 processes or
   40,000, same frame.
 - **The sampler asks the kernel for the least it can get away with.** Fast signals
