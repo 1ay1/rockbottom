@@ -131,40 +131,13 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/CMakeLists.txt")
     message(FATAL_ERROR
         "maya submodule missing — run: git submodule update --init --recursive")
 endif()
-# maya carries its own runtime submodule now: jaal is the Elm loop maya draws
-# for, and `maya::app` is maya + jaal + <maya/host/run.hpp>. A recursive
-# submodule init is therefore mandatory, and a missing jaal has to be named
-# here rather than surfacing 200 lines down as a template error inside
-# maya/host/run.hpp.
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/maya/third_party/jaal/CMakeLists.txt")
-    message(FATAL_ERROR
-        "jaal missing (maya's runtime submodule) — run: "
-        "git submodule update --init --recursive")
-endif()
-# We consume maya as a library, not as a distribution (its build knobs are set
-# in the maya block near the top of this file, before add_subdirectory).
-add_subdirectory(third_party/maya)
-
-# maya is a VENDORED dependency: we do not control its warning hygiene, and its
-# header-only reactive core legitimately shadows (EvaluationScope evaluating,
-# DependencyTrackingScope dependencies) in ways that are fine there and noise
-# here. Re-export its include dirs as SYSTEM so -Wall -Wextra -Wshadow -Werror
-# police OUR code without a maya release being able to break our build. This
-# must happen after add_subdirectory, when the target exists.
+# rb -> maya -> jaal: we link maya::app and include <maya/...> only. maya owns
+# its jaal submodule (and fails configure itself if it's missing), so nothing
+# here names jaal. Link maya::app, never jaal::jaal.
 #
-# jaal gets the same treatment, for a sharper reason than hygiene: its Cmd/Sub
-# machinery is deep variadic templates, so ONE mistake in our update() prints
-# pages of instantiation notes. SYSTEM includes let the compiler collapse that
-# to the concept that actually failed.
-foreach(_dep maya jaal)
-    if(TARGET ${_dep})
-        get_target_property(_dep_incs ${_dep} INTERFACE_INCLUDE_DIRECTORIES)
-        if(_dep_incs)
-            set_target_properties(${_dep} PROPERTIES
-                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_dep_incs}")
-        endif()
-    endif()
-endforeach()
+# SYSTEM makes every header under maya (jaal included) a system include, so
+# -Werror polices our code only and template errors stay short.
+add_subdirectory(third_party/maya SYSTEM)
 
 # ── version ─────────────────────────────────────────────────────────────────
 # Generate core/version.hpp from the project() version above, into the build
@@ -239,9 +212,8 @@ add_executable(rockbottom
     ${RB_PLATFORM_SRC}
 )
 # maya::app, not maya: `maya` is the view layer + renderer, `maya::app` adds
-# jaal (the runtime) and is what <maya/host/run.hpp> needs to link. The tests
-# below that only build Elements still link plain `maya` — they never start a
-# loop, so they don't need to pay for jaal.
+# the runtime and is what <maya/host/run.hpp> needs to link. The tests below
+# that only build Elements still link plain `maya`.
 target_link_libraries(rockbottom PRIVATE maya::app rb_warnings)
 target_include_directories(rockbottom PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
@@ -508,6 +480,12 @@ if(BUILD_TESTING)
     set_tests_properties(rb_selfcheck PROPERTIES
         LABELS "integration;collectors"
         TIMEOUT 120)
+
+    # rb -> maya -> jaal: rb never names jaal in code or in the build.
+    add_test(NAME rb_layering
+             COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/lint/layering.cmake)
+    set_tests_properties(rb_layering PROPERTIES LABELS "lint")
 endif()
 
 # ── render bench ────────────────────────────────────────────
@@ -521,8 +499,8 @@ add_executable(rb_render_bench EXCLUDE_FROM_ALL
     src/core/verdict.cpp
     ${RB_PLATFORM_SRC}
 )
-# Links maya::app, not maya: the bench builds app.hpp's view(), which now pulls
-# in maya/host/* (and therefore jaal) for the Cmd/Sub rows.
+# Links maya::app, not maya: the bench builds app.hpp's view(), which pulls in
+# maya's runtime for the Cmd/Sub rows.
 target_link_libraries(rb_render_bench PRIVATE maya::app rb_warnings)
 target_include_directories(rb_render_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(rb_render_bench PROPERTIES CXX_SCAN_FOR_MODULES OFF)

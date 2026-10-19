@@ -15,15 +15,16 @@
 
 #pragma once
 
-// maya/host/*: the runtime seam. sources.hpp brings the terminal event types
-// our on() overloads take, and jaal's Cmd/Sub/Sink come with it.
-// interop.hpp is the one that is easy to forget and confusing to omit: it
-// teaches jaal that maya's Strong<Tag,T> wrappers (Columns, Rows) are safe to
+// rb talks to maya only; jaal is maya's runtime and never named here.
+// runtime.hpp gives maya::Cmd/Sub/Sink and the MAYA_SENDABLE macros.
+// sources.hpp brings the terminal event types our on() overloads take.
+// interop.hpp marks maya's Strong<Tag,T> wrappers (Columns, Rows) as safe to
 // send. Without it, a MouseEvent's x/y make the whole Msg non-Sendable, and
 // the error names maya::Strong<ColumnTag> rather than anything you wrote.
 // maya.hpp is still here for the element/style/widget side, which is the bulk
 // of this file.
 #include <maya/maya.hpp>
+#include <maya/runtime.hpp>
 #include <maya/host/interop.hpp>
 #include <maya/host/sources.hpp>
 
@@ -88,12 +89,11 @@
 // unit that ever wrapped something unsendable (a Strong<Tag, string_view>)
 // would still be correctly refused.
 template <class Tag, class T>
-inline constexpr bool jaal::sendable_opt_in<rockbottom::Strong<Tag, T>> =
-    std::is_arithmetic_v<T>;
+    requires std::is_arithmetic_v<T>
+MAYA_SENDABLE_T(rockbottom::Strong<Tag, T>);
 template <class Q>
-inline constexpr bool jaal::sendable_opt_in<rockbottom::Rate<Q>> = true;
-template <>
-inline constexpr bool jaal::sendable_opt_in<rockbottom::Ratio> = true;
+MAYA_SENDABLE_T(rockbottom::Rate<Q>);
+MAYA_SENDABLE(rockbottom::Ratio);
 
 // jaal also refuses shared_ptr-to-mutable by default, because the usual case
 // is two threads racing on one object. Our Sampler genuinely is shared mutable
@@ -113,8 +113,7 @@ inline constexpr bool jaal::sendable_opt_in<rockbottom::Ratio> = true;
 // That last part is why the shared_ptr is load-bearing rather than lazy: a raw
 // pointer or a reference would dangle in exactly the wedged-collector case
 // this program is built to survive.
-template <>
-inline constexpr bool jaal::sendable_opt_in<std::shared_ptr<rockbottom::Sampler>> = true;
+MAYA_SENDABLE(std::shared_ptr<rockbottom::Sampler>);
 
 namespace rockbottom {
 
@@ -333,12 +332,12 @@ struct App {
     // title, never touch the clipboard, never commit scrollback — so none of
     // maya's terminal effects appear here, and the compiler now enforces that
     // a stray one can't sneak in.
-    using Cmd = jaal::Cmd<Msg>;
+    using Cmd = maya::Cmd<Msg>;
 
     // Sub is just the sample timer. Keys, mouse and resize come in through
     // the on() overloads below; paste and focus have none, so they're
     // dropped (a paste into a system monitor means nothing).
-    using Sub = jaal::Sub<Msg>;
+    using Sub = maya::Sub<Msg>;
 
     // ── shared layout geometry ──────────────────────────────────────────────
     // The mouse handler and view() MUST agree on where every panel lands, so
@@ -1035,7 +1034,7 @@ struct App {
         // never happens at all.
         sampler->set_want_disk_usage(m.detail == ui::Detail::Users);
         return Cmd::task_isolated(
-            [](jaal::Sink<Msg> out, std::stop_token,
+            [](maya::Sink<Msg> out, std::stop_token,
                std::shared_ptr<Sampler> s, SortKey k, std::uint64_t gen) {
                 // out.send returns false if the loop is already gone (quit
                 // raced this sample). Nothing to do about it and nothing to
