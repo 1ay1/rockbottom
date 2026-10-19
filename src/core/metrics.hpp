@@ -36,6 +36,20 @@ struct CpuCore {
     int                  hist_len = 0; // number of valid samples (grows to 48)
 };
 
+// Thermal throttling as the kernel reports it (Linux only for now). Window
+// figures cover the last minute; `since_boot` is the raw kernel counter.
+struct CpuThrottle {
+    bool          supported = false;   // the kernel exposes some throttle signal
+    int           cpus = 0;            // cpus that throttled in the window
+    std::uint64_t events = 0;          // throttle events in the window
+    std::uint64_t ms = 0;              // throttled time that ended in the window
+    std::uint64_t since_boot = 0;      // events since boot (worst cpu)
+    Hertz         cap{}, max{};        // lowest scaling_max_freq vs that cpu's hw max
+    int           cooling_cur = 0, cooling_max = 0;   // "Processor" cooling devices
+    bool active() const { return events > 0 || ms > 0 || cooling_cur > 0; }
+    bool capped() const { return cap.value > 0 && max.value > 0 && cap.value * 100 < max.value * 95; }
+};
+
 struct CpuInfo {
     std::string          model = "CPU";
     int                  logical = 0;
@@ -57,6 +71,7 @@ struct CpuInfo {
     std::array<float, 96> total_history{};
     int                  total_hist_len = 0;
     float                temp_c = 0;    // package temperature, 0 if unavailable
+    CpuThrottle          throttle;
 };
 
 struct MemInfo {

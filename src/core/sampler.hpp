@@ -12,6 +12,7 @@
 #pragma once
 
 #include "metrics.hpp"
+#include "throttle.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -136,6 +137,9 @@ private:
     void    sample_net(std::vector<NetIface>&, double dt);
     void    sample_gpu(std::vector<GpuInfo>&, bool with_procs);
     void    sample_sensors(std::vector<Sensor>&);
+    // Thermal throttle state (kernel counters, freq cap, cooling devices).
+    // Linux reads sysfs; other platforms leave it unsupported.
+    void    sample_throttle(CpuThrottle&);
     void    sample_procs(Snapshot&, SortKey, double dt);
     void    sample_ports();                          // fills pid_ports_
     void    sample_psi(Psi&);
@@ -297,6 +301,14 @@ private:
                                           ssd_at_{}, accounts_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
+    // Thermal throttle: last kernel counters, the rolling window, and the
+    // "Processor" cooling devices (probed once).
+    std::chrono::steady_clock::time_point throttle_at_{};
+    CpuThrottle                           throttle_cache_;
+    std::vector<throttle::CpuCounters>    throttle_prev_;
+    throttle::Window                      throttle_window_;
+    std::vector<std::string>              throttle_cooling_;
+    bool                                  throttle_probed_ = false;
     std::vector<GpuInfo>                  gpus_cache_;
     std::vector<SsdHealth>                ssd_cache_;
     Battery                               battery_cache_{};

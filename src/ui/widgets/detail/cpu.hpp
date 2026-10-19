@@ -260,6 +260,19 @@ inline std::vector<Element> cpu_body(const Snapshot& s, const Ctx& cx) {
         c.temp_c > 1 ? "package" : "", c.temp_c > 1 ? std::to_string(static_cast<int>(c.temp_c)) + " \xc2\xb0" "C" : "",
         load_color(std::clamp((c.temp_c - 40) / 50.0, 0.0, 1.0))));
     B.push_back(verdict(verdict_txt, vc));
+    // Kernel-reported throttling, only when there's something to say.
+    if (c.throttle.active()) {
+        std::string t = "\xe2\x96\xb2 thermal throttling \xe2\x80\x94 ";
+        t += c.throttle.events > 0
+            ? std::to_string(c.throttle.events) + " event" + (c.throttle.events == 1 ? "" : "s") + " in the last minute"
+            : std::string("cpu cooling engaged");
+        if (c.throttle.capped())
+            t += ", capped at " + humanize_hz(c.throttle.cap);
+        B.push_back(verdict(t, pal::crit));
+    } else if (c.throttle.since_boot > 0) {
+        B.push_back(verdict("\xe2\x97\x8f throttled " + std::to_string(c.throttle.since_boot) +
+                            "\xc3\x97 since boot, none in the last minute", pal::dim));
+    }
     B.push_back(gap_row());
 
     // ── distribution across cores ────────────────────────────────────────────

@@ -202,6 +202,11 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
     s.sensors = sensors_cache_;
     phase("sensors");
 
+    // Throttle counters: a few small sysfs reads per cpu, on the same 2s
+    // cadence as temperatures.
+    if (!fast && due(throttle_at_, ms(2000))) sample_throttle(throttle_cache_);
+    s.cpu.throttle = throttle_cache_;
+
     // SSD write-endurance (NVMe SMART ioctl) is a glacial figure — it moves
     // percentage points over MONTHS — and the ioctl needs privilege, so it's
     // refreshed only ~every 30s and cached. On non-root / non-NVMe the

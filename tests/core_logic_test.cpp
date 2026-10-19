@@ -479,6 +479,39 @@ void test_verdict() {
               "85C is a warning, not an emergency (got: " + v.headline + ")");
     }
 
+    // Issue #11: the kernel reports throttling at a temp below our 82/92 lines.
+    {
+        Snapshot s = calm_snapshot();
+        s.cpu.temp_c = 70;
+        s.cpu.throttle.supported = true;
+        s.cpu.throttle.events = 3;
+        s.cpu.throttle.ms = 1200;
+        const Verdict v = judge_of(s);
+        check(v.level == Health::Stressed, "a few throttle events is Stressed (got: " + v.headline + ")");
+        check(v.headline.find("throttl") != std::string::npos,
+              "throttle headline names throttling (got: " + v.headline + ")");
+        check(v.detail.find("3 throttle events") != std::string::npos,
+              "throttle detail counts events (got: " + v.detail + ")");
+    }
+    {
+        Snapshot s = calm_snapshot();
+        s.cpu.throttle.supported = true;
+        s.cpu.throttle.events = 12;
+        s.cpu.throttle.ms = 9000;
+        const Verdict v = judge_of(s);
+        check(v.level == Health::Critical, "sustained throttling is Critical (got: " + v.headline + ")");
+    }
+    {
+        // Old events since boot, nothing recent, clock not capped: stay calm.
+        Snapshot s = calm_snapshot();
+        s.cpu.throttle.supported = true;
+        s.cpu.throttle.since_boot = 40;
+        s.cpu.throttle.cap = Hertz{4'400'000'000};
+        s.cpu.throttle.max = Hertz{4'400'000'000};
+        const Verdict v = judge_of(s);
+        check(v.level == Health::Calm, "old throttle counts alone stay Calm (got: " + v.headline + ")");
+    }
+
     // Zombie herd is advisory: it must register, but must never outrank a
     // real emergency. This is the "strongest finding wins" property.
     {

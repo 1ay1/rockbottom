@@ -198,4 +198,7 @@ void Sampler::sample_cpu(CpuInfo& cpu, bool fast) {
     // Package temperature needs SMC/IOReport (private); left at 0.
 }
 
+// macOS has no public throttle counters; leave it unsupported.
+void Sampler::sample_throttle(CpuThrottle& out) { out = {}; }
+
 }  // namespace rockbottom

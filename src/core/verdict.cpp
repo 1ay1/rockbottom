@@ -215,8 +215,27 @@ Verdict Sampler::judge(const Snapshot& s, double dt) const {
                 (la1 > la15 * 1.4 ? " and rising" : la1 < la15 * 0.7 ? " but falling" : "")});
     }
 
-    // ── 7. Thermal ───────────────────────────────────────────────────────────
-    if (s.cpu.temp_c > 92) {
+    // ── 7. Thermal ───────────────────────────────────────────────────────────────────
+    // The kernel saying it throttled beats any temperature guess: laptops
+    // often throttle well below the 92°C line (issue #11).
+    const CpuThrottle& th = s.cpu.throttle;
+    if (th.active()) {
+        std::string ev;
+        if (th.events > 0)
+            ev = std::to_string(th.events) + " throttle event" + (th.events == 1 ? "" : "s") +
+                 " in the last minute";
+        if (th.ms > 0)
+            ev += (ev.empty() ? "" : ", ") + fmt_1(static_cast<double>(th.ms) / 1000.0) + "s throttled";
+        if (th.cooling_cur > 0)
+            ev += (ev.empty() ? "" : "; ") + std::string("cpu cooling at ") +
+                  std::to_string(th.cooling_cur) + "/" + std::to_string(th.cooling_max);
+        if (th.capped())
+            ev += "; clock capped at " + humanize_hz(th.cap) + " of " + humanize_hz(th.max);
+        if (s.cpu.temp_c > 1) ev += " at " + fmt_1(s.cpu.temp_c) + "°C";
+        if (top_cpu && top_cpu->cpu > 50) ev += "; heat source: " + name_pid(top_cpu);
+        findings.push_back({th.ms >= 5000 || th.events >= 10 ? 75 : 60,
+            "The CPU is thermal-throttling", std::move(ev)});
+    } else if (s.cpu.temp_c > 92) {
         findings.push_back({72, "The CPU is overheating",
             fmt_1(s.cpu.temp_c) + "°C — expect thermal throttling" +
                 (top_cpu && top_cpu->cpu > 50 ? "; heat source: " + name_pid(top_cpu) : "")});
