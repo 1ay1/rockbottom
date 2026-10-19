@@ -806,62 +806,84 @@ void test_proc_order_strictness() {
 void test_throttle() {
     std::printf("\nissue #11 — thermal throttle detection:\n");
     namespace th = throttle;
-    const std::string c0 = "/sys/devices/system/cpu/cpu0";
-    const std::string c1 = "/sys/devices/system/cpu/cpu1";
+    const std::string cpu = "/sys/devices/system/cpu/cpu";
+    const std::string pol = "/sys/devices/system/cpu/cpufreq/policy";
 
+    // 4 logical cpus, 2 physical cores (SMT pairs 0+1, 2+3), one package.
     FakeFs fs;
-    auto set = [&](const std::string& cpu, std::uint64_t cc, std::uint64_t cms,
-                   std::uint64_t pc, std::uint64_t pms) {
-        fs[cpu + "/thermal_throttle/core_throttle_count"] = std::to_string(cc) + "\n";
-        fs[cpu + "/thermal_throttle/core_throttle_total_time_ms"] = std::to_string(cms) + "\n";
-        fs[cpu + "/thermal_throttle/package_throttle_count"] = std::to_string(pc) + "\n";
-        fs[cpu + "/thermal_throttle/package_throttle_total_time_ms"] = std::to_string(pms) + "\n";
+    auto set = [&](int c, std::uint64_t cc, std::uint64_t cms, std::uint64_t pc, std::uint64_t pms) {
+        const std::string t = cpu + std::to_string(c) + "/thermal_throttle/";
+        fs[t + "core_throttle_count"] = std::to_string(cc) + "\n";
+        fs[t + "core_throttle_total_time_ms"] = std::to_string(cms) + "\n";
+        fs[t + "package_throttle_count"] = std::to_string(pc) + "\n";
+        fs[t + "package_throttle_total_time_ms"] = std::to_string(pms) + "\n";
     };
-    set(c0, 5, 100, 2, 50);
-    set(c1, 5, 100, 2, 50);
-    fs[c0 + "/cpufreq/cpuinfo_max_freq"] = "4400000\n";
-    fs[c0 + "/cpufreq/scaling_max_freq"] = "4400000\n";
-    fs[c1 + "/cpufreq/cpuinfo_max_freq"] = "4400000\n";
-    fs[c1 + "/cpufreq/scaling_max_freq"] = "2200000\n";
-
-    const auto a = th::read_counters(2, fs_reader(fs));
-    check(a.size() == 2 && a[0].present && a[0].core_count == 5 && a[0].pkg_ms == 50,
-          "counters parse from thermal_throttle/");
-
-    // No change: nothing to report.
-    check(th::diff(a, th::read_counters(2, fs_reader(fs))).cpus == 0, "unchanged counters are quiet");
-
-    // cpu1 throttles: 3 core events, 800ms; package (shared) moves on both.
-    set(c1, 8, 900, 3, 450);
-    set(c0, 5, 100, 3, 450);
-    const auto b = th::read_counters(2, fs_reader(fs));
-    const th::Delta d = th::diff(a, b);
-    check(d.cpus == 2, "both cpus see the package event (" + std::to_string(d.cpus) + ")");
-    check(d.events == 3, "events is the worst cpu, not a sum (" + std::to_string(d.events) + ")");
-    check(d.ms == 800, "ms is the worst cpu (" + std::to_string(d.ms) + ")");
-
-    // A counter going backwards (hotplug) is not an event.
-    set(c0, 0, 0, 0, 0);
-    const th::Delta back = th::diff(b, th::read_counters(2, fs_reader(fs)));
-    check(back.events == 0 && back.ms == 0, "a counter reset reads as zero");
-
-    const th::Cap cap = th::lowest_cap(b);
-    check(cap.cap_khz == 2200000 && cap.max_khz == 4400000, "lowest freq cap found");
-
-    // No thermal_throttle/ at all (ARM, VM): not present, no deltas.
-    FakeFs bare;
-    const auto n = th::read_counters(2, fs_reader(bare));
-    check(!n[0].present && th::diff(n, n).cpus == 0, "missing thermal_throttle is unsupported");
-
-    // Processor cooling devices; fans are ignored.
-    FakeFs cool;
+    for (int c = 0; c < 4; ++c) {
+        fs[cpu + std::to_string(c) + "/topology/physical_package_id"] = "0\n";
+        fs[cpu + std::to_string(c) + "/topology/core_id"] = std::to_string(c / 2) + "\n";
+        set(c, 5, 100, 2, 50);
+        fs[pol + std::to_string(c) + "/cpuinfo_max_freq"] = "4400000\n";
+        fs[pol + std::to_string(c) + "/scaling_max_freq"] = c == 3 ? "2200000\n" : "4400000\n";
+    }
     const std::string cd = "/sys/class/thermal/cooling_device";
-    cool[cd + "0/type"] = "Fan\n";       cool[cd + "0/cur_state"] = "1\n"; cool[cd + "0/max_state"] = "1\n";
-    cool[cd + "1/type"] = "Processor\n"; cool[cd + "1/cur_state"] = "2\n"; cool[cd + "1/max_state"] = "3\n";
-    cool[cd + "2/type"] = "Processor\n"; cool[cd + "2/cur_state"] = "0\n"; cool[cd + "2/max_state"] = "3\n";
-    const auto devs = th::processor_cooling(fs_reader(cool));
-    const th::Cooling cs = th::read_cooling(devs, fs_reader(cool));
-    check(devs.size() == 2 && cs.cur == 2 && cs.max == 6, "processor cooling summed, fans skipped");
+    fs[cd + "0/type"] = "Fan\n";       fs[cd + "0/cur_state"] = "1\n"; fs[cd + "0/max_state"] = "1\n";
+    fs[cd + "1/type"] = "Processor\n"; fs[cd + "1/cur_state"] = "2\n"; fs[cd + "1/max_state"] = "3\n";
+    fs[cd + "2/type"] = "Processor\n"; fs[cd + "2/cur_state"] = "0\n"; fs[cd + "2/max_state"] = "3\n";
+
+    const th::Plan plan = th::probe(4, fs_reader(fs));
+    std::size_t counters = 0, caps = 0, cools = 0;
+    for (const auto& s : plan.slots) {
+        counters += s.kind != th::Kind::FreqCap && s.kind != th::Kind::Cooling;
+        caps += s.kind == th::Kind::FreqCap;
+        cools += s.kind == th::Kind::Cooling;
+    }
+    // 2 cores x 2 + 1 package x 2 = 6, not 4 cpus x 4 = 16.
+    check(counters == 6, "SMT siblings and the package are read once (" + std::to_string(counters) + " slots)");
+    check(caps == 4 && cools == 2, "one cap per policy, fans skipped");
+
+    const auto read_all = [&] {
+        std::vector<std::uint64_t> v;
+        for (const auto& s : plan.slots) v.push_back(th::parse_u64(fs_reader(fs)(s.path)));
+        return v;
+    };
+    const auto a = read_all();
+
+    check(th::diff(plan, a, read_all()).cpus == 0, "unchanged counters are quiet");
+
+    // Core 1 (cpus 2,3) throttles: 3 events, 800ms. Core 0 stays quiet.
+    set(2, 8, 900, 2, 50);
+    set(3, 8, 900, 2, 50);
+    const auto b = read_all();
+    const th::Delta d = th::diff(plan, a, b);
+    check(d.cpus == 2, "one core throttling is its 2 cpus (" + std::to_string(d.cpus) + ")");
+    check(d.events == 3 && d.ms == 800, "events and ms from the core counter");
+
+    // Then the package throttles: every cpu is affected.
+    for (int c = 0; c < 4; ++c) set(c, c < 2 ? 5 : 8, c < 2 ? 100 : 900, 4, 650);
+    const auto c2 = read_all();
+    const th::Delta pd = th::diff(plan, b, c2);
+    check(pd.cpus == 4, "a package event covers the package (" + std::to_string(pd.cpus) + ")");
+    check(pd.events == 2 && pd.ms == 600, "package events and ms");
+
+    for (int c = 0; c < 4; ++c) set(c, 0, 0, 0, 0);
+    const th::Delta back = th::diff(plan, c2, read_all());
+    check(back.events == 0 && back.ms == 0 && back.cpus == 0, "a counter reset reads as zero");
+
+    CpuThrottle sum;
+    th::summarize(plan, c2, sum);
+    check(sum.supported && sum.since_boot == 8, "since_boot is the worst counter");
+    check(sum.cap.value == 2'200'000'000 && sum.max.value == 4'400'000'000, "lowest freq cap found");
+    check(sum.cooling_cur == 2 && sum.cooling_max == 6, "processor cooling summed");
+
+    // Nothing at all (VM, masked /sys): an empty plan, unsupported.
+    FakeFs bare;
+    const th::Plan none = th::probe(4, fs_reader(bare));
+    CpuThrottle ns;
+    th::summarize(none, {}, ns);
+    check(none.empty() && !ns.supported, "no sysfs signals is unsupported");
+
+    check(th::parse_u64("4400000\n") == 4400000 && th::parse_u64("") == th::kMissing &&
+          th::parse_u64("x") == th::kMissing, "parse_u64 handles values and junk");
 
     // The window keeps a burst for its span, then drops it.
     th::Window w(std::chrono::seconds(60));
@@ -871,6 +893,8 @@ void test_throttle() {
     check(w.total().events == 3, "window holds a recent burst");
     w.push(t0 + std::chrono::seconds(61), {});
     check(w.total().events == 0, "window forgets after its span");
+    for (int i = 0; i < 200; ++i) w.push(t0 + std::chrono::seconds(100) + std::chrono::milliseconds(i), {1, 1, 0});
+    check(w.total().events == 64, "window ring is bounded (" + std::to_string(w.total().events) + ")");
 
     CpuThrottle ct;
     ct.cap = Hertz{4'300'000'000};
@@ -878,6 +902,28 @@ void test_throttle() {
     check(!ct.capped(), "a cap within 5% is not capped");
     ct.cap = Hertz{2'200'000'000};
     check(ct.capped(), "a half-speed cap is capped");
+
+    // FdList: pread at offset 0 re-reads the file, and the fd budget falls
+    // back to open-per-read instead of failing.
+    char tmpl[] = "/tmp/rb_fdlist_XXXXXX";
+    const int tfd = ::mkstemp(tmpl);
+    auto put = [&](const char* s) {
+        (void)::ftruncate(tfd, 0);
+        (void)::pwrite(tfd, s, std::strlen(s), 0);
+    };
+    put("123\n");
+    sys::FdList fl(1);
+    fl.open(tmpl);
+    fl.open(tmpl);          // over budget: opened per read
+    fl.open("/nonexistent/rb");
+    char buf[32];
+    check(fl.read(0, buf) > 0 && th::parse_u64(buf) == 123, "fdlist reads a kept fd");
+    put("456\n");
+    check(fl.read(0, buf) > 0 && th::parse_u64(buf) == 456, "fdlist re-reads from offset 0");
+    check(fl.read(1, buf) > 0 && th::parse_u64(buf) == 456, "fdlist over budget still reads");
+    check(fl.read(2, buf) < 0 && buf[0] == '\0', "fdlist missing file reads as empty");
+    ::close(tfd);
+    ::unlink(tmpl);
 }
 
 int main() {

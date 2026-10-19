@@ -206,6 +206,7 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
     // cadence as temperatures.
     if (!fast && due(throttle_at_, ms(2000))) sample_throttle(throttle_cache_);
     s.cpu.throttle = throttle_cache_;
+    phase("throttle");
 
     // SSD write-endurance (NVMe SMART ioctl) is a glacial figure — it moves
     // percentage points over MONTHS — and the ioctl needs privilege, so it's

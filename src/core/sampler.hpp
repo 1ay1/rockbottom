@@ -13,6 +13,7 @@
 
 #include "metrics.hpp"
 #include "throttle.hpp"
+#include "platform/common/sys_util.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -301,13 +302,13 @@ private:
                                           ssd_at_{}, accounts_at_{};
     std::vector<DiskInfo>                 disks_cache_;
     std::vector<Sensor>                   sensors_cache_;
-    // Thermal throttle: last kernel counters, the rolling window, and the
-    // "Processor" cooling devices (probed once).
+    // Thermal throttle: the probed plan, its open fds, and the last two reads.
     std::chrono::steady_clock::time_point throttle_at_{};
     CpuThrottle                           throttle_cache_;
-    std::vector<throttle::CpuCounters>    throttle_prev_;
+    throttle::Plan                        throttle_plan_;
+    sys::FdList                           throttle_fds_;
+    std::vector<std::uint64_t>            throttle_prev_, throttle_now_;
     throttle::Window                      throttle_window_;
-    std::vector<std::string>              throttle_cooling_;
     bool                                  throttle_probed_ = false;
     std::vector<GpuInfo>                  gpus_cache_;
     std::vector<SsdHealth>                ssd_cache_;

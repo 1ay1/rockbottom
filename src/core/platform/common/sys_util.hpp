@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <fcntl.h>
 #include <unistd.h>
 #ifndef _WIN32
@@ -81,6 +82,57 @@ inline std::string slurp(const char* path) {
     return s;
 }
 inline std::string slurp(const std::string& path) { return slurp(path.c_str()); }
+
+// Files kept open and re-read with pread at offset 0. A sysfs attribute
+// regenerates its value on every read from offset 0, so this skips the
+// open/close pair per sample. Past `budget` open fds a path is opened per
+// read instead, so a huge machine can't eat the fd limit.
+class FdList {
+public:
+    explicit FdList(std::size_t budget = 128) : budget_(budget) {}
+    FdList(const FdList&) = delete;
+    FdList& operator=(const FdList&) = delete;
+    ~FdList() { reset(); }
+
+    void reset() {
+        for (const Entry& e : files_) if (e.fd >= 0) ::close(e.fd);
+        files_.clear();
+        open_ = 0;
+    }
+    void open(const std::string& path) {
+        Entry e{-1, path};
+        if (open_ < budget_) {
+            e.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+            if (e.fd >= 0) { ++open_; e.path.clear(); }
+        }
+        files_.push_back(std::move(e));
+    }
+    std::size_t size() const { return files_.size(); }
+
+    // Read file i into buf (NUL-terminated). Returns bytes read, or -1.
+    template <std::size_t N>
+    ssize_t read(std::size_t i, char (&buf)[N]) const {
+        buf[0] = '\0';
+        if (i >= files_.size()) return -1;
+        const Entry& e = files_[i];
+        int fd = e.fd;
+        if (fd < 0) {
+            if (e.path.empty()) return -1;
+            fd = ::open(e.path.c_str(), O_RDONLY | O_CLOEXEC);
+            if (fd < 0) return -1;
+        }
+        ssize_t n;
+        do { n = ::pread(fd, buf, N - 1, 0); } while (n < 0 && errno == EINTR);
+        if (fd != e.fd) ::close(fd);
+        buf[n > 0 ? n : 0] = '\0';
+        return n;
+    }
+
+private:
+    struct Entry { int fd; std::string path; };   // path kept only when not open
+    std::vector<Entry> files_;
+    std::size_t budget_, open_ = 0;
+};
 
 inline std::string first_line(const std::string& s) {
     auto nl = s.find('\n');

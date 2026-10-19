@@ -280,35 +280,33 @@ void Sampler::sample_cpu(CpuInfo& cpu, bool /*fast*/) {
     }
 }
 
-// Thermal throttle. The logic is in throttle.hpp; this points it at /sys.
+// Thermal throttle. Probe once, keep the fds open, then each sample is one
+// pread per slot (a few dozen on a desktop) and some integer math.
 void Sampler::sample_throttle(CpuThrottle& out) {
-    const auto read = [](const std::string& p) { return slurp((sysfs_root() + p).c_str()); };
     if (!throttle_probed_) {
-        throttle_cooling_ = throttle::processor_cooling(read);
+        const auto read = [](const std::string& p) { return slurp((sysfs_root() + p).c_str()); };
+        throttle_plan_ = throttle::probe(ncpu_, read);
+        for (const auto& s : throttle_plan_.slots) throttle_fds_.open(sysfs_root() + s.path);
+        throttle_now_.assign(throttle_plan_.slots.size(), throttle::kMissing);
         throttle_probed_ = true;
     }
-    auto now = throttle::read_counters(ncpu_, read);
-    if (!throttle_prev_.empty())
-        throttle_window_.push(std::chrono::steady_clock::now(), throttle::diff(throttle_prev_, now));
-
-    const throttle::Delta w = throttle_window_.total();
-    const throttle::Cap cap = throttle::lowest_cap(now);
-    const throttle::Cooling cool = throttle::read_cooling(throttle_cooling_, read);
-
     out = {};
-    for (const auto& c : now) {
-        out.supported |= c.present;
-        out.since_boot = std::max({out.since_boot, c.core_count, c.pkg_count});
-    }
-    out.supported |= cool.max > 0 || cap.max_khz > 0;
-    out.cpus = w.cpus;
+    if (throttle_plan_.empty()) return;
+
+    std::swap(throttle_prev_, throttle_now_);
+    throttle_now_.resize(throttle_plan_.slots.size());
+    char buf[32];
+    for (std::size_t i = 0; i < throttle_now_.size(); ++i)
+        throttle_now_[i] = throttle_fds_.read(i, buf) > 0 ? throttle::parse_u64(buf) : throttle::kMissing;
+
+    if (throttle_prev_.size() == throttle_now_.size())
+        throttle_window_.push(std::chrono::steady_clock::now(),
+                              throttle::diff(throttle_plan_, throttle_prev_, throttle_now_));
+    throttle::summarize(throttle_plan_, throttle_now_, out);
+    const throttle::Delta w = throttle_window_.total();
+    out.cpus = static_cast<int>(w.cpus);
     out.events = w.events;
     out.ms = w.ms;
-    out.cap = Hertz{cap.cap_khz * 1000};
-    out.max = Hertz{cap.max_khz * 1000};
-    out.cooling_cur = cool.cur;
-    out.cooling_max = cool.max;
-    throttle_prev_ = std::move(now);
 }
 
 }  // namespace rockbottom
