@@ -183,7 +183,10 @@ going *"…so what?"*
   *feel things* about it, alone, forever. Plus package temp, a **distribution
   strip** (busiest / quietest / median / average / spread / active cores — it will
   personally rat out a single-threaded hog pinning one poor core to the wall), and
-  **every core** as its own labelled meter with its live clock speed.
+  **every core** as its own labelled meter with its live clock speed. On Linux it
+  also reads the kernel's own thermal-throttle counters, clock cap and CPU cooling
+  state, so a laptop that throttles at 70°C gets called out instead of waiting for
+  some temperature line it never reaches.
 
 - **`2` MEMORY** — the usage-trend graph (spot the leak *before* the OOM killer
   visits), a real physical breakdown (used / cache / buffers / available) with the
@@ -391,7 +394,7 @@ part of the problem it's describing — a smoke detector that's on fire. So rb i
 
 | At 1s refresh, idle desktop | steady-state CPU | RSS |
 |-----------------------------|:----------------:|:---:|
-| **rb** | **~3.4% of one core** | **14 MB** |
+| **rb** | **~3.9% of one core** (incl. nvidia-smi) | **9 MB** |
 | btop | ~1.6% | 38 MB |
 | htop | ~0.7% (no GPU) | 6 MB |
 
@@ -401,11 +404,14 @@ your GPU the whole time — htop isn't, and btop's GPU support is newer than thi
 sentence. If raw idle CPU is the only axis you care about, htop wins and you
 should use htop.
 
-(Measured on a 12-core i5-12400F at 120×30, GCC 16 `-O3`, over a 35-second
-window on a settled machine. An earlier version of this table claimed ~0.3%
-and 9 MB; that was measured before the users pane, the GPU collector and
-maya's jaal runtime landed, and it had stopped being true. Numbers in a README
-that nobody re-measures are just advertising.)
+(Measured on a 12-core i5-12400F with an RTX 4060 at 120×30, GCC 16 `-O3`,
+median of three 35-second windows. The rb figure now counts the `nvidia-smi`
+child too, which the old one didn't. Run interleaved against 0.5.0 on the same
+machine, 0.6.0 uses ~37% less CPU (3.9% vs 6.1%) and ~3 MB less memory. The
+btop/htop rows are from the 0.5.0 measurement. An earlier version of this table
+claimed ~0.3%; that was before the users pane, the GPU collector and maya's
+jaal runtime landed, and it had stopped being true. Numbers in a README that
+nobody re-measures are just advertising.)
 
 What we do still claim, and what we re-measure every release:
 
@@ -420,12 +426,12 @@ What we do still claim, and what we re-measure every release:
 - **The sampler asks the kernel for the least it can get away with.** Fast signals
   (CPU, memory, net, disk rates) refresh every tick; slow ones (filesystems,
   sensors, ports, GPU) run on their own throttled cadences and serve a cache in
-  between. Nothing forks a subprocess on the hot path if we can read a file
-  instead, and the one collector that *has* to shell out — `nvidia-smi` — is polled
-  once a second, with its expensive per-process query on an even slower beat,
-  instead of the naive three-forks-every-frame that used to quietly cost ~15% of a
-  core all by itself. (btop wins the last hair here because it links NVML and never
-  forks at all. We see you, btop. We're coming for that too.)
+  between. The per-process `/proc` files and the sysfs counters are opened once
+  and re-read in place with `pread`, so a tick is ~8× fewer `open` calls than it
+  was. The one collector that *has* to shell out — `nvidia-smi` — runs as a single
+  long-lived `-lms` loop instead of a fresh process every second, and its
+  per-process queries only run while the GPU pane is open. (btop still links NVML
+  and never forks at all. We see you, btop.)
 - **Expensive work only happens when you're looking at it.** A tick is
   *syscall*-bound, not compute-bound, so the wins come from not making the call at
   all: `/proc/pid/io` is 0600 and about three of every four processes deny it, so a
