@@ -175,7 +175,12 @@ Snapshot Sampler::sample(SortKey sort, bool fast) {
     // procs run in progress must not be superseded by a gauges-only run that
     // would drop the per-process table, so we only (re)launch when idle.
     if (!fast && !gpu_inflight_.valid() && due(gpus_at_, ms(1000))) {
-        const bool with_procs = due(gpu_procs_at_, ms(3000));
+        // Per-process table only while the GPU pane is open. Opening it
+        // forces a procs run now instead of waiting out the 3s cadence.
+        const bool want_procs = want_gpu_procs_.load(std::memory_order_relaxed);
+        if (want_procs && !gpu_procs_wanted_) gpu_procs_at_ = {};
+        gpu_procs_wanted_ = want_procs;
+        const bool with_procs = want_procs && due(gpu_procs_at_, ms(3000));
         gpu_inflight_procs_ = with_procs;
         std::vector<GpuInfo> seed = gpus_cache_;  // carry per-process table forward
         gpu_inflight_ = std::async(std::launch::async,

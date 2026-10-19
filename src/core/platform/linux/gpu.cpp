@@ -14,6 +14,7 @@
 
 #include "../../sampler.hpp"
 #include "procfs.hpp"
+#include "smi_stream.hpp"
 
 #include <algorithm>
 #include <array>
@@ -218,7 +219,13 @@ bool nvidia_smi_exists() {
 }
 
 // ── NVIDIA ────────────────────────────────────────────────────────────────
-void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
+constexpr const char* kSmiQuery =
+    "--query-gpu="
+    "name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
+    "power.draw,power.limit,clocks.sm,clocks.mem,fan.speed,"
+    "utilization.encoder,utilization.decoder,pstate,driver_version";
+
+void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs, SmiStream& stream) {
     // Launch the two independent per-process queries FIRST (when needed) so
     // their subprocess latency overlaps the query-gpu fork + all parsing.
     // pmon is the slowest (~80ms), so kicking it off up front hides most of it
@@ -232,13 +239,20 @@ void collect_nvidia(std::vector<GpuInfo>& out, bool with_procs) {
         pmon_fut = run_argv_async({"nvidia-smi", "pmon", "-c", "1"});
     }
 
-    static const char* const q[] = {
-        "nvidia-smi", "--query-gpu="
-        "name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
-        "power.draw,power.limit,clocks.sm,clocks.mem,fan.speed,"
-        "utilization.encoder,utilization.decoder,pstate,driver_version",
-        "--format=csv,noheader,nounits", nullptr};
-    std::string res = run_argv(q);
+    // Gauges come from one nvidia-smi left running in loop mode (~1ms of cpu
+    // per sample instead of ~12ms per spawn). If it has nothing fresh yet
+    // (first tick, or it's restarting), fall back to a one-shot run.
+    if (!stream.running()) {
+        const std::string exe = resolve_exe("nvidia-smi");
+        if (!exe.empty())
+            stream.start({exe, kSmiQuery, "--format=csv,noheader,nounits", "-lms", "1000"});
+    }
+    std::string res;
+    if (!stream.latest(res, std::chrono::milliseconds(2500))) {
+        static const char* const q[] = {
+            "nvidia-smi", kSmiQuery, "--format=csv,noheader,nounits", nullptr};
+        res = run_argv(q);
+    }
     if (res.empty()) return;
 
     std::size_t line_start = 0;
@@ -589,6 +603,12 @@ void scan_drm_fdinfo(const std::string& driver_match,
 
 }  // namespace
 
+SmiStream& Sampler::smi_stream() {
+    if (!smi_holder_)
+        smi_holder_ = {new SmiStream, [](SmiStream* s) { delete s; }};
+    return *smi_holder_;
+}
+
 void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
     // Carry the previous per-process app table over a base-only refresh: the
     // expensive per-process forks (nvidia pmon, DRM fdinfo walk) run on a
@@ -606,8 +626,9 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
     // would otherwise run every single tick and find nothing, burning CPU that
     // scales up as the refresh rate rises. Static init is thread-safe (this
     // collector only runs on the sampler thread anyway).
+    static const bool have_nvidia = nvidia_smi_exists() && has_nvidia_card();
     static const bool have_gpu = [] {
-        if (nvidia_smi_exists() && has_nvidia_card()) return true;
+        if (have_nvidia) return true;
         std::error_code ec;
         for (int i = 0; i < 8; ++i) {
             std::string dev = "/sys/class/drm/card" + std::to_string(i) + "/device";
@@ -618,8 +639,8 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
     }();
     if (!have_gpu) return;
 
-    if (nvidia_smi_exists() && has_nvidia_card())
-        collect_nvidia(gpus, with_procs);
+    if (have_nvidia)
+        collect_nvidia(gpus, with_procs, smi_stream());
     collect_amd(gpus);
     collect_intel(gpus);
 

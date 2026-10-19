@@ -26,6 +26,8 @@
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/core/throttle.hpp"
 #include "../src/core/platform/common/pid_fds.hpp"
+#include "../src/core/platform/linux/smi_stream.hpp"
+#include <thread>
 #include <csignal>
 #include <sys/wait.h>
 #include "../src/core/platform/common/sys_util.hpp"
@@ -956,6 +958,33 @@ void test_throttle() {
         procfs::PidFds zero(0);
         check(zero.read(self, name.c_str(), procfs::PidFds::Stat, out) && zero.open_count() == 0,
               "pidfds over budget still reads, keeps nothing");
+    }
+
+    // SmiStream with /bin/sh standing in for nvidia-smi.
+    {
+        using namespace std::chrono_literals;
+        SmiStream st;
+        // Two-line bursts every 300ms, like two GPUs.
+        st.start({"/bin/sh", "-c", "i=0; while :; do i=$((i+1)); printf 'a %d\\nb %d\\n' $i $i; sleep 0.3; done"});
+        std::string got;
+        bool ok = false;
+        for (int i = 0; i < 40 && !ok; ++i) { std::this_thread::sleep_for(50ms); ok = st.latest(got, 2s); }
+        check(ok, "smi stream publishes a line");
+        check(got.find("a ") == 0 && got.find("\nb ") != std::string::npos,
+              "smi stream keeps the whole burst (" + got.substr(0, 20) + ")");
+        std::this_thread::sleep_for(700ms);
+        std::string later;
+        st.latest(later, 2s);
+        check(!later.empty() && later != got, "smi stream moves to the newest burst");
+        const auto stop_at = std::chrono::steady_clock::now();
+        st.stop();
+        check(std::chrono::steady_clock::now() - stop_at < 1s && !st.running(), "smi stream stops fast");
+
+        SmiStream bad;
+        bad.start({"/nonexistent/nvidia-smi"});
+        std::this_thread::sleep_for(200ms);
+        check(!bad.latest(got, 10s), "smi stream with a missing exe has nothing");
+        bad.stop();
     }
 }
 

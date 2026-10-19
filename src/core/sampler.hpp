@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cstdint>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -27,6 +28,8 @@
 #include <vector>
 
 namespace rockbottom {
+
+class SmiStream;
 
 enum class SortKey { Cpu, Mem, Io, Pid, Name, Port };
 
@@ -89,6 +92,11 @@ public:
     // it spun the disk and burned a core for a number that was never drawn.
     // Set when the pane opens; the scan then starts on the next accounts pass.
     void set_want_disk_usage(bool on) { want_disk_.store(on, std::memory_order_relaxed); }
+
+    // Whether the GPU pane is open. The per-process GPU table only shows
+    // there, and on NVIDIA it costs two extra nvidia-smi runs (pmon alone is
+    // ~28ms of cpu), so skip it while nobody is looking.
+    void set_want_gpu_procs(bool on) { want_gpu_procs_.store(on, std::memory_order_relaxed); }
 
     // Static machine facts, populated once in the constructor.
     int         ncpu() const { return ncpu_; }
@@ -293,6 +301,8 @@ private:
     std::atomic<int>                      detail_pid_{0};    // proc pane target (0 = none)
     std::atomic<bool>                     want_hist_{false}; // ship every proc's cpu ring
     std::atomic<bool>                     want_disk_{false}; // users pane open → scan homes
+    std::atomic<bool>                     want_gpu_procs_{false}; // gpu pane open → per-proc gpu table
+    bool                                  gpu_procs_wanted_ = false; // last value seen, sampler thread only
 
     // ── Wall-clock throttles for SLOW-CHANGING collectors ──
     // These metrics (disk capacity, hardware temps, battery, PSI) move on the
@@ -348,6 +358,10 @@ private:
         std::chrono::steady_clock::time_point sampled_at{};
     };
     std::unordered_map<int, GpuFdinfoPrev> gpu_fdinfo_prev_;
+    // Long-lived `nvidia-smi -lms` for the GPU gauges (Linux). Declared before
+    // gpu_inflight_ so the worker that uses it is joined first.
+    std::unique_ptr<SmiStream, void (*)(SmiStream*)> smi_holder_{nullptr, nullptr};
+    SmiStream& smi_stream();
 
     // DECLARED LAST so it is DESTROYED FIRST. The GPU worker runs on a future
     // that spans ticks and captures `this`, touching gpu_fdinfo_prev_, gpu_hist_*

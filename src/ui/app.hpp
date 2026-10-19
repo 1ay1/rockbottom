@@ -1033,6 +1033,8 @@ struct App {
         // pane's DISK column. Left off, the most expensive work in the program
         // never happens at all.
         sampler->set_want_disk_usage(m.detail == ui::Detail::Users);
+        // Per-process GPU table only renders in the GPU pane.
+        sampler->set_want_gpu_procs(m.detail == ui::Detail::Gpu);
         return Cmd::task_isolated(
             [](maya::Sink<Msg> out, std::stop_token,
                std::shared_ptr<Sampler> s, SortKey k, std::uint64_t gen) {
