@@ -15,8 +15,8 @@
 
 #pragma once
 
-// maya/host/*: the runtime seam. sources.hpp brings the on_key/on_mouse/
-// on_resize routers our Sub row names, and jaal's Cmd/Sub/Sink come with it.
+// maya/host/*: the runtime seam. sources.hpp brings the terminal event types
+// our on() overloads take, and jaal's Cmd/Sub/Sink come with it.
 // interop.hpp is the one that is easy to forget and confusing to omit: it
 // teaches jaal that maya's Strong<Tag,T> wrappers (Columns, Rows) are safe to
 // send. Without it, a MouseEvent's x/y make the whole Msg non-Sendable, and
@@ -335,11 +335,10 @@ struct App {
     // a stray one can't sneak in.
     using Cmd = jaal::Cmd<Msg>;
 
-    // Keys, mouse and resize come from the terminal; the sample cadence is a
-    // timer, which needs no row (jaal owns time). on_paste/on_focus are
-    // deliberately absent: a paste into a system monitor is meaningless, and
-    // we repaint off the sampler, not off focus.
-    using Sub = jaal::Sub<Msg, maya::on_key, maya::on_mouse, maya::on_resize>;
+    // Sub is just the sample timer. Keys, mouse and resize come in through
+    // the on() overloads below; paste and focus have none, so they're
+    // dropped (a paste into a system monitor means nothing).
+    using Sub = jaal::Sub<Msg>;
 
     // ── shared layout geometry ──────────────────────────────────────────────
     // The mouse handler and view() MUST agree on where every panel lands, so
@@ -2574,28 +2573,21 @@ struct App {
     }
 
     static Sub subscribe(const Model& m) {
-        using S = Sub;
-        using namespace std::chrono_literals;
-        std::vector<S> subs;
         // Sample cadence is model-driven (< > adjust it); maya re-subscribes
         // after each update so a changed interval takes effect immediately.
-        subs.push_back(S::every(std::chrono::milliseconds(std::clamp(m.refresh_ms, 250, 5000)),
-                                Tick{}));
-        // The three terminal sources, each declared in the Sub row above.
-        // Sub::on(router, fn) replaces the old named on_key/on_mouse/on_resize
-        // helpers: the router tag is what jaal matches against the host, so a
-        // source the host doesn't produce fails to compile rather than being a
-        // handler that quietly never fires.
-        subs.push_back(S::on(maya::on_resize{}, [](const maya::ResizeEvent& rz) -> std::optional<Msg> {
-            return Resize{rz.width.value, rz.height.value};
-        }));
-        subs.push_back(S::on(maya::on_key{}, [](const maya::KeyEvent& ke) -> std::optional<Msg> {
-            return Key{ke};
-        }));
-        subs.push_back(S::on(maya::on_mouse{}, [](const maya::MouseEvent& me) -> std::optional<Msg> {
-            return Mouse{me};
-        }));
-        return S::batch(std::move(subs));
+        return Sub::every(std::chrono::milliseconds(std::clamp(m.refresh_ms, 250, 5000)),
+                          Tick{});
+    }
+
+    // Terminal input. Each event becomes one Msg; update() does the work.
+    static std::optional<Msg> on(const Model&, const maya::ResizeEvent& rz) {
+        return Resize{rz.width.value, rz.height.value};
+    }
+    static std::optional<Msg> on(const Model&, const maya::KeyEvent& ke) {
+        return Key{ke};
+    }
+    static std::optional<Msg> on(const Model&, const maya::MouseEvent& me) {
+        return Mouse{me};
     }
 
     // ── view: pure composition of widgets ───────────────────────────────────
