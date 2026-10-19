@@ -25,6 +25,9 @@
 #include "../src/core/platform/linux/armid.hpp"
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/core/throttle.hpp"
+#include "../src/core/platform/common/pid_fds.hpp"
+#include <csignal>
+#include <sys/wait.h>
 #include "../src/core/platform/common/sys_util.hpp"
 #include "../src/ui/widgets/cpu_panel.hpp"
 #include "../src/ui/widgets/theme_menu.hpp"
@@ -924,6 +927,36 @@ void test_throttle() {
     check(fl.read(2, buf) < 0 && buf[0] == '\0', "fdlist missing file reads as empty");
     ::close(tfd);
     ::unlink(tmpl);
+
+    // PidFds: a kept fd follows its process, and a dead one isn't served.
+    {
+        procfs::PidFds pf(64);
+        const int self = static_cast<int>(::getpid());
+        const std::string name = std::to_string(self);
+        std::string out;
+        check(pf.read(self, name.c_str(), procfs::PidFds::Stat, out) &&
+              out.find(") ") != std::string::npos && pf.open_count() == 1,
+              "pidfds reads /proc/self/stat and keeps the fd");
+        check(pf.read(self, name.c_str(), procfs::PidFds::Stat, out) && pf.open_count() == 1,
+              "pidfds re-reads without reopening");
+
+        const pid_t kid = ::fork();
+        if (kid == 0) { ::pause(); ::_exit(0); }
+        const std::string kn = std::to_string(kid);
+        check(pf.read(kid, kn.c_str(), procfs::PidFds::Stat, out), "pidfds reads a child");
+        ::kill(kid, SIGKILL);
+        ::waitpid(kid, nullptr, 0);
+        check(!pf.read(kid, kn.c_str(), procfs::PidFds::Stat, out) && out.empty(),
+              "pidfds fails on a dead pid instead of serving stale data");
+
+        struct One { int p; bool contains(int x) const { return x == p; } };
+        pf.retain(One{self});
+        check(pf.open_count() == 1, "pidfds retain closes gone pids");
+
+        procfs::PidFds zero(0);
+        check(zero.read(self, name.c_str(), procfs::PidFds::Stat, out) && zero.open_count() == 0,
+              "pidfds over budget still reads, keeps nothing");
+    }
 }
 
 int main() {

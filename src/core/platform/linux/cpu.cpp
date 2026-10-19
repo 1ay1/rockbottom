@@ -222,19 +222,27 @@ void Sampler::sample_cpu(CpuInfo& cpu, bool /*fast*/) {
         cpufreq_missing_ ? cpuinfo_mhz(cores.size()) : std::vector<std::uint64_t>{};
     bool any_cpufreq = false;
 
+    // Open each core's cur_freq once and pread it per tick. Prefer
+    // scaling_cur_freq, else cpuinfo_cur_freq; a core with neither stays -1.
+    if (!cpufreq_missing_ && freq_fds_.size() != cores.size()) {
+        freq_fds_.reset();
+        for (std::size_t i = 0; i < cores.size(); ++i) {
+            const std::string base = "/sys/devices/system/cpu/cpu" + std::to_string(i) + "/cpufreq/";
+            const std::string sc = base + "scaling_cur_freq";
+            freq_fds_.open(::access(sc.c_str(), R_OK) == 0 ? sc : base + "cpuinfo_cur_freq");
+        }
+    }
+    char fbuf[32];
+
     for (std::size_t i = 0; i < cores.size(); ++i) {
         CpuCore& c = core_hist_[static_cast<int>(i)];
         if (!first_) c.usage = busy(cores[i], prev_cores_[i]);
         prev_cores_[i] = cores[i];
 
-        const std::string base = "/sys/devices/system/cpu/cpu" + std::to_string(i) + "/cpufreq/";
-        std::string fs;
-        if (!cpufreq_missing_) {
-            fs = first_line(slurp((base + "scaling_cur_freq").c_str()));
-            if (fs.empty()) fs = first_line(slurp((base + "cpuinfo_cur_freq").c_str()));
-        }
-        if (!fs.empty()) {
-            c.freq = Hertz{std::strtoull(fs.c_str(), nullptr, 10) * 1000};
+        const std::uint64_t khz = !cpufreq_missing_ && freq_fds_.read(i, fbuf) > 0
+            ? throttle::parse_u64(fbuf) : throttle::kMissing;
+        if (khz != throttle::kMissing) {
+            c.freq = Hertz{khz * 1000};
             any_cpufreq = true;
         } else if (i < cpuinfo_hz.size() && cpuinfo_hz[i] > 0) {
             c.freq = Hertz{cpuinfo_hz[i]};

@@ -93,7 +93,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         if (pend == e->d_name || *pend != '\0' || pidl <= 0 || pidl > INT_MAX) continue;
         int pid = static_cast<int>(pidl);
 
-        if (!sys::slurp_into(proc_path(e->d_name, "/stat"), fbuf)) continue;
+        if (!pid_fds_.read(pid, e->d_name, procfs::PidFds::Stat, fbuf)) continue;
         const std::string& stat = fbuf;
         if (stat.empty()) continue;
 
@@ -205,7 +205,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         bool io_ok = false;
         if (!skip_io) {
             // stat/comm are fully parsed above, so fbuf is free to reuse here.
-            io_ok = sys::slurp_into(proc_path(e->d_name, "/io"), fbuf);
+            io_ok = pid_fds_.read(pid, e->d_name, procfs::PidFds::Io, fbuf);
             const std::string& io = fbuf;
             // Scan lines for "read_bytes:" / "write_bytes:" without allocating
             // a stream: find the key, jump past the colon, parse the number.
@@ -229,6 +229,7 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
         np.io_write = io_w;
         // Latch the refusal: either we just got EACCES, or we already had.
         np.io_denied = skip_io || !io_ok;
+        np.fd_denied = have_prev && prev_it->second.fd_denied;
 
         // Context switches from /proc/pid/status (voluntary + involuntary).
         // This is a LARGE file and its only consumer is the process detail
@@ -413,6 +414,8 @@ void Sampler::sample_procs(Snapshot& snap, SortKey sort, double dt) {
     ::closedir(proc);
 
     prev_proc_ = std::move(cur);
+    // Close kept fds of pids that are gone.
+    pid_fds_.retain(prev_proc_);
     // Prune the per-pid caches to pids still alive this tick (bounded memory
     // over a long-running session where pids churn).
     if (cmd_cache_.size() > cmd_seen.size() * 2 + 64) {

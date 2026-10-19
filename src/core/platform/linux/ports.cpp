@@ -16,6 +16,7 @@
 #include "procfs.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
@@ -134,9 +135,16 @@ void Sampler::sample_ports() {
         long pidl = std::strtol(e->d_name, &pend, 10);
         if (pend == e->d_name || *pend != '\0' || pidl <= 0 || pidl > INT_MAX) continue;
         int pid = static_cast<int>(pidl);
+        // A fd table we were refused last time stays refused for the life of
+        // that process; don't pay the EACCES again.
+        auto pv = prev_proc_.find(pid);
+        if (pv != prev_proc_.end() && pv->second.fd_denied) continue;
         std::string fd_dir = "/proc/" + std::string(e->d_name) + "/fd";
         DIR* fds = ::opendir(fd_dir.c_str());
-        if (!fds) continue;   // not ours — same visibility rule as ss/lsof
+        if (!fds) {   // not ours — same visibility rule as ss/lsof
+            if (errno == EACCES && pv != prev_proc_.end()) pv->second.fd_denied = true;
+            continue;
+        }
 
         std::unordered_set<std::uint16_t> ports;
         // A process can hold the SAME socket through several fds (dup, fork

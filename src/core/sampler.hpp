@@ -14,6 +14,7 @@
 #include "metrics.hpp"
 #include "throttle.hpp"
 #include "platform/common/sys_util.hpp"
+#include "platform/common/pid_fds.hpp"
 
 #include <chrono>
 #include <atomic>
@@ -107,6 +108,9 @@ private:
         // Latch the refusal and skip the file for that pid; the flag is keyed
         // on starttime like everything else here, so a recycled pid re-probes.
         bool io_denied = false;
+        // Same idea for /proc/pid/fd, which the port scan walks. Set by
+        // sample_ports on EACCES, carried forward while starttime matches.
+        bool fd_denied = false;
         std::array<float, 48> cpu_hist{};   // rolling cpu% (0..1) so the detail pane can graph it
         int cpu_hist_len = 0;
     };
@@ -192,6 +196,7 @@ private:
     // per logical cpu forever, on exactly the machines that have the most
     // cores. Whether a cpufreq driver is bound doesn't change at runtime.
     bool                                  cpufreq_missing_ = false;
+    sys::FdList                           freq_fds_;   // per-core cur_freq, kept open
 
     // ── Cross-tick delta state ──
     CpuTimes                              prev_total_{};
@@ -276,6 +281,7 @@ private:
     std::unordered_map<int, std::pair<std::uint64_t, std::string>> cmd_cache_;  // pid -> (starttime, argv); starttime guards pid reuse
     std::unordered_map<int, std::pair<std::uint64_t, unsigned>> puid_cache_;  // pid -> (starttime, uid); skips per-tick stat()
     std::unordered_map<unsigned, std::string> uid_cache_;  // uid -> user name (getpwuid is slow)
+    procfs::PidFds                        pid_fds_;   // /proc/N/{stat,io} kept open across ticks
 
     std::chrono::steady_clock::time_point last_time_{};
     bool                                  first_ = true;
