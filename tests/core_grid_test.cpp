@@ -26,7 +26,9 @@
 #include "../src/core/platform/linux/topology.hpp"
 #include "../src/core/throttle.hpp"
 #include "../src/core/platform/common/pid_fds.hpp"
+#ifdef __linux__
 #include "../src/core/platform/linux/smi_stream.hpp"
+#endif
 #include <thread>
 #include <csignal>
 #include <sys/wait.h>
@@ -913,8 +915,9 @@ void test_throttle() {
     char tmpl[] = "/tmp/rb_fdlist_XXXXXX";
     const int tfd = ::mkstemp(tmpl);
     auto put = [&](const char* s) {
-        (void)::ftruncate(tfd, 0);
-        (void)::pwrite(tfd, s, std::strlen(s), 0);
+        const auto len = static_cast<ssize_t>(std::strlen(s));
+        check(::ftruncate(tfd, 0) == 0 && ::pwrite(tfd, s, static_cast<std::size_t>(len), 0) == len,
+              "fdlist test file written");
     };
     put("123\n");
     sys::FdList fl(1);
@@ -930,6 +933,8 @@ void test_throttle() {
     ::close(tfd);
     ::unlink(tmpl);
 
+#ifdef __linux__
+    // The rest needs /proc and pipe2, so Linux only.
     // PidFds: a kept fd follows its process, and a dead one isn't served.
     {
         procfs::PidFds pf(64);
@@ -986,6 +991,7 @@ void test_throttle() {
         check(!bad.latest(got, 10s), "smi stream with a missing exe has nothing");
         bad.stop();
     }
+#endif
 }
 
 int main() {
