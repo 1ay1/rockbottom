@@ -1,569 +1,342 @@
-<!DOCTYPE html>
-<html lang="en" prefix="og: https://ogp.me/ns#">
+<!doctype html>
+<html lang="en" dir="ltr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<!-- ─────────  SEO  ───────── -->
-<title>rockbottom (rb) — the system monitor that reads your machine for you</title>
-<meta name="description" content="rockbottom (rb) is a fast, standalone terminal system monitor for Linux and macOS that diagnoses your machine in one plain-English sentence. A calmer, smarter htop / btop / top / nvtop alternative. One static binary, ~7ms startup. Try the live terminal demo.">
-<meta name="keywords" content="rockbottom, rb, system monitor, terminal system monitor, htop alternative, btop alternative, top alternative, nvtop alternative, TUI system monitor, Linux system monitor, macOS system monitor, CLI process monitor, resource monitor, CPU monitor, GPU monitor">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rockbottom (rb) — a terminal system monitor that tells you what's wrong | htop, btop alternative</title>
+<meta name="description" content="rockbottom (rb) is a free, open source terminal system monitor for Linux and macOS. It reads the numbers for you and says what's wrong in one sentence. CPU, memory, GPU, disk, network, ports and users. One static binary.">
+<meta name="keywords" content="rockbottom, rb, system monitor, terminal system monitor, TUI, htop alternative, btop alternative, top alternative, nvtop alternative, Linux, macOS, process monitor, GPU monitor, PSI">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="author" content="Ayush Bhat">
-<meta name="robots" content="index, follow, max-image-preview:large">
-<meta name="theme-color" content="#05070c">
+<meta name="application-name" content="rockbottom">
+<meta name="format-detection" content="telephone=no">
 <link rel="canonical" href="https://1ay1.github.io/rockbottom/">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0e0f10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="sitemap" type="application/xml" href="sitemap.xml">
+<link rel="preload" as="image" type="image/webp" href="img/rockbottom.webp">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="rockbottom">
-<meta property="og:title" content="rockbottom — a system monitor you can boot in your browser">
-<meta property="og:description" content="Every other monitor shows you numbers and leaves. rockbottom reads them and tells you what's wrong in one sentence. Boot the live terminal right on the page. A calmer htop/btop/nvtop alternative.">
+<meta property="og:title" content="rockbottom — the system monitor that reads your machine for you">
+<meta property="og:description" content="A terminal system monitor for Linux and macOS that tells you what's wrong in one plain sentence. A calmer htop, btop and nvtop alternative.">
 <meta property="og:url" content="https://1ay1.github.io/rockbottom/">
-<meta property="og:image" content="https://raw.githubusercontent.com/1ay1/rockbottom/master/assets/rockbottom.gif">
-<meta property="og:image:alt" content="rockbottom terminal system monitor in action">
+<meta property="og:image" content="https://1ay1.github.io/rockbottom/img/rockbottom.png">
+<meta property="og:image:alt" content="rockbottom running in a terminal">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="rockbottom — a system monitor you can boot in your browser">
-<meta name="twitter:description" content="A calmer, smarter htop/btop/nvtop alternative. One plain-English verdict instead of a wall of numbers. Boot the live demo, then install the static binary.">
-<meta name="twitter:image" content="https://raw.githubusercontent.com/1ay1/rockbottom/master/assets/rockbottom.gif">
+<meta name="twitter:title" content="rockbottom — the system monitor that reads your machine for you">
+<meta name="twitter:description" content="A terminal system monitor for Linux and macOS that tells you what's wrong in one plain sentence.">
+<meta name="twitter:image" content="https://1ay1.github.io/rockbottom/img/rockbottom.png">
 
 <script type="application/ld+json">
 {
-  "@context":"https://schema.org","@type":"SoftwareApplication","name":"rockbottom","alternateName":"rb",
-  "applicationCategory":"DeveloperApplication","applicationSubCategory":"System Monitor","operatingSystem":"Linux, macOS",
-  "description":"A fast, standalone terminal system monitor that diagnoses your machine in one plain-English sentence — a calmer, smarter alternative to htop, btop, top and nvtop.",
-  "url":"https://1ay1.github.io/rockbottom/","downloadUrl":"https://github.com/1ay1/rockbottom/releases/latest",
-  "softwareVersion":"0.3.0","license":"https://opensource.org/licenses/MIT",
-  "author":{"@type":"Person","name":"Ayush Bhat"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
-  "programmingLanguage":"C++"
-}
-</script>
-<script type="application/ld+json">
-{
-  "@context":"https://schema.org","@type":"FAQPage","mainEntity":[
-    {"@type":"Question","name":"What is rockbottom?","acceptedAnswer":{"@type":"Answer","text":"rockbottom (rb) is a terminal system monitor for Linux and macOS. Instead of a wall of numbers like htop or top, it reads them and tells you what is actually wrong in one plain-English, color-coded sentence, and names the exact process responsible."}},
-    {"@type":"Question","name":"How is rockbottom different from htop or btop?","acceptedAnswer":{"@type":"Answer","text":"htop and btop display metrics and leave you to interpret them. rockbottom runs a differential diagnosis every tick and delivers a single verdict — calm, busy, stressed or critical — and names the culprit process. It also replaces nvtop for GPU monitoring, ships as one static binary with no dependencies, and paints its first frame in about 7 milliseconds."}},
-    {"@type":"Question","name":"How do I install rockbottom?","acceptedAnswer":{"@type":"Answer","text":"Run: curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh — the installer downloads the correct static binary for Linux x86_64/arm64 or Apple Silicon, verifies its SHA-256 checksum, and installs rb to ~/.local/bin. No build step, no package manager, no shared libraries."}},
-    {"@type":"Question","name":"Does rockbottom itself use a lot of CPU?","acceptedAnswer":{"@type":"Answer","text":"No. It is fully event-driven, reads files instead of forking subprocesses on the hot path, and sits at near-zero idle CPU. It will not spin your fans just to tell you nothing is wrong."}}
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "rockbottom",
+      "alternateName": "rb",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "Linux, macOS",
+      "url": "https://1ay1.github.io/rockbottom/",
+      "downloadUrl": "https://github.com/1ay1/rockbottom/releases/latest",
+      "codeRepository": "https://github.com/1ay1/rockbottom",
+      "license": "https://opensource.org/licenses/MIT",
+      "image": "https://1ay1.github.io/rockbottom/img/rockbottom.png",
+      "description": "A terminal system monitor that reads the numbers for you and says what's wrong in one sentence.",
+      "author": { "@type": "Person", "name": "Ayush Bhat" },
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How is rockbottom different from htop or btop?",
+          "acceptedAnswer": { "@type": "Answer", "text": "htop and btop show you the numbers. rockbottom reads them and tells you what's going on in one sentence: calm, busy, stressed or critical, and which process is to blame." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which platforms does rockbottom run on?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Linux (x86_64 and arm64) and macOS on Apple Silicon or Intel. Windows is not supported." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it need any libraries installed?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. The Linux release is one fully static binary built against musl, so it runs on any Linux kernel of its architecture with nothing else installed." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can it replace nvtop?",
+          "acceptedAnswer": { "@type": "Answer", "text": "For most people, yes. Press 4 for the GPU pane: load over time, VRAM, temperature, power, clocks, fan, encode and decode load, and the processes using VRAM. It works with NVIDIA, AMD and Intel." }
+        },
+        {
+          "@type": "Question",
+          "name": "A panel is empty. Why?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Each collector leaves its field blank when the data isn't there, for example a masked /sys or an ioctl that needs root. Run rb --doctor to see every collector's status and why, and paste it into the bug report." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is rockbottom free?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free and open source software under the MIT license." }
+        }
+      ]
+    }
   ]
 }
 </script>
-
 <style>
-  :root{
-    --bg:#05070c; --term:#080b12; --panel:#0d1119; --border:#1b2231; --border2:#2a3446;
-    --ink:#d7dcea; --dim:#8a94ad; --faint:#4d566e;
-    --green:#87d64b; --amber:#f2b53d; --orange:#f0883c; --red:#f0546a;
-    --accent:#6ea8ff; --mauve:#c79bf0; --teal:#3fd6c0; --pink:#f07fb0;
-    --mono:ui-monospace,'SFMono-Regular','JetBrains Mono','Cascadia Code','Fira Code',Menlo,Consolas,monospace;
+  /* one readable column, the system font, light and dark follow the system */
+  :root {
+    --fg: #16181b; --muted: #5d6570; --bg: #fbfbfa; --card: #f1f1ef;
+    --rule: #dcdcd8; --link: #1a5fb4; --accent: #c4314b; --code: #ececea;
+    --g: #3f8f1c; --y: #a87400; --o: #c25a12; --r: #c4314b;
   }
-  *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
-  body{background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-  a{color:var(--accent);text-decoration:none}
-  a:hover{text-decoration:underline}
-  ::selection{background:rgba(135,214,75,.3);color:#fff}
-  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e6e6e3; --muted: #9aa1ab; --bg: #0e0f10; --card: #17191b;
+      --rule: #2a2d31; --link: #8ab4f8; --accent: #f0546a; --code: #1c1f22;
+      --g: #87d64b; --y: #f2b53d; --o: #f0883c; --r: #f0546a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 4rem; }
+  body {
+    margin: 0;
+    font: 17px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  a { color: var(--link); }
+  .wrap { max-width: 52rem; margin: 0 auto; padding: 0 1.25rem; }
+  code, pre, kbd { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; font-size: .9em; }
+  code { background: var(--code); padding: .1em .35em; border-radius: 4px; }
+  kbd { background: var(--card); border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 .4em; border-radius: 4px; white-space: nowrap; }
 
-  /* CRT scanline vibe */
-  body::before{content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
-    background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) 2px,rgba(0,0,0,.14) 3px,rgba(0,0,0,0) 4px);
-    opacity:.35;mix-blend-mode:multiply}
-  .glow{position:fixed;inset:0;z-index:-1;pointer-events:none;
-    background:radial-gradient(700px 480px at 50% -8%,rgba(135,214,75,.10),transparent 70%),
-               radial-gradient(600px 500px at 82% 30%,rgba(63,214,192,.06),transparent 70%)}
+  nav.top {
+    position: sticky; top: 0; z-index: 2;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(8px);
+    -webkit-backdrop-filter: saturate(1.4) blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  nav.top .wrap { display: flex; align-items: center; gap: 1.25rem; height: 3.25rem; overflow-x: auto; }
+  nav.top .brand { display: flex; align-items: center; gap: .5rem; font-weight: 700; color: var(--fg); text-decoration: none; white-space: nowrap; }
+  nav.top .brand img { width: 22px; height: 22px; }
+  nav.top ul { display: flex; gap: 1.1rem; list-style: none; margin: 0 0 0 auto; padding: 0; }
+  nav.top ul a { color: var(--muted); text-decoration: none; font-size: .95rem; white-space: nowrap; }
+  nav.top ul a:hover { color: var(--fg); }
 
-  /* top bar */
-  .topbar{position:sticky;top:0;z-index:60;background:rgba(5,7,12,.85);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
-  .topbar .wrap{display:flex;align-items:center;justify-content:space-between;height:52px}
-  .logo{font-weight:700;letter-spacing:.5px}
-  .logo .b{color:var(--teal)}
-  .logo .cur{color:var(--green);animation:blink 1.1s steps(1) infinite}
-  @keyframes blink{50%{opacity:0}}
-  .topnav{display:flex;gap:20px;font-size:13px;align-items:center}
-  .topnav a{color:var(--dim)}
-  .topnav a:hover{color:var(--ink);text-decoration:none}
-  .topnav .star{color:var(--green)}
-  @media(max-width:640px){.topnav a:not(.star){display:none}}
+  header.hero { padding: 3.5rem 0 1.5rem; }
+  header.hero h1 { font-size: clamp(2.2rem, 6vw, 3.2rem); line-height: 1.1; margin: 0; letter-spacing: -.02em; }
+  header.hero h1 .what { font-size: .42em; font-weight: 500; color: var(--muted); letter-spacing: 0; vertical-align: .35em; margin-left: .2em; }
+  header.hero .tag { font-size: 1.25rem; color: var(--muted); margin: .4rem 0 1.25rem; }
+  header.hero .lede { font-size: 1.1rem; max-width: 40rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.5rem 0 .5rem; }
+  .btn {
+    display: inline-block; padding: .55rem 1.1rem; border-radius: 8px;
+    border: 1px solid var(--rule); background: var(--card); color: var(--fg);
+    text-decoration: none; font-weight: 600; font-size: .98rem;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .shot { display: block; width: 100%; height: auto; margin: 2rem 0 0; border-radius: 10px; border: 1px solid var(--rule); background: #0d1117; }
+  .caption { color: var(--muted); font-size: .9rem; margin: .5rem 0 0; }
 
-  /* hero prompt */
-  .hero{padding:52px 0 8px;text-align:center}
-  .kicker{color:var(--faint);font-size:13px;margin-bottom:18px}
-  .kicker .p{color:var(--green)}
-  h1{font-size:clamp(30px,5.5vw,52px);font-weight:800;line-height:1.05;letter-spacing:-1px;margin-bottom:18px}
-  h1 .grad{background:linear-gradient(100deg,var(--green),var(--teal) 60%,var(--accent));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-  .tag{color:var(--dim);font-size:clamp(14px,2vw,17px);max-width:600px;margin:0 auto 6px}
-  .tag b{color:var(--ink)}
-  .tag2{color:var(--faint);font-size:13.5px;margin-bottom:26px}
+  main section { padding: 2.5rem 0 1rem; border-top: 1px solid var(--rule); margin-top: 2rem; }
+  h2 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .5rem; letter-spacing: -.01em; }
+  h3 { font-size: 1.05rem; margin: 0 0 .3rem; }
+  section > p { max-width: 42rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 1rem 1.1rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+  .card h3 kbd { font-size: .85em; margin-right: .3em; }
 
-  /* ── THE TERMINAL ── */
-  .term{max-width:900px;margin:26px auto 0;background:var(--term);border:1px solid var(--border2);border-radius:12px;overflow:hidden;box-shadow:0 40px 100px -35px rgba(0,0,0,.85),0 0 0 1px rgba(135,214,75,.04)}
-  .term-bar{display:flex;align-items:center;gap:8px;padding:11px 15px;background:#0b0f17;border-bottom:1px solid var(--border)}
-  .dot{width:12px;height:12px;border-radius:50%}
-  .dot.r{background:#f0546a}.dot.y{background:#f2b53d}.dot.g{background:#87d64b}
-  .term-title{margin-left:10px;color:var(--faint);font-size:12.5px;flex:1;text-align:center;margin-right:56px}
-  .screen{padding:16px 18px;min-height:430px;font-size:13px;line-height:1.55;white-space:pre;overflow-x:auto;position:relative}
-  @media(max-width:640px){.screen{font-size:10.5px;line-height:1.5;padding:12px}}
+  ul.ladder { list-style: none; padding: 0; margin: 1.25rem 0; }
+  ul.ladder li { padding: .35rem 0 .35rem 1.1rem; border-left: 4px solid; margin: .4rem 0; }
+  ul.ladder b { margin-right: .4rem; }
+  .g { border-color: var(--g) !important; } .g b { color: var(--g); }
+  .y { border-color: var(--y) !important; } .y b { color: var(--y); }
+  .o { border-color: var(--o) !important; } .o b { color: var(--o); }
+  .r { border-color: var(--r) !important; } .r b { color: var(--r); }
 
-  /* colors used by the render */
-  .g{color:var(--green)}.a{color:var(--amber)}.o{color:var(--orange)}.r{color:var(--red)}
-  .ac{color:var(--accent)}.mv{color:var(--mauve)}.tl{color:var(--teal)}.pk{color:var(--pink)}
-  .dm{color:var(--dim)}.ft{color:var(--faint)}.w{color:#fff}
-  .bold{font-weight:700}
-  .row-sel{background:rgba(110,168,255,.14);display:inline-block;width:100%}
-  .culprit{color:var(--red);font-weight:700}
+  pre {
+    background: var(--code); border: 1px solid var(--rule); border-radius: 8px;
+    padding: .9rem 1rem; overflow-x: auto; line-height: 1.5; margin: .75rem 0 1.25rem;
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+  .verdict { color: var(--o); }
 
-  .verdict-box{border:1px solid var(--border2);border-radius:7px;padding:9px 13px;margin:2px 0 10px;display:block;background:#0a0e15}
-  .vb-g{border-color:rgba(135,214,75,.4)}
-  .vb-y{border-color:rgba(242,181,61,.4)}
-  .vb-o{border-color:rgba(240,136,60,.45)}
-  .vb-r{border-color:rgba(240,84,106,.5);box-shadow:0 0 24px -6px rgba(240,84,106,.3)}
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.5rem; font-size: .95rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.us td { font-weight: 600; }
 
-  /* interactive hint keys */
-  .keyhint{text-align:center;margin:16px auto 0;color:var(--faint);font-size:13px}
-  .keyhint kbd{font-family:var(--mono);background:var(--panel);border:1px solid var(--border2);border-bottom-width:2px;border-radius:5px;padding:2px 8px;color:var(--ink);font-size:12px;margin:0 2px;cursor:pointer;transition:.12s;display:inline-block}
-  .keyhint kbd:hover{background:var(--border);transform:translateY(-1px)}
-  .keyhint kbd:active{transform:translateY(1px);border-bottom-width:1px}
+  dl dt { font-weight: 700; margin-top: 1.25rem; }
+  dl dd { margin: .25rem 0 0; color: var(--muted); max-width: 42rem; }
 
-  /* install */
-  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:34px 0 8px}
-  .btn{font-family:var(--mono);font-weight:600;font-size:14px;padding:12px 22px;border-radius:8px;border:1px solid transparent;cursor:pointer;transition:.15s;display:inline-flex;gap:8px;align-items:center}
-  .btn-p{background:var(--green);color:#06110a}
-  .btn-p:hover{background:#9be05f;text-decoration:none;transform:translateY(-1px)}
-  .btn-g{background:transparent;border-color:var(--border2);color:var(--ink)}
-  .btn-g:hover{border-color:var(--faint);text-decoration:none}
+  footer { border-top: 1px solid var(--rule); margin-top: 3rem; padding: 1.5rem 0 3rem; color: var(--muted); font-size: .9rem; }
+  footer ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 1rem; }
 
-  .installbox{max-width:640px;margin:22px auto 0;display:flex;align-items:center;background:var(--panel);border:1px solid var(--border2);border-radius:9px;padding:12px 14px;font-size:13px;overflow-x:auto}
-  .installbox .p{color:var(--green);margin-right:9px;user-select:none}
-  .installbox code{color:var(--ink);white-space:nowrap;flex:1}
-  .copy{background:var(--term);border:1px solid var(--border2);color:var(--dim);border-radius:6px;padding:6px 11px;font-size:12px;cursor:pointer;margin-left:10px;flex-shrink:0;transition:.15s}
-  .copy:hover{color:var(--ink)}.copy.ok{color:var(--green);border-color:var(--green)}
-
-  /* sections as terminal output */
-  section{padding:64px 0;border-top:1px solid var(--border)}
-  .sec-cmd{color:var(--faint);font-size:14px;margin-bottom:8px}
-  .sec-cmd .p{color:var(--green)}.sec-cmd .fl{color:var(--teal)}
-  h2{font-size:clamp(22px,3.4vw,32px);font-weight:800;letter-spacing:-.6px;margin-bottom:14px;line-height:1.12}
-  .lead{color:var(--dim);max-width:620px;font-size:15px}
-  .lead b{color:var(--ink)}
-
-  /* verdict ladder */
-  .ladder{margin-top:30px;display:grid;gap:10px;max-width:700px}
-  .rung{display:flex;gap:14px;align-items:flex-start;background:var(--panel);border:1px solid var(--border);border-left-width:3px;border-radius:8px;padding:13px 16px}
-  .rung .k{font-weight:700;min-width:96px;font-size:14px}
-  .rung .d{color:var(--dim);font-size:14px}
-  .rung.G{border-left-color:var(--green)} .rung.G .k{color:var(--green)}
-  .rung.Y{border-left-color:var(--amber)} .rung.Y .k{color:var(--amber)}
-  .rung.O{border-left-color:var(--orange)}.rung.O .k{color:var(--orange)}
-  .rung.R{border-left-color:var(--red)}   .rung.R .k{color:var(--red)}
-
-  /* feature list = ls -la style */
-  .feats{margin-top:26px;display:grid;gap:2px}
-  .feat{display:grid;grid-template-columns:120px 1fr;gap:16px;padding:11px 12px;border-radius:7px;transition:.12s;align-items:baseline}
-  .feat:hover{background:var(--panel)}
-  .feat .perm{color:var(--faint);font-size:13px}
-  .feat .perm .x{color:var(--green)}
-  .feat .body b{color:var(--ink)}
-  .feat .body{color:var(--dim);font-size:14.5px}
-  @media(max-width:560px){.feat{grid-template-columns:1fr;gap:3px}.feat .perm{font-size:11px}}
-
-  /* compare */
-  .cmp{width:100%;border-collapse:collapse;margin-top:26px;font-size:13.5px}
-  .cmp th,.cmp td{padding:12px 14px;text-align:left;border-bottom:1px solid var(--border)}
-  .cmp thead th{color:var(--dim);font-weight:600}
-  .cmp thead th.us{color:var(--green)}
-  .cmp tbody td:first-child{color:var(--dim)}
-  .cmp .y{color:var(--green);font-weight:700}.cmp .n{color:var(--faint)}
-  .cmp tbody tr:hover{background:var(--panel)}
-  .cmp .usc{color:var(--ink);font-weight:600}
-
-  /* faq */
-  details{background:var(--panel);border:1px solid var(--border);border-radius:9px;margin-bottom:10px;overflow:hidden}
-  summary{padding:16px 18px;cursor:pointer;font-weight:600;font-size:15px;list-style:none;display:flex;justify-content:space-between;gap:12px}
-  summary::-webkit-details-marker{display:none}
-  summary::before{content:'$ ';color:var(--green)}
-  summary::after{content:'+';color:var(--green);font-size:18px;transition:.2s}
-  details[open] summary::after{transform:rotate(45deg)}
-  details p{padding:0 18px 18px;color:var(--dim);font-size:14.5px}
-  details p code{background:var(--term);padding:2px 6px;border-radius:4px;color:var(--teal);font-size:12.5px}
-
-  footer{border-top:1px solid var(--border);padding:40px 0;text-align:center;color:var(--faint);font-size:13.5px}
-  .foot-links{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-bottom:16px}
-  .foot-links a{color:var(--dim)}
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    nav.top ul { gap: .8rem; }
+    nav.top ul li.opt { display: none; }
+    header.hero { padding-top: 2rem; }
+  }
 </style>
 </head>
 <body>
-<div class="glow"></div>
 
-<div class="topbar"><div class="wrap">
-  <span class="logo">rock<span class="b">bottom</span><span class="cur">▁</span></span>
-  <nav class="topnav">
-    <a href="#what">what</a><a href="#verdict">verdict</a><a href="#feats">features</a>
-    <a href="#compare">vs htop</a><a href="#faq">faq</a>
-    <a class="star" href="https://github.com/1ay1/rockbottom">★ github</a>
-  </nav>
-</div></div>
-
-<div class="hero"><div class="wrap">
-  <div class="kicker"><span class="p">$</span> man rockbottom &nbsp;<span class="ft">— the system monitor that talks back</span></div>
-  <h1>htop shows you the numbers.<br><span class="grad">rockbottom reads them.</span></h1>
-  <p class="tag">Every other monitor hands you an X-ray and says "good luck." rockbottom is the doctor who actually <b>tells you what's wrong</b> — in one sentence, and points at the process doing it.</p>
-  <p class="tag2">↓ this is a live <b style="color:var(--dim)">rb</b> — it's running right now. poke it.</p>
-
-  <!-- LIVE INTERACTIVE TERMINAL -->
-  <div class="term">
-    <div class="term-bar">
-      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-      <span class="term-title" id="tt">you@laptop — rb — 92×26</span>
-    </div>
-    <div class="screen" id="screen" tabindex="0" aria-label="Interactive rockbottom terminal demo"></div>
+<nav class="top" aria-label="Contents">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.svg" alt="" width="22" height="22">rockbottom</a>
+    <ul>
+      <li><a href="#verdict">Verdict</a></li>
+      <li><a href="#panes">Panes</a></li>
+      <li class="opt"><a href="#cost">Cost</a></li>
+      <li><a href="#install">Install</a></li>
+      <li class="opt"><a href="#keys">Keys</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="https://github.com/1ay1/rockbottom">GitHub</a></li>
+    </ul>
   </div>
+</nav>
 
-  <div class="keyhint">
-    poke it:
-    <kbd data-k="1">1</kbd><kbd data-k="4">4</kbd><kbd data-k="7">7</kbd> panes ·
-    <kbd data-k="spike">spike</kbd> stress it ·
-    <kbd data-k="x">x</kbd> kill the hog ·
-    <kbd data-k="t">t</kbd> tree ·
-    <kbd data-k="calm">calm</kbd> reset
+<div class="wrap" id="top">
+
+<header class="hero">
+  <h1>rockbottom <span class="what">system monitor</span></h1>
+  <p class="tag">The system monitor that reads your machine for you.</p>
+  <p class="lede">A free, open source terminal system monitor for Linux and macOS. <code>htop</code> and <code>btop</code> show you the numbers and leave. <code>rb</code> reads them and tells you what's wrong in one plain sentence, then names the process to blame.</p>
+  <div class="actions">
+    <a class="btn primary" href="#install">Install rb</a>
+    <a class="btn" href="https://github.com/1ay1/rockbottom/releases/latest">Downloads</a>
+    <a class="btn" href="https://github.com/1ay1/rockbottom">Source code</a>
   </div>
+  <img class="shot" src="img/rockbottom.webp" width="800" height="535" loading="eager" fetchpriority="high" decoding="async"
+       alt="rockbottom running in a terminal: a verdict banner at the top, CPU, memory, disk and network panels, and the process list">
+</header>
 
-  <div class="cta">
-    <a class="btn btn-p" href="#install">▁ install in one line</a>
-    <a class="btn btn-g" href="https://github.com/1ay1/rockbottom">github →</a>
+<main>
+
+<section id="verdict">
+  <h2>One sentence instead of a wall of numbers</h2>
+  <p>At the top of the screen sits the verdict. It's colour coded, so you can tell at a glance if you need to care.</p>
+<pre><code>╭───────────────────────────────────────────────────────────────╮
+│ <span class="verdict">▲ Working hard — CPU is heavily loaded   chrome (pid 4160) …</span>  │
+╰───────────────────────────────────────────────────────────────╯</code></pre>
+  <ul class="ladder">
+    <li class="g"><b>Calm</b>it's fine. nothing to do.</li>
+    <li class="y"><b>Busy</b>something is working, and that's allowed.</li>
+    <li class="o"><b>Stressed</b>now look at the process it named.</li>
+    <li class="r"><b>Critical</b>time to close some things.</li>
+  </ul>
+  <p>Under it, Linux PSI pressure chips show how long tasks sat waiting on CPU, memory or I/O. That's the kernel telling you where the bottleneck is, and most monitors don't show it at all.</p>
+</section>
+
+<section id="panes">
+  <h2>Press a number, get the whole story</h2>
+  <p>Every panel opens into a full-screen pane with more detail than htop, btop and nvtop put together, and a plain-language reading at the bottom. Press the number or click the panel.</p>
+  <div class="grid">
+    <div class="card"><h3><kbd>1</kbd>CPU</h3><p>Load over time, load averages read against your core count, temperature, every core with its clock, and thermal throttling called out.</p></div>
+    <div class="card"><h3><kbd>2</kbd>Memory</h3><p>Usage trend, used / cache / buffers / available, swap with a thrash detector, memory pressure and the hungriest processes.</p></div>
+    <div class="card"><h3><kbd>3</kbd>Network</h3><p>Total down and up, then every interface with live sparklines, lifetime totals, a burst detector and link state.</p></div>
+    <div class="card"><h3><kbd>4</kbd>GPU</h3><p>Replaces nvtop. Load, VRAM, temperature, power, clocks, fan, encode/decode and the processes on VRAM. NVIDIA, AMD and Intel.</p></div>
+    <div class="card"><h3><kbd>5</kbd>Disk</h3><p>Read/write rates, I/O pressure, every filesystem with free space and type, and the processes hitting the disk right now.</p></div>
+    <div class="card"><h3><kbd>6</kbd>Process</h3><p>Full command line, its rank against every other process, disk I/O, threads, run state in plain words, owner and listening ports.</p></div>
+    <div class="card"><h3><kbd>7</kbd>Users</h3><p>Who is eating the box on a shared machine: CPU, RAM, processes, I/O and disk per user, and one key to end all of a user's processes.</p></div>
+    <div class="card"><h3><kbd>T</kbd>616 themes</h3><p>A theme picker docked next to the live UI. Type to search, preview as you move, keep it with Enter.</p></div>
   </div>
-</div></div>
+  <p>The main screen also has a process list you can filter, sort, pin and kill from, per-process disk I/O, which program owns which port, and battery.</p>
+</section>
 
-<!-- WHAT -->
-<section id="what"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> rb <span class="fl">--why</span></div>
-  <h2>You don't want a dashboard.<br>You want an answer.</h2>
-  <p class="lead">A dashboard is twelve gauges and a shrug. rockbottom employs, at great personal expense, a little guy whose entire job is to stare at all that garbage, turn to you, and deliver exactly <b>one (1) sentence</b> — the same differential diagnosis a good SRE does at a glance, except it never sleeps and it isn't tired of you.</p>
-</div></section>
-
-<!-- VERDICT -->
-<section id="verdict"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> rb <span class="fl">--verdict</span></div>
-  <h2>Four colors. That's the whole UI you need to learn.</h2>
-  <p class="lead">The verdict is color-coded, so even if you cannot read — no judgment, you clearly got this far on vibes and shape-recognition — the <b>color</b> tells you everything:</p>
-  <div class="ladder">
-    <div class="rung G"><span class="k">🟢 Calm</span><span class="d">It's fine. Put the fire extinguisher down. Step away from the fire extinguisher.</span></div>
-    <div class="rung Y"><span class="k">🟡 Busy</span><span class="d">Something is working. It is <i>allowed</i> to. Unclench.</span></div>
-    <div class="rung O"><span class="k">🟠 Stressed</span><span class="d">Okay, <i>now</i> you may look at the thing we already highlighted in red for you. Only now.</span></div>
-    <div class="rung R"><span class="k">🔴 Critical</span><span class="d">A "close some tabs" situation. You have too many tabs. You have always had too many tabs.</span></div>
-  </div>
-  <p class="lead" style="margin-top:26px">And the process doing the crime gets a fat red <b style="color:var(--red)">»</b>, so you don't walk the list whispering <i>"is it you?? is it YOU???"</i> It's Chrome. It's always Chrome. <span class="dm">htop</span> knew and said nothing, because <span class="dm">htop</span> is a coward.</p>
-</div></section>
-
-<!-- FEATURES as ls -la -->
-<section id="feats"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> ls -la <span class="fl">~/.why-its-good</span></div>
-  <h2>Genuinely clever underneath. Also kind of mean.</h2>
-  <div class="feats">
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>A real diagnosis, not a threshold ladder.</b> It weighs PSI stall pressure, live paging, per-core skew, thermals, run-queue depth and leak trends — then names the single most likely cause.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Replaces nvtop outright.</b> Full GPU monitoring — util, VRAM, temps, clocks, per-process VRAM. NVIDIA, AMD, Intel, Apple Silicon. Already built in.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Opens in ~7ms.</b> Real load, every process, every core — painted before anything slow runs. The expensive probes defer to a background tick.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>One static binary, zero dependencies.</b> Built against musl, not glibc. No loader, no shared libs, no version floor. One ELF for any Linux kernel of its arch, plus native Apple Silicon.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Won't spin your fans.</b> Fully event-driven, near-zero idle CPU. Reads files instead of forking on the hot path. A monitor shouldn't be the thing that needs monitoring.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>Answers &quot;which <i>person</i>&quot;, not just &quot;which process&quot;.</b> The USERS pane rolls every process up by owner, joins it to the passwd database and live logins, and tells you who is filling <span class="tl">/home</span> — from quotas where they exist, a budgeted background scan where they don't. Press enter on anyone for their full dashboard: cpu, ram against the rest of the box, i/o, storage vs quota, live sessions, bound ports, and their heaviest processes by both cpu <i>and</i> memory. <span class="tl">/</span> finds a user by name, uid, real name, home or shell.</div></div>
-    <div class="feat"><span class="perm">-r<span class="x">x</span>------</span><div class="body"><b>One-handed keys + a tiny query language.</b> Filter, sort, tree, renice, kill. <span class="tl">cpu:&gt;50</span> · <span class="tl">user:root</span> · <span class="tl">!chrome</span>. The other hand is holding a snack; we know.</div></div>
-  </div>
-</div></section>
-
-<!-- COMPARE -->
-<section id="compare"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> diff rockbottom <span class="fl">{top,htop,btop,nvtop}</span></div>
-  <h2>They all show the numbers. One of them reads them.</h2>
-  <div style="overflow-x:auto"><table class="cmp">
-    <thead><tr><th></th><th>top</th><th>htop</th><th>btop</th><th>nvtop</th><th class="us">rockbottom</th></tr></thead>
+<section id="cost">
+  <h2>Cheap to leave running</h2>
+  <p>A monitor that eats a core becomes part of the problem. rb is cheap on purpose, and the numbers are measured, not guessed.</p>
+  <table>
+    <thead><tr><th>At 1s refresh, idle desktop</th><th>CPU (one core)</th><th>Memory</th></tr></thead>
     <tbody>
-      <tr><td>plain-english verdict</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
-      <tr><td>names the culprit process</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
-      <tr><td>gpu monitoring built in</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td><td class="y">✓</td></tr>
-      <tr><td>per-user rollup + who is filling the disk</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
-      <tr><td>single static binary</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
-      <tr><td>zero dependencies</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y">✓</td></tr>
-      <tr><td>reads them <em>for</em> you</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="y usc">✓</td></tr>
+      <tr class="us"><td>rb</td><td class="n">~3.9% (with nvidia-smi)</td><td class="n">9 MB</td></tr>
+      <tr><td>btop</td><td class="n">~1.6%</td><td class="n">38 MB</td></tr>
+      <tr><td>htop</td><td class="n">~0.7% (no GPU)</td><td class="n">6 MB</td></tr>
     </tbody>
-  </table></div>
-</div></section>
+  </table>
+  <p>btop is cheaper on CPU and htop is cheaper still. rb uses about a quarter of btop's memory and reads your GPU the whole time. Measured on an i5-12400F with an RTX 4060 at 120×30. On an M1 the first frame shows up in about 7 ms.</p>
+</section>
 
-<!-- INSTALL -->
-<section id="install"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> curl … | sh &nbsp;<span class="ft"># no build, no package manager, no shared-library roulette</span></div>
-  <h2>One line. It verifies its own checksum.</h2>
-  <p class="lead">The installer grabs the right static binary for Linux x86_64/arm64 or Apple Silicon, checks its SHA-256, and drops <b>rb</b> in <span class="tl">~/.local/bin</span>.</p>
-  <div class="installbox">
-    <span class="p">$</span><code id="cmd">curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh</code>
-    <button class="copy" onclick="copyCmd(this)">copy</button>
-  </div>
-  <div class="cta" style="margin-top:20px">
-    <a class="btn btn-g" href="https://github.com/1ay1/rockbottom/releases/latest">manual downloads + checksums →</a>
-  </div>
-</div></section>
+<section id="install">
+  <h2>Install</h2>
+  <p>One command. It downloads the right release for Linux x86_64/arm64 or Apple Silicon, checks its SHA-256, and puts <code>rb</code> in <code>~/.local/bin</code>.</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh
+rb</code></pre>
+  <p>The Linux binary is fully static (musl), so there's no glibc version floor and nothing else to install. The <a href="https://github.com/1ay1/rockbottom/releases/latest">release page</a> also has the plain binaries and checksums.</p>
 
-<!-- FAQ -->
-<section id="faq"><div class="wrap">
-  <div class="sec-cmd"><span class="p">$</span> rb <span class="fl">--doctor</span> <span class="ft"># the questions everyone asks</span></div>
-  <h2>Frequently asked</h2>
-  <div style="margin-top:26px;max-width:760px">
-    <details open><summary>what is rockbottom?</summary><p>A terminal system monitor for Linux and macOS. Instead of a wall of numbers like <code>htop</code> or <code>top</code>, it reads them and tells you what's actually wrong in one plain-English, color-coded sentence — and points at the exact process responsible.</p></details>
-    <details><summary>how is it different from htop or btop?</summary><p><code>htop</code> and <code>btop</code> display metrics and leave you to interpret them. rockbottom runs a differential diagnosis every tick and delivers a single verdict — <b>calm, busy, stressed, or critical</b> — and names the culprit. It also replaces <code>nvtop</code> for GPU monitoring, ships as one static binary with zero dependencies, and paints its first frame in about 7 milliseconds.</p></details>
-    <details><summary>how do i install it?</summary><p>Run <code>curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh</code>. It downloads the correct static binary for Linux x86_64/arm64 or Apple Silicon, verifies its SHA-256, and installs <code>rb</code> to <code>~/.local/bin</code>. No build step, no package manager, no shared libraries.</p></details>
-    <details><summary>does rockbottom itself use a lot of cpu?</summary><p>No. It's fully event-driven, reads files instead of forking subprocesses on the hot path, and sits at near-zero idle CPU. It will not spin your fans just to tell you nothing is wrong.</p></details>
-    <details><summary>which platforms are supported?</summary><p>Linux on x86_64 and arm64 (fully static musl binaries), and macOS on Apple Silicon (native arm64). Android via Termux too. No Windows build yet.</p></details>
-    <details><summary>is it free and open source?</summary><p>Yes — <b>MIT licensed</b>, free forever, written in modern C++26 on the <a href="https://github.com/1ay1/maya">maya</a> TUI framework. Source, releases and issues on <a href="https://github.com/1ay1/rockbottom">GitHub</a>.</p></details>
-  </div>
-</div></section>
+  <h3 id="build">Build from source</h3>
+  <p>Needs a C++26 compiler (GCC 16+ or Clang 22+) and CMake 3.28+. On macOS use Homebrew GCC (<code>brew install gcc cmake</code>).</p>
+<pre><code>git clone --recurse-submodules https://github.com/1ay1/rockbottom
+cd rockbottom
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/rb</code></pre>
+  <p>Forgot <code>--recurse-submodules</code>? Run <code>git submodule update --init --recursive</code>.</p>
+</section>
 
-<footer><div class="wrap">
-  <div class="foot-links">
-    <a href="https://github.com/1ay1/rockbottom">github</a>
-    <a href="https://github.com/1ay1/rockbottom/releases/latest">releases</a>
-    <a href="https://github.com/1ay1/rockbottom/blob/master/README.md">docs</a>
-    <a href="https://github.com/1ay1/maya">maya</a>
-    <a href="https://github.com/1ay1/rockbottom/blob/master/LICENSE">MIT</a>
-  </div>
-  <p><span class="g">$</span> the code got a PhD so you could keep eating crayons in peace.</p>
-  <p style="margin-top:6px;color:var(--faint)">type-theoretic C++26 · © 2026 Ayush Bhat · MIT</p>
-</div></footer>
+<section id="keys">
+  <h2>Keys</h2>
+  <table>
+    <tbody>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd> / <kbd>j</kbd> <kbd>k</kbd></td><td>pick a process</td></tr>
+      <tr><td><kbd>/</kbd></td><td>filter by name or pid, e.g. <code>cpu:&gt;5</code></td></tr>
+      <tr><td><kbd>*</kbd></td><td>pin the selected process to the top</td></tr>
+      <tr><td><kbd>x</kbd> / <kbd>K</kbd></td><td>end a process (SIGTERM) / kill it (SIGKILL), asks first</td></tr>
+      <tr><td><kbd>l</kbd> / <kbd>r</kbd></td><td>send any signal / renice</td></tr>
+      <tr><td><kbd>t</kbd></td><td>switch between the process tree and the flat list</td></tr>
+      <tr><td><kbd>s</kbd></td><td>cycle sort, or <kbd>c</kbd> cpu · <kbd>m</kbd> mem · <kbd>i</kbd> i/o · <kbd>n</kbd> name · <kbd>P</kbd> pid · <kbd>o</kbd> port, <kbd>R</kbd> reverses</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>7</kbd> / <kbd>Enter</kbd></td><td>open a detail pane</td></tr>
+      <tr><td><kbd>p</kbd> / <kbd>Space</kbd></td><td>pause and resume</td></tr>
+      <tr><td><kbd>T</kbd></td><td>theme picker</td></tr>
+      <tr><td><kbd>?</kbd></td><td>full key reference</td></tr>
+      <tr><td><kbd>q</kbd></td><td>quit</td></tr>
+    </tbody>
+  </table>
+</section>
 
-<script>
-/* ─────────────────────────────────────────────────────────────
-   A tiny live simulation of `rb`. Not a video, not a gif — a real
-   render loop over a fake machine whose load actually moves, whose
-   verdict actually changes, and that you can actually poke.
-   ───────────────────────────────────────────────────────────── */
-(function(){
-  const screen = document.getElementById('screen');
-  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const span=(c,t)=>`<span class="${c}">${esc(t)}</span>`;
+<section id="faq">
+  <h2>Questions</h2>
+  <dl>
+    <dt>How is rockbottom different from htop or btop?</dt>
+    <dd>htop and btop show you the numbers. rockbottom reads them and tells you what's going on in one sentence: calm, busy, stressed or critical, and which process is to blame.</dd>
+    <dt>Which platforms does rockbottom run on?</dt>
+    <dd>Linux (x86_64 and arm64) and macOS on Apple Silicon or Intel. Windows is not supported.</dd>
+    <dt>Does it need any libraries installed?</dt>
+    <dd>No. The Linux release is one fully static binary built against musl, so it runs on any Linux kernel of its architecture with nothing else installed.</dd>
+    <dt>Can it replace nvtop?</dt>
+    <dd>For most people, yes. Press 4 for the GPU pane: load over time, VRAM, temperature, power, clocks, fan, encode and decode load, and the processes using VRAM. It works with NVIDIA, AMD and Intel.</dd>
+    <dt>A panel is empty. Why?</dt>
+    <dd>Each collector leaves its field blank when the data isn't there, for example a masked /sys or an ioctl that needs root. Run rb --doctor to see every collector's status and why, and paste it into the bug report.</dd>
+    <dt>Is rockbottom free?</dt>
+    <dd>Yes. It is free and open source software under the MIT license.</dd>
+  </dl>
+</section>
 
-  // fake process table — the star of the show is chrome
-  const procs=[
-    {pid:4160,user:'you', name:'chrome',        base:14, cpu:14, mem:2.1, star:true},
-    {pid:3092,user:'you', name:'Code Helper',   base:8,  cpu:8,  mem:0.5},
-    {pid:8801,user:'you', name:'node',          base:5,  cpu:5,  mem:0.9},
-    {pid:1201,user:'root',name:'WindowServer',  base:2,  cpu:2,  mem:0.2},
-    {pid:622, user:'you', name:'Spotify',       base:3,  cpu:3,  mem:0.4},
-    {pid:99,  user:'root',name:'kernel_task',   base:1,  cpu:1,  mem:0.1},
-    {pid:7734,user:'you', name:'ghostty',       base:2,  cpu:2,  mem:0.3},
-    {pid:5510,user:'you', name:'rustc',         base:1,  cpu:1,  mem:0.6},
-  ];
+</main>
 
-  let mode='hero';          // hero | cpu | gpu | tree
-  let sel=0;                // selected row
-  let stress=0;             // 0..1 how hard the machine is pushed
-  let killed=null;          // name of a killed proc + ttl
-  let t=0;                  // tick counter
-  const N=22;               // sparkline width
-  const cpuHist=Array(N).fill(12), memHist=Array(N).fill(38), gpuHist=Array(N).fill(20);
+<footer>
+  <ul>
+    <li><a href="https://github.com/1ay1/rockbottom">Source code</a></li>
+    <li><a href="https://github.com/1ay1/rockbottom/issues">Issues</a></li>
+    <li><a href="https://github.com/1ay1/rockbottom/releases">Releases</a></li>
+    <li><a href="https://github.com/1ay1/maya">maya, the TUI framework</a></li>
+  </ul>
+  <p>rockbottom &copy; 2026 Ayush Bhat. Released under the MIT license.</p>
+</footer>
 
-  const bars='▁▂▃▄▅▆▇█';
-  function spark(hist,cls){
-    return hist.map(v=>{const i=Math.max(0,Math.min(7,Math.round(v/100*7)));return span(cls,bars[i]);}).join('');
-  }
-  function meter(pct,cls,w){
-    w=w||14;const f=Math.round(pct/100*w);
-    return span(cls,'█'.repeat(f))+span('ft','░'.repeat(w-f));
-  }
-  function rjust(s,n){s=''+s;return ' '.repeat(Math.max(0,n-s.length))+s;}
-  function ljust(s,n){s=''+s;return s+' '.repeat(Math.max(0,n-s.length));}
-
-  // recompute the machine each tick
-  function step(){
-    t++;
-    // drift stress toward a target with noise; chrome eats most of it
-    procs.forEach(p=>{
-      const jitter=(Math.random()-0.5)*3;
-      let target=p.base + (p.star?stress*70:stress*8*Math.random());
-      p.cpu = Math.max(0.1, p.cpu + (target-p.cpu)*0.25 + jitter);
-      if(killed===p.name) p.cpu=0;
-    });
-    if(killed){ killed_ttl--; if(killed_ttl<=0){ const k=procs.find(p=>p.name===killed); if(k){k.cpu=0.2;k.base=0.2;} killed=null; } }
-
-    const total=Math.min(100, procs.reduce((a,p)=>a+p.cpu,0)/1.4);
-    cpuHist.push(total); cpuHist.shift();
-    const mem=38+stress*46+Math.sin(t/9)*2; memHist.push(mem); memHist.shift();
-    const gpu=(mode==='gpu'?1:1)*(18+stress*55+Math.sin(t/5)*6); gpuHist.push(Math.max(0,gpu)); gpuHist.shift();
-    return {total,mem,gpu:Math.max(0,gpu)};
-  }
-  let killed_ttl=0;
-
-  // decide the verdict from current state — mirrors verdict.cpp's spirit
-  function verdict(m){
-    const hog=[...procs].sort((a,b)=>b.cpu-a.cpu)[0];
-    const hp=Math.round(hog.cpu);
-    if(m.mem>92) return['R','vb-r','🔴','Nearly out of memory — the OOM killer is close', hog,`only 240M free of 16G`];
-    if(m.total>90) return['R','vb-r','🔴','The CPU is saturated', hog,`${hp}% on ${hog.name} — kill it and the machine is fine`];
-    if(m.total>72) return['O','vb-o','🟠','Working hard — the CPU is heavily loaded', hog,`${hp}% held by ${hog.name} (pid ${hog.pid})`];
-    if(m.total>40) return['Y','vb-y','🟡','Busy, but keeping up', hog,`top: ${hog.name} at ${hp}%`];
-    return['G','vb-g','🟢','All calm — nothing is straining this machine', hog,`cpu ${Math.round(m.total)}% · ram ${Math.round(m.mem)}% · load ${(m.total/14).toFixed(1)}`];
-  }
-  const vcls={R:'r',O:'o',Y:'a',G:'g'};
-
-  function render(){
-    const m=step();
-    const [lvl,box,glyph,head,hog,detail]=verdict(m);
-    let out='';
-
-    // command line
-    out+=span('dm','you@laptop')+span('ft',' ~ ')+span('g','$ ')+'rb\n\n';
-
-    // verdict banner
-    const vc=vcls[lvl];
-    out+=`<span class="verdict-box ${box}">`+
-         span(vc,glyph+' '+head)+
-         '   '+span('culprit','» '+hog.name)+span('dm',' — '+detail)+
-         `</span>`;
-
-    if(mode==='hero'||mode==='tree'){
-      // meters
-      out+='  '+span('tl','CPU')+'  '+spark(cpuHist, m.total>72?'o':(m.total>40?'a':'g'))+'  '+
-           span(m.total>72?'o':(m.total>40?'a':'g'), rjust(Math.round(m.total),3)+'%')+
-           span('dm','   load '+(m.total/14).toFixed(1)+'  8c/4P+4E')+'\n';
-      out+='  '+span('tl','MEM')+'  '+meter(m.mem,'ac')+'  '+span('ac',rjust(Math.round(m.mem),3)+'%')+span('dm','   '+(m.mem/100*16).toFixed(1)+'G / 16G')+'\n';
-      out+='  '+span('tl','GPU')+'  '+meter(m.gpu,'mv')+'  '+span('mv',rjust(Math.round(m.gpu),3)+'%')+span('dm','   Apple M1 · replaces nvtop')+'\n\n';
-
-      // process table (sorted by cpu)
-      const list=[...procs].sort((a,b)=>b.cpu-a.cpu);
-      out+='  '+span('dm',ljust('PID',6)+ljust('USER',8)+rjust('CPU%',5)+'  '+ljust('MEM',7)+(mode==='tree'?'  '+ljust('',3):'')+'NAME')+'\n';
-      list.forEach((p,i)=>{
-        const isSel=i===sel;
-        const cpuc=p.cpu>40?'o':(p.cpu>12?'a':'g');
-        let line='  '+ljust(p.pid,6)+ljust(p.user,8)+span(cpuc,rjust(p.cpu.toFixed(1),5))+'  '+ljust(p.mem.toFixed(1)+'G',7);
-        if(mode==='tree'){ const g=p.cpu>40?'█':p.cpu>12?'▅':'▁'; line+='  '+span(cpuc,g+'  '); }
-        line+= p.star? span('culprit','» '+p.name) : span('w',p.name);
-        if(killed===p.name) line+=span('r',' [ending…]');
-        out+= isSel? `<span class="row-sel">${line}</span>\n` : line+'\n';
-      });
-      out+='\n'+span('ft','  press 1-7 for panes · s sort · t tree · / filter · x end · ? help');
-
-    } else if(mode==='cpu'){
-      out+=span('tl','  ┌─ CPU ')+span('ft','─'.repeat(60))+'\n';
-      // a taller mountain
-      const rows=7;
-      for(let r=rows;r>=1;r--){
-        let line='  '+span('ft','│ ');
-        cpuHist.forEach(v=>{
-          const h=v/100*rows;
-          if(h>=r) line+=span(m.total>72?'o':'g','█');
-          else if(h>r-0.5) line+=span(m.total>72?'o':'g','▄');
-          else line+=' ';
-        });
-        line+= r===Math.round(rows*0.75)?span('ft'  ,'  75%'):r===Math.round(rows/2)?span('ft','  50%'):r===Math.round(rows*0.25)?span('ft','  25%'):'';
-        out+=line+'\n';
-      }
-      out+='  '+span('ft','└'+'─'.repeat(N+2))+'\n\n';
-      out+='  '+span('w','total  ')+span(m.total>72?'o':'g',Math.round(m.total)+'%')+span('dm','   user 61% · sys 12% · idle '+(100-Math.round(m.total))+'%')+'\n';
-      out+='  '+span('w','P-cluster ')+span('a','●●●●')+span('dm','  4 cores @ 3.2GHz')+'\n';
-      out+='  '+span('w','E-cluster ')+span('g','●●●●')+span('dm','  4 cores @ 2.0GHz')+'\n\n';
-      out+=span('ft','  the load-over-time mountain has an actual y-axis. revolutionary.\n  press 6 or esc to go back');
-    } else if(mode==='gpu'){
-      out+=span('mv','  ┌─ GPU ')+span('ft','─'.repeat(60))+'\n';
-      out+='  '+span('ft','│ ')+span('w','Apple M1')+span('dm','  ·  integrated  ·  ')+span('mv',Math.round(m.gpu)+'% util')+'\n';
-      out+='  '+span('ft','│ ')+'util '+meter(m.gpu,'mv',30)+'\n';
-      out+='  '+span('ft','│ ')+'vram '+meter(41,'mv',30)+span('dm','  6.6G / 16G')+'\n';
-      out+='  '+span('ft','└'+'─'.repeat(62))+'\n\n';
-      out+='  '+span('dm',ljust('PID',7)+ljust('VRAM',9)+'PROCESS')+'\n';
-      out+='  '+ljust('4160',7)+ljust('2.1G',9)+span('culprit','» chrome')+'\n';
-      out+='  '+ljust('8801',7)+ljust('1.4G',9)+span('w','node (webgl)')+'\n';
-      out+='  '+ljust('1201',7)+ljust('0.9G',9)+span('w','WindowServer')+'\n\n';
-      out+=span('ft','  yes, it replaces nvtop. yes, it was already installed.\n  press 6 or esc to go back');
-    } else if(mode==='users'){
-      // The admin pane. Mirrors the real one: cpu as a share of the whole
-      // box (not a meaningless 1179%), daemon accounts marked ·svc and
-      // sorted below people, and the three honest disk states.
-      const rows=[
-        {u:'ayush', s:2,  cpu:0.61, mem:'6.1G', pr:42, disk:'242G',    dc:'a',  svc:false},
-        {u:'build', s:0,  cpu:0.22, mem:'2.4G', pr:18, disk:'48G/50G', dc:'r',  svc:false},
-        {u:'nobody',s:0,  cpu:0.01, mem:'120M', pr:3,  disk:'\u2014',  dc:'dm', svc:true},
-        {u:'root',  s:0,  cpu:0.09, mem:'890M', pr:64, disk:'\u226512G',dc:'dm',svc:true},
-      ];
-      out+=span('pr','  \u250c\u2500 USERS ')+span('ft','\u2500'.repeat(58))+'\n';
-      out+='  '+span('ft','\u2502 ')+span('w','4 users')+span('dm','  \u00b7  127 procs  \u00b7  ')+span('a','93% cpu in use')+'\n';
-      out+='  '+span('ft','\u2502 ')+span('dm','selected  ')+span('w','ayush')+span('dm','  uid 1000  \u00b7  /bin/fish  \u00b7  /home/ayush  \u00b7  disk via scan')+'\n';
-      out+='  '+span('ft','\u2514'+'\u2500'.repeat(62))+'\n\n';
-      out+='  '+span('dm',ljust('USER',11)+rjust('CPU',5)+'  '+ljust('',10)+'  '+ljust('MEM',7)+rjust('PROC',5)+'  '+ljust('DISK',9))+'\n';
-      rows.forEach((r,i)=>{
-        const badge = r.s>0 ? ' \u25cf'+r.s : (r.svc? ' \u00b7svc' : '');
-        const nm = r.u+badge;
-        const cc = r.cpu>0.5?'o':(r.cpu>0.15?'a':'g');
-        let line='  '+(r.svc?span('dm',ljust(nm,11)):span('w',ljust(nm,11)))
-          +span(cc,rjust(Math.round(r.cpu*100)+'%',5))+'  '
-          +meter(r.cpu*100,cc,10)+'  '
-          +ljust(r.mem,7)+rjust(r.pr,5)+'  '+span(r.dc,ljust(r.disk,9));
-        out+= i===0? `<span class="row-sel">${line}</span>\n` : line+'\n';
-      });
-      out+='\n'+span('ft','  \u25b2 build is at 96% of its disk quota \u2014 that is the thing to look at\n');
-      out+=span('ft','  f filters the list to one user \u00b7 X ends everything they own\n  press 6 or esc to go back');
-    }
-
-    screen.innerHTML=out;
-  }
-
-  // ── interaction ──
-  function setMode(k){
-    if(k==='1'||k==='cpu') mode='cpu';
-    else if(k==='4'||k==='gpu') mode='gpu';
-    else if(k==='7'||k==='users') mode='users';
-    else if(k==='6'||k==='esc') mode='hero';
-    else if(k==='t') mode = (mode==='tree'?'hero':'tree');
-    else if(k==='spike'){ stress=Math.min(1,stress+0.55); }
-    else if(k==='calm'){ stress=0; killed=null; procs.forEach(p=>p.cpu=p.base); }
-    else if(k==='x'){ // kill the selected (or the hog)
-      const list=[...procs].sort((a,b)=>b.cpu-a.cpu);
-      const victim=list[sel]||list[0];
-      killed=victim.name; killed_ttl=6; stress=Math.max(0,stress-0.5);
-    }
-    else if(k==='j'){ sel=Math.min(procs.length-1,sel+1); }
-    else if(k==='k'){ sel=Math.max(0,sel-1); }
-    render();
-  }
-
-  document.querySelectorAll('.keyhint kbd').forEach(b=>{
-    b.addEventListener('click',()=>{ setMode(b.dataset.k); screen.focus(); });
-  });
-  screen.addEventListener('keydown',e=>{
-    const map={'1':'1','4':'4','6':'6','7':'7','t':'t','x':'x','j':'j','k':'k','ArrowDown':'j','ArrowUp':'k','Escape':'esc'};
-    if(map[e.key]){ e.preventDefault(); setMode(map[e.key]); }
-  });
-
-  // boot animation then the live loop
-  const boot=[
-    span('g','$ ')+'curl -fsSL …/install.sh | sh',
-    span('ft','  ✓ rb 0.3.0  ·  linux/macos static  ·  sha256 ok  →  ~/.local/bin'),
-    span('g','$ ')+'rb',
-    span('ft','  reading the machine…'),
-  ];
-  let bi=0;
-  function bootLine(){
-    if(bi<boot.length){
-      screen.innerHTML = boot.slice(0,bi+1).join('\n');
-      bi++; setTimeout(bootLine, bi===1?260:bi===3?420:200);
-    } else {
-      render();
-      setInterval(render, 900);   // the live tick
-    }
-  }
-  // start when the terminal scrolls into view (perf + drama)
-  const io=new IntersectionObserver(es=>{
-    es.forEach(e=>{ if(e.isIntersecting){ bootLine(); io.disconnect(); }});
-  },{threshold:.2});
-  io.observe(screen);
-
-  // let the whole thing be keyboard-driven once focused; also react to
-  // number keys anywhere on the page for the curious
-  window.addEventListener('keydown',e=>{
-    if(document.activeElement.tagName==='INPUT') return;
-    if(['1','4','6','t'].includes(e.key)){ setMode(e.key); }
-  });
-})();
-
-function copyCmd(btn){
-  navigator.clipboard.writeText(document.getElementById('cmd').innerText).then(()=>{
-    btn.textContent='copied ✓';btn.classList.add('ok');
-    setTimeout(()=>{btn.textContent='copy';btn.classList.remove('ok')},1600);
-  });
-}
-</script>
+</div>
 </body>
 </html>
