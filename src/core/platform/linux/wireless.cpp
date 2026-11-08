@@ -22,8 +22,39 @@
 
 namespace rockbottom {
 
+// Plain Linux: the kernel's wireless table, one line per associated interface
+// ("wlp5s0: 0000   64.  -46.  -256 ..."): link quality, then signal in dBm.
+// Link speed and band come from iw/nl80211, which we don't speak; the panes
+// show what's known. Takes the strongest interface.
+void Sampler::sample_wireless_proc(Wireless& w) {
+    const std::string t = procfs::slurp("/proc/net/wireless");
+    std::size_t at = 0;
+    for (int skip = 0; skip < 2 && at != std::string::npos; ++skip)
+        if ((at = t.find('\n', at)) != std::string::npos) ++at;
+    while (at != std::string::npos && at < t.size()) {
+        const std::size_t nl = t.find('\n', at);
+        const std::string line = t.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? nl : nl + 1;
+        const auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        int status = 0;
+        double quality = 0, level = 0;
+        if (std::sscanf(line.c_str() + colon + 1, "%x %lf %lf", &status, &quality, &level) != 3)
+            continue;
+        const int dbm = static_cast<int>(level);
+        if (dbm >= 0 || dbm < -120) continue;          // not associated
+        if (w.wifi_present && dbm <= w.wifi_rssi) continue;
+        w.wifi_present = true;
+        w.wifi_rssi = dbm;
+        w.iface = sys::sanitize_display(procfs::trim(line.substr(0, colon)));
+    }
+}
+
 void Sampler::sample_wireless(Wireless& w) {
-    if (!termux::available()) return;   // desktop Linux: nothing to do
+    if (!termux::available()) {
+        sample_wireless_proc(w);
+        return;
+    }
 
     // ── WiFi ──
     if (std::string j = termux::run("termux-wifi-connectioninfo"); !j.empty()) {

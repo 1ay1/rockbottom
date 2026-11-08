@@ -90,7 +90,7 @@ public:
                 // RSSI (dBm) → coarse bars. -50 great, -80 poor.
                 LitColor wc = w.wifi_rssi >= -60 ? pal::good
                          : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
-                std::string s = "  \xf0\x9f\x93\xb6 " + w.ssid;
+                std::string s = "  \xf0\x9f\x93\xb6 " + (w.ssid.empty() ? w.iface : w.ssid);
                 if (w.wifi_rssi != 0) s += " " + std::to_string(w.wifi_rssi) + "dBm";
                 if (w.link_mbps > 0)  s += " " + std::to_string(w.link_mbps) + "M";
                 wifi = (text(s) | nowrap | fgc(wc)).build();

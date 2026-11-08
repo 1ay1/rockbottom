@@ -342,7 +342,7 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                 const char* band = w.wifi_freq >= 5000 ? "5 GHz"
                                  : w.wifi_freq >= 2400 ? "2.4 GHz" : "";
                 b.push_back(center(kv3(
-                    "wifi", w.ssid.empty() ? "—" : w.ssid, pal::sky,
+                    "wifi", !w.ssid.empty() ? w.ssid : !w.iface.empty() ? w.iface : "—", pal::sky,
                     "signal", w.wifi_rssi ? std::to_string(w.wifi_rssi) + " dBm " + qual : "—", qc,
                     "link", w.link_mbps ? std::to_string(w.link_mbps) + " Mbps" : "—", pal::good)));
                 if (!w.ip.empty() || band[0])

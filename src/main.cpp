@@ -345,8 +345,8 @@ int main(int argc, char** argv) {
         row("wireless", s.wireless.wifi_present || s.wireless.cell_present,
             (s.wireless.wifi_present || s.wireless.cell_present)
                 ? "wireless telemetry present"
-                : "no wireless — expected on desktop (this is an Android/Termux "
-                  "source; the net pane already shows link rates)");
+                : "no wireless — no associated wifi in /proc/net/wireless and no "
+                  "Termux:API (wired machines have none)");
 
         {
             // Accounts / sessions / disk-per-user. The disk half is the

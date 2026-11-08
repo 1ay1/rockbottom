@@ -322,6 +322,7 @@ struct Battery {
 struct Wireless {
     bool        wifi_present = false;
     std::string ssid;           // connected network name
+    std::string iface;          // interface, when the source names one (wlan0)
     int         wifi_rssi = 0;  // dBm, 0 if unknown (closer to 0 = stronger)
     int         link_mbps = 0;  // negotiated link speed, Mbps
     int         wifi_freq = 0;  // MHz (2400/5000 band hint)

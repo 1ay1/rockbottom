@@ -158,6 +158,7 @@ private:
     void    sample_psi(Psi&);
     void    sample_battery(Battery&);
     void    sample_wireless(Wireless&);
+    void    sample_wireless_proc(Wireless&);   // /proc/net/wireless (non-Termux)
     // User accounts (passwd + quota disk) and live login sessions. On
     // platforms without a backend this is a no-op and the vectors stay empty,
     // which the UI reads as "no account data" rather than "no users".
