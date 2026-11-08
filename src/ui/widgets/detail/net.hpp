@@ -341,15 +341,19 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
                                : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
                 const char* band = w.wifi_freq >= 5000 ? "5 GHz"
                                  : w.wifi_freq >= 2400 ? "2.4 GHz" : "";
+                // the network name on its own row: ssids run to 32 chars and a
+                // kv3 cell clips at 14
+                const std::string name = !w.ssid.empty() ? w.ssid : !w.iface.empty() ? w.iface : "—";
+                std::string head = !w.ssid.empty() && !w.iface.empty()
+                                       ? name + "  (" + w.iface + ")" : name;
+                if (w.wifi_rssi && qual[0]) head += std::string{"  \xc2\xb7 "} + qual;
+                b.push_back(center(kv("wifi", head, pal::sky)));
                 b.push_back(center(kv3(
-                    "wifi", !w.ssid.empty() ? w.ssid : !w.iface.empty() ? w.iface : "—", pal::sky,
-                    "signal", w.wifi_rssi ? std::to_string(w.wifi_rssi) + " dBm " + qual : "—", qc,
-                    "link", w.link_mbps ? std::to_string(w.link_mbps) + " Mbps" : "—", pal::good)));
-                if (!w.ip.empty() || band[0])
-                    b.push_back(center(kv3(
-                        "band", band[0] ? band : "—", pal::label,
-                        "ip", w.ip.empty() ? "—" : w.ip, pal::sky,
-                        "", "", pal::dim)));
+                    "signal", w.wifi_rssi ? std::to_string(w.wifi_rssi) + " dBm" : "—", qc,
+                    "link", w.link_mbps ? std::to_string(w.link_mbps) + " Mbps" : "—", pal::good,
+                    "band", band[0] ? band : "—", pal::label)));
+                if (!w.ip.empty())
+                    b.push_back(center(kv("ip", w.ip, pal::sky)));
             }
             if (w.cell_present) {
                 b.push_back(center(kv3(
@@ -400,6 +404,34 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             // (Errors/drops are shown as their own labelled row + live-rate
             // warning below — not duplicated as raw lifetime chips here.)
             ifcol.push_back((h(std::move(idr))).build());
+        }
+        // Split mode has no WIRELESS section (fixed band height), so the wifi
+        // link rides on its interface's entry instead; the roster packs by
+        // measured rows, so the extra line can't overflow the band.
+        if (const auto& w = s.wireless;
+            split && w.wifi_present &&
+            (ni.name == w.iface || (w.iface.empty() && ni.name.rfind("wlan", 0) == 0))) {
+            const maya::LitColor qc = w.wifi_rssi >= -60 ? pal::good
+                                    : w.wifi_rssi >= -75 ? pal::warn : pal::crit;
+            // the roster column's width (see left_w below), minus the indent
+            const int avail = std::clamp(52, 40, std::max(40, ninner - 2 - 40)) - 2;
+            int used = 2;
+            std::vector<Element> wr;
+            wr.push_back((text("  ") | nowrap).build());
+            auto field = [&](const char* label, const std::string& val, maya::LitColor c) {
+                const int cost = static_cast<int>(std::strlen(label) + string_width(val)) + 2;
+                if (val.empty() || used + cost > avail) return;
+                wr.push_back((text(label) | nowrap | fgc(pal::faint)).build());
+                wr.push_back((text(val) | nowrap | fgc(c)).build());
+                wr.push_back((text("  ") | nowrap).build());
+                used += cost;
+            };
+            field("wifi ", w.ssid, pal::sky);
+            if (w.wifi_rssi) field("", std::to_string(w.wifi_rssi) + " dBm", qc);
+            if (w.link_mbps) field("", std::to_string(w.link_mbps) + " Mbps", pal::good);
+            field("", w.wifi_freq >= 5000 ? "5 GHz" : w.wifi_freq >= 2400 ? "2.4 GHz" : "",
+                  pal::label);
+            if (wr.size() > 1) ifcol.push_back((h(std::move(wr))).build());
         }
         if (split) {
             ifcol.push_back(flow_row("  \xe2\x96\xbc rx", pal::sky, rxn.data(), ni.hist_len, pal::sky,
@@ -476,7 +508,11 @@ inline std::vector<Element> net_body(const Snapshot& s, const Ctx& cx) {
             const std::size_t half = (ifcol.size() + 1) / 2;
             for (std::size_t i = 0; i < ifcol.size(); ++i)
                 (i < half ? L : R).push_back(std::move(ifcol[i]));
-            return two_col(std::move(uw_left), std::move(uw_right));
+            // the traffic hero, summary and WIRELESS built above stay on top;
+            // returning the columns alone dropped all of them
+            for (auto& e : two_col(std::move(uw_left), std::move(uw_right)))
+                b.push_back(std::move(e));
+            return b;
         }
         for (auto& e : ifcol) b.push_back(std::move(e));
         if (!s.connections.empty()) {
