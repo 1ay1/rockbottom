@@ -511,6 +511,63 @@ void collect_intel(std::vector<GpuInfo>& out) {
     }
 }
 
+// ── Mobile GPUs (Android, SBCs) ─────────────────────────────────────────────
+// Mali (mali_kbase) and Adreno (kgsl) are platform devices, not DRM cards, so
+// the walk above never finds them. Android's sandbox hides most of their
+// nodes but usually leaves the clock and memory readable.
+constexpr const char* kMaliDev = "/sys/class/misc/mali0/device";
+constexpr const char* kKgslDev = "/sys/class/kgsl/kgsl-3d0";
+
+bool has_mobile_gpu() {
+    return !slurp(std::string(kMaliDev) + "/cur_freq").empty() ||
+           !slurp(std::string(kMaliDev) + "/total_gpu_mem").empty() ||
+           !slurp(std::string(kKgslDev) + "/gpuclk").empty() ||
+           !slurp(std::string(kKgslDev) + "/gpu_busy_percentage").empty();
+}
+
+void collect_mobile(std::vector<GpuInfo>& out, std::uint64_t ram_total) {
+    const std::string mali = kMaliDev, kgsl = kKgslDev;
+    if (const std::string f = trim(first_line(slurp(mali + "/cur_freq"))); !f.empty() ||
+        !slurp(mali + "/total_gpu_mem").empty()) {
+        GpuInfo g;
+        g.vendor = "ARM";
+        g.name = "Mali GPU";
+        // "Mali-G78 10 cores r1p1 0x9091" when the sandbox allows it
+        if (const std::string info = trim(first_line(slurp(mali + "/gpuinfo"))); !info.empty()) {
+            const std::size_t sp = info.find(' ');
+            g.name = sanitize_display(info.substr(0, sp));
+            if (sp != std::string::npos) g.cores = std::atoi(info.c_str() + sp + 1);
+        }
+        g.unified = true;
+        if (!f.empty()) g.core_clock = Hertz{std::strtoull(f.c_str(), nullptr, 10) * 1000ull};  // kHz
+        // "utilization" is busy %, when readable
+        const std::string u = trim(first_line(slurp(mali + "/utilization")));
+        g.usage_known = !u.empty();
+        if (g.usage_known) g.usage = Ratio{std::clamp(std::atof(u.c_str()) / 100.0, 0.0, 1.0)};
+        const std::uint64_t used = read_u64(mali + "/total_gpu_mem");
+        g.mem_used = Bytes{used};
+        g.mem_total = Bytes{ram_total};
+        if (ram_total) g.mem_usage = Ratio{std::min(1.0, double(used) / double(ram_total))};
+        out.push_back(std::move(g));
+    }
+    if (const std::string busy = trim(first_line(slurp(kgsl + "/gpu_busy_percentage")));
+        !busy.empty() || !slurp(kgsl + "/gpuclk").empty()) {
+        GpuInfo g;
+        g.vendor = "Qualcomm";
+        g.name = "Adreno GPU";
+        if (const std::string m = trim(first_line(slurp(kgsl + "/gpu_model"))); !m.empty())
+            g.name = sanitize_display(m);
+        g.unified = true;
+        g.usage_known = !busy.empty();
+        // "42 %"
+        if (g.usage_known) g.usage = Ratio{std::clamp(std::atof(busy.c_str()) / 100.0, 0.0, 1.0)};
+        g.core_clock = Hertz{read_u64(kgsl + "/gpuclk")};  // Hz
+        if (const std::uint64_t t = read_u64(kgsl + "/temp")) g.temp_c = static_cast<float>(t) / 1000.0f;
+        g.mem_total = Bytes{ram_total};
+        out.push_back(std::move(g));
+    }
+}
+
 // ── DRM fdinfo: per-process VRAM + engine time (AMD, Intel, any modern DRM) ──
 // The kernel exposes each process's GPU usage through /proc/<pid>/fdinfo/<fd>
 // on any open DRM device. Keys of interest (present since ~5.14, universal on
@@ -627,8 +684,9 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
     // scales up as the refresh rate rises. Static init is thread-safe (this
     // collector only runs on the sampler thread anyway).
     static const bool have_nvidia = nvidia_smi_exists() && has_nvidia_card();
+    static const bool have_mobile = has_mobile_gpu();
     static const bool have_gpu = [] {
-        if (have_nvidia) return true;
+        if (have_nvidia || have_mobile) return true;
         std::error_code ec;
         for (int i = 0; i < 8; ++i) {
             std::string dev = "/sys/class/drm/card" + std::to_string(i) + "/device";
@@ -643,6 +701,7 @@ void Sampler::sample_gpu(std::vector<GpuInfo>& gpus, bool with_procs) {
         collect_nvidia(gpus, with_procs, smi_stream());
     collect_amd(gpus);
     collect_intel(gpus);
+    if (have_mobile) collect_mobile(gpus, ram_total_.value);
 
     // AMD / Intel per-process VRAM via DRM fdinfo (nvidia already has its own
     // apps list from pmon/query). Attribute to the first matching-vendor GPU.

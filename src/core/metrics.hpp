@@ -358,6 +358,7 @@ struct GpuInfo {
     int                   cores = 0;      // GPU core count (Apple) / SM count, 0 unknown
     bool                  unified = false;// unified memory (Apple Silicon) — VRAM is RAM
     Ratio                 usage{};        // core/SM busy fraction 0..1
+    bool                  usage_known = true; // false when the platform hides it
     Ratio                 renderer_usage{}; // 3D/render engine busy (Apple)
     Ratio                 tiler_usage{};    // tiler / geometry engine busy (Apple)
     Ratio                 mem_usage{};    // vram used / total 0..1

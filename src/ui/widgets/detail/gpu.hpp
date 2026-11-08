@@ -67,6 +67,12 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         }
         {
             const int gh = std::max(4, cx.graph_h - (s.gpus.size() > 1 ? 3 : 0));
+            // with the load hidden, graph memory alone
+            if (!g.usage_known)
+                H.push_back(hero_graph(g.mem_usage.v, pal::mem_ac, "gpu memory",
+                                       g.mem_history.data(), g.mem_hist_len, gh, pal::mem_ac,
+                                       nullptr, 0, pal::mem_ac));
+            else
             H.push_back(hero_graph(g.usage.v, load_color(g.usage.v), "gpu busy",
                                    g.util_history.data(), g.hist_len, gh,
                                    pal::gpu_ac,
@@ -79,7 +85,10 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
         // pipeline into renderer (3D/fragment) and tiler (geometry); NVIDIA
         // reports NVENC/NVDEC video engines.
         L.push_back(section("ENGINES", pal::gpu_ac));
-        L.push_back(bar("core", g.usage.v, "overall GPU busy", load_color(g.usage.v), cx.wide ? 34 : 0));
+        if (!g.usage_known)
+            L.push_back(verdict("load is hidden on this platform; clock and memory are live.", pal::dim));
+        else
+            L.push_back(bar("core", g.usage.v, "overall GPU busy", load_color(g.usage.v), cx.wide ? 34 : 0));
         // Gate the extra engine rows on the VENDOR, not the live value — a
         // renderer at 0% must render as an empty meter, not vanish, or the
         // pane's layout breathes with the workload.
@@ -163,6 +172,7 @@ inline std::vector<Element> gpu_body(const Snapshot& s, const Ctx& cx) {
             else if (g.unified && mu > 0.5) { msg = "▲ the GPU holds over half of system RAM — apps and GPU are fighting for memory"; c = pal::hot; }
             else if (u > 0.9) { msg = "▲ pinned at full load — this is your bottleneck right now"; c = pal::hot; }
             else if (g.temp_c > 84) { msg = "▲ running hot — the card may be thermal-throttling"; c = pal::hot; }
+            else if (!g.usage_known) { msg = "● memory and clock look normal"; c = pal::good; }
             else if (u < 0.05 && mu < 0.2) { msg = "● idle — nothing is really using the GPU"; c = pal::good; }
             else { msg = "● working normally — comfortable load and thermals"; c = pal::good; }
             L.push_back(verdict(msg, c));
