@@ -16,6 +16,7 @@
 
 #include "../../sampler.hpp"
 #include "termux.hpp"
+#include "nl80211.hpp"
 
 #include <cstdlib>
 #include <string>
@@ -47,6 +48,16 @@ void Sampler::sample_wireless_proc(Wireless& w) {
         w.wifi_present = true;
         w.wifi_rssi = dbm;
         w.iface = sys::sanitize_display(procfs::trim(line.substr(0, colon)));
+    }
+    // name, band and speed: nl80211, as `iw dev <if> link` reads them
+    if (!w.iface.empty()) {
+        nl80211::Link l;
+        if (nl80211::link(w.iface, l)) {
+            if (!l.ssid.empty()) w.ssid = sys::sanitize_display(l.ssid);
+            w.wifi_freq = l.freq_mhz;
+            w.link_mbps = std::max(l.tx_mbps, l.rx_mbps);
+            if (l.signal_dbm) w.wifi_rssi = l.signal_dbm;
+        }
     }
 }
 
