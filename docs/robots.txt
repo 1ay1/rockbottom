@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://1ay1.github.io/rockbottom/sitemap.xml
