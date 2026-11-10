@@ -14,7 +14,6 @@ blame. Linux and macOS, one binary, MIT.
   <img src="assets/rockbottom.gif" alt="rockbottom: the verdict says memory pressure, actively swapping; CPU, memory, network, disk and the process list below" width="800">
 </p>
 
-[Website](https://1ay1.github.io/rockbottom/) ·
 [Releases](https://github.com/1ay1/rockbottom/releases) ·
 [Issues](https://github.com/1ay1/rockbottom/issues)
 
