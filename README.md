@@ -1,141 +1,45 @@
-<div align="center">
+# rockbottom
 
-```
-██████╗  ██████╗  ██████╗██╗  ██╗██████╗  ██████╗ ████████╗████████╗ ██████╗ ███╗   ███╗
-██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝██╔══██╗██╔═══██╗╚══██╔══╝╚══██╔══╝██╔═══██╗████╗ ████║
-██████╔╝██║   ██║██║     █████╔╝ ██████╔╝██║   ██║   ██║      ██║   ██║   ██║██╔████╔██║
-██╔══██╗██║   ██║██║     ██╔═██╗ ██╔══██╗██║   ██║   ██║      ██║   ██║   ██║██║╚██╔╝██║
-██║  ██║╚██████╔╝╚██████╗██║  ██╗██████╔╝╚██████╔╝   ██║      ██║   ╚██████╔╝██║ ╚═╝ ██║
-╚═╝  ╚═╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝      ╚═╝    ╚═════╝ ╚═╝     ╚═╝
-▇▆▅▄▃▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
-```
+**A terminal system monitor that reads the numbers for you.** One sentence at
+the top says whether your computer is fine and, if it isn't, which process is to
+blame. Linux and macOS, one binary, MIT.
 
-</div>
-
-<p align="center">
-  <b>rb</b> — a system monitor for people who open <code>htop</code>, whisper <b>"what in god's name,"</b> and close it forever.<br>
-  Every other monitor <i>shows</i> you the numbers and then leaves, like a doctor who hands you an X-ray and says "good luck." rockbottom <b>reads them for you</b> and says, slowly, kindly, like you're a spooked horse: <b>"your computer is fine, buddy."</b>
-</p>
-
-<p align="center">
-  <img src="assets/rockbottom.gif" alt="rockbottom in action" width="800">
-</p>
-
-<p align="center">
-  <i>Built in type-theoretic C++26 on the <a href="https://github.com/1ay1/maya">maya</a> TUI framework — the code got a PhD so you could keep eating crayons in peace.</i>
-</p>
-
-<p align="center">
-  <b><a href="https://1ay1.github.io/rockbottom/">→ 1ay1.github.io/rockbottom</a></b> — the homepage, if you like your pitches with a color-ladder.
-</p>
-
-<p align="center">
+<p>
   <a href="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml"><img src="https://github.com/1ay1/rockbottom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  &nbsp;
   <a href="https://github.com/1ay1/rockbottom/releases/latest"><img src="https://img.shields.io/github/v/release/1ay1/rockbottom?label=download" alt="latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
 </p>
 
-<p align="center">
-  <b>Try it now — no build, no package manager, no shared-library roulette:</b>
+<p>
+  <img src="assets/rockbottom.gif" alt="rockbottom: the verdict says memory pressure, actively swapping; CPU, memory, network, disk and the process list below" width="800">
 </p>
+
+[Website](https://1ay1.github.io/rockbottom/) ·
+[Releases](https://github.com/1ay1/rockbottom/releases) ·
+[Issues](https://github.com/1ay1/rockbottom/issues)
+
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/1ay1/rockbottom/master/install.sh | sh
 rb
 ```
 
-<p align="center">
-  The installer downloads the right release for Linux x86_64/arm64 or Apple
-  Silicon, verifies its SHA-256 checksum, and installs <code>rb</code> to
-  <code>~/.local/bin</code>, then adds that directory to the startup files for
-  Bash, zsh, fish, and login <code>sh</code> sessions. Open a new terminal and
-  run <code>rb</code>. The command runs the POSIX installer via <code>sh</code>,
-  so paste it from Bash, zsh, fish, or another interactive shell. Linux binaries
-  are fully static: built against musl (not glibc), so there is no loader, no
-  shared-library dependency, and no glibc version floor — one ELF that runs on
-  any Linux kernel of its architecture.
-  <a href="https://github.com/1ay1/rockbottom/releases/latest">Release files</a>
-  also include the standalone binaries and checksums for manual installs.
-</p>
+The installer downloads the release for your machine, checks its SHA-256, puts
+`rb` in `~/.local/bin` and adds that directory to the startup files for Bash,
+zsh, fish and login `sh`. Open a new terminal and run `rb`.
 
----
+Prebuilt binaries: Linux x86_64 and arm64, and macOS on Apple Silicon. The Linux
+binary is fully static (musl): no shared libraries and no glibc version floor,
+so it runs on any Linux kernel of its architecture. On an Intel Mac,
+[build from source](#building). The
+[release page](https://github.com/1ay1/rockbottom/releases/latest) has the
+standalone binaries and checksums for a manual install.
 
-## The competition (a eulogy, delivered lovingly, at their funerals)
+## The verdict
 
-Let's go around the room. Everyone here has already died; they just haven't been told.
-
-- **`top`** — shipped the year *Ghostbusters* came out and has aged like the milk
-  in the fridge from that same year. A beige spreadsheet that updates with the
-  urgency of a DMV and the charm of a ransom note. Ask it "is my computer okay?"
-  and it stares back like a Victorian orphan. `top` isn't a tool. It's a hazing
-  ritual invented by someone who peaked before the Berlin Wall came down and never
-  emotionally recovered.
-
-- **`htop`** — `top`, but they gave the ransom note *colors.* Bold move. Now it's
-  a **rainbow** wall of numbers you still can't read, except festive, like a
-  Christmas tree assembled by a hostage. You'll press `F5`, gasp at the tree view
-  for exactly eight seconds, feel briefly like a hacker, and then close it forever
-  — the same eight seconds, every time, until you die. `htop` is a screensaver you
-  feel guilty about.
-
-- **`btop`** — okay. Okay. `btop` is *stunning.* Genuinely, breathtakingly
-  beautiful. It is also forty gauges, six graphs, braille fireworks, a theme
-  engine, and a config file longer than your lease, and when you ask it "is
-  something wrong?" it replies "here are nine hundred data points, one of them is
-  the answer, figure it out, xoxo 💋." It's a fighter-jet cockpit bolted to a
-  bicycle you don't know how to ride. Every dial is glorious. Not one of them tells
-  you the fan noise at 2am is Chrome. Again. Like it always is.
-
-- **`nvtop`** — fantastic tool! For the four minutes a year you remember it exists,
-  *and* it's installed, *and* your GPU driver woke up on the right side of the bed.
-  The other 525,596 minutes it's a `command not found` with a great personality.
-  We just... put the GPU in the main app. Press `4`. It's already there. It was
-  always there. You're welcome; try not to cry.
-
-- **`bottom`** (the Rust one, `btm`) — respectfully — *respectfully* — they took
-  the good name, spent a year rewriting `htop` in a language that makes you say so,
-  gave it rounded corners, and called it a day. It's fine! It's genuinely fine. It
-  is the most polite restatement of the problem ever committed to a crate registry.
-  It shows you the numbers with *excellent memory safety* and then, like all the
-  others, leaves you alone in the room with them. We took the name back, bolted a
-  **rock** to it, and — this is the twist — actually answered the question. Go
-  ahead and rewrite it in Rust again. We'll be over here telling a human what's
-  wrong with their computer, in a sentence, out loud.
-
-Every single one of them **shows** you the numbers. **Not one of them reads the
-numbers.** That's the whole bit. That is the entire, gaping, market-sized hole in
-the ground, and we reversed a truck into it, honking.
-
-## Are you the target audience? (a diagnostic quiz)
-
-1. When the fan spins up, do you (a) inspect the process tree, or (b) sniff the air
-   and announce "something's burning" to an empty room?
-2. Is "have you tried turning it off and on again" not a joke to you, but your
-   *entire IT department*, its mission statement, and its only employee?
-3. Have you ever killed the wrong process with total confidence, immediately
-   followed by a regret so pure and so deep it echoed?
-4. Do you believe "the cloud" is a place, and that it has weather?
-
-Answer anything other than a stunned, guilty silence and **welcome home.** You are
-precisely who we built this for. We are not mad. We are *proud.* You made it this
-far into a README — that's further than you made it into `htop`.
-
-## The problem, stated plainly
-
-`htop` and `btop` are beautiful and `top` is a war crime, but they all commit the
-same original sin: they answer "**is my computer okay?**" with a cheerful,
-booming *"you figure it out, champ!"* and then whistle out of the room.
-
-So you stare. You nod, sagely, understanding nothing. You develop a deep and
-religious fear of the numbers. Eventually you pick a process at random, kill it,
-and either the problem vanishes (you're a wizard) or your audio dies until the
-next reboot (you are not a wizard, and you never were). **This is not a system
-monitor. This is a hostage negotiation, and the graphs are the ransom demand.**
-
-## The fix: we read it for you
-
-rockbottom employs, at great personal expense, a little guy whose entire job is to
-stare at all that garbage, turn to you, and deliver exactly one (1) sentence:
+`htop` and `btop` show you the numbers. rockbottom reads them and answers "is my
+computer okay?" at the top of the screen:
 
 ```
 ╭───────────────────────────────────────────────────────────────╮
@@ -143,383 +47,246 @@ stare at all that garbage, turn to you, and deliver exactly one (1) sentence:
 ╰───────────────────────────────────────────────────────────────╯
 ```
 
-That's the **verdict.** It's color-coded, so even if you cannot read — no judgment,
-you clearly got this far on vibes and shape-recognition alone — the *color* tells
-you everything:
+It's colour coded, so you can tell at a glance whether you need to care:
 
-- 🟢 **Calm** — it's fine. Put the fire extinguisher down. Step away from the fire
-  extinguisher.
-- 🟡 **Busy** — something is working. It is *allowed* to. Unclench.
-- 🟠 **Stressed** — okay, *now* you may look at the thing we already highlighted in
-  red for you. Only now. Good.
-- 🔴 **Critical** — this is a "close some tabs" situation. You have too many tabs.
-  You have always had too many tabs. At this point it isn't a habit, it's a
-  personality, and we love that for you, but close them.
+| Verdict | Meaning |
+|---|---|
+| **Calm** | Nothing to do. |
+| **Busy** | Something is working, and that's allowed. |
+| **Stressed** | Look at the process it named. |
+| **Critical** | Time to close some things. |
 
-And the process actually doing the crime? We slap a fat `»` on it and paint it red,
-so you don't have to walk down the list pointing at each row whispering *"is it
-you?? is it YOU???"* like a detective who peaked in a kindergarten production of
-*Clue.* **It's Chrome.** It's *always* Chrome. It was Chrome before you finished
-reading the question. `htop` knew, and `htop` said nothing, because `htop` is a
-coward.
+The process responsible is marked `»` and highlighted in the list, so you don't
+have to hunt for it.
 
-**You read the one sentence. You know. That's the app.** Everything below this line
-exists purely for the two (2) days a year you feel dangerously brave.
+Under the verdict, Linux **PSI pressure chips** show how long tasks sat waiting
+on CPU, memory or I/O (`/proc/pressure`): "tasks stalled on I/O 40% of the last
+10s" is the kernel telling you where the bottleneck is. When the disk is the
+bottleneck, the verdict names the process doing the I/O.
 
-## Press a number, get the whole story (the detail panes)
+## The main screen
 
-Every panel has a **full-screen drill-down** that carries *more raw detail than
-htop, btop, nvtop, and the polite Rust fellow combined* — and then, unlike every
-last one of them, has the basic decency to **read it for you** at the bottom. Hit a
-number (or just *click the panel*, you animal) and rockbottom throws the doors
-open: a system strip up top (host / kernel / uptime / process census) and, at the
-end, a plain-language verdict, so you never once leave a screen squinting at digits
-going *"…so what?"*
+- **CPU**: total load, every core, and a load graph.
+- **Memory**: RAM and swap, with the used / cache / available split. Linux keeps
+  free memory busy as cache, so "available" is the number that matters.
+- **Disk**: read and write speed, and your drives, fullest first (btrfs
+  subvolumes counted once).
+- **Network**: download and upload per interface, with graphs.
+- **Processes**: select, filter, sort and end processes. `●` marks a process
+  that's working, `◆` one blocked on disk.
+- **Per-process disk I/O**: from `/proc/<pid>/io`; sort by it with `i`.
+- **Ports**: which program holds `:8080` (`:8080 +2` when it holds more), so an
+  "address already in use" takes one look. Sort by it with `o`.
+- **Battery**: charge in the corner, on laptops and phones.
 
-- **`1` CPU** — a big load-over-time mountain range with an actual y-axis (revolutionary),
-  live total + iowait bars, and the 1/5/15 load averages **interpreted against your
-  core count** — as in "oversubscribed — tasks are waiting for a free core,"
-  because `htop` will proudly show you `load average: 12.4` and then let you just
-  *feel things* about it, alone, forever. Plus package temp, a **distribution
-  strip** (busiest / quietest / median / average / spread / active cores — it will
-  personally rat out a single-threaded hog pinning one poor core to the wall), and
-  **every core** as its own labelled meter with its live clock speed. On Linux it
-  also reads the kernel's own thermal-throttle counters, clock cap and CPU cooling
-  state, so a laptop that throttles at 70°C gets called out instead of waiting for
-  some temperature line it never reaches.
+## Detail panes
 
-- **`2` MEMORY** — the usage-trend graph (spot the leak *before* the OOM killer
-  visits), a real physical breakdown (used / cache / buffers / available) with the
-  *available* verdict that's the only one that actually matters, the full swap saga
-  with a thrash detector, the kernel's PSI memory-pressure numbers, **and the
-  top memory-hungry processes right there in the pane** — so you're not spelunking
-  through a table sorted by hand like it's 1997 and you're waiting for a CD to burn.
+Press a number (or click a panel) for a full-screen pane with a system strip at
+the top and a plain-language reading at the bottom. `Esc` backs out one layer;
+number keys switch panes directly.
 
-- **`3` NETWORK** — an all-interfaces aggregate line (total down/up, lifetime bytes,
-  links up), then **every interface** with live rx/tx sparklines, lifetime totals,
-  a burst detector, and up/down state. Feel like a hacker in a movie. You earned it.
+- **`1` CPU**: load over time, total and iowait, the 1/5/15 load averages read
+  against your core count ("oversubscribed: tasks are waiting for a free core"),
+  temperature, a distribution strip that catches a single-threaded process
+  pinning one core, and every core with its clock. On Linux it reads the kernel's
+  thermal-throttle counters, clock cap and cooling state, so a laptop that
+  throttles at 70 °C is called out.
+- **`2` Memory**: usage trend, used / cache / buffers / available, swap with a
+  thrash detector, memory pressure, and the processes using the most memory.
+- **`3` Network**: totals, then every interface with live graphs, lifetime
+  totals, a burst detector and link state. For wifi: the network name, band,
+  link speed and signal strength (from nl80211, without running `iw`).
+- **`4` GPU**: load over time, VRAM, temperature, power against its limit,
+  clocks, fan, encode and decode load, the processes using VRAM, and a reading
+  ("VRAM is nearly full"). NVIDIA (`nvidia-smi`), AMD and Intel, plus Mali and
+  Adreno on phones and single-board computers. Anything a GPU doesn't report is
+  left out rather than shown as `N/A`; several GPUs stack.
+- **`5` Disk**: read/write graphs, I/O pressure with a bottleneck reading, every
+  filesystem with its device, free space, type and a fullness meter, and the
+  processes using the disk right now.
+- **`6` / `Enter` Process**: the selected process in full: command line, CPU and
+  memory with its rank among all processes, disk I/O, threads, run state in plain
+  words ("uninterruptible: waiting on I/O, can't be killed"), owner and listening
+  ports.
+- **`7` Users**: per person rather than per process, for shared machines. Every
+  user with their share of the CPU, RAM, process and thread count, I/O, zombies,
+  live login sessions (`●2`), and disk usage, including users with no running
+  processes. Disk usage comes from quotas when the filesystem has them, otherwise
+  from a background scan under a time budget, shown as `≥112G` while it runs and
+  `—` when nothing has measured it yet. `Enter` opens a user's dashboard, `/`
+  filters the roster, `f` filters the process list to that user, and `X` / `K`
+  ends every process they own after a `y`/`n` confirm. It refuses `root`, never
+  touches `rb` itself, and follows the user by name, so a re-sort can't retarget
+  the kill.
 
-- **`4` GPU** — **it replaces `nvtop` outright, and it's already installed, because
-  it's simply here, existing, at all times, unlike `nvtop`.** Utilisation-over-time
-  graph, core + VRAM meters, a full telemetry strip (temperature, power draw vs
-  limit, core & memory clocks, fan, perf-state, NVENC/NVDEC encode/decode load), the
-  processes actually squatting on VRAM, and a verdict ("▲ VRAM is nearly full" /
-  "pinned at full load — this is your bottleneck"). Works with NVIDIA
-  (`nvidia-smi`), AMD (`amdgpu` sysfs), and Intel; whatever your card refuses to
-  cough up is quietly left out instead of shown as a sad `N/A`. Multiple GPUs stack.
-  And it's **cheap** — the `nvidia-smi` query is throttled to once a second (the
-  per-process VRAM table to once every few), so keeping an eye on your GPU doesn't
-  itself become a background job pegging a core.
+## Keys
 
-- **`5` DISK** — system-wide read/write sparklines, I/O pressure with a bottleneck
-  verdict, **every filesystem** with its backing device, free space, used/size,
-  fstype, and a fullness meter, the fullest-mount callout, and the **processes
-  actually driving the disk right now** — so you can finally meet the program
-  sanding your SSD down to a nub.
+| Key | Action |
+|---|---|
+| `↑↓` / `j k` | select a process |
+| `g` / `G`, `PgUp` / `PgDn` | top / bottom, page up / down |
+| `/` | filter by name or pid, or `user:` `state:` `port:` `cpu:` `mem:`, `!` negates |
+| `^w` / `^u` | while filtering: delete the last term / clear it |
+| `*` | pin the selected process to the top while the rest re-sorts |
+| `t` | process tree ↔ flat list |
+| `x` / `Del` | end the process (SIGTERM) |
+| `K` | force-kill (SIGKILL) |
+| `l` | send any signal |
+| `r` | renice |
+| `X` | end every process with this name |
+| `y` / `n` | confirm / cancel a kill |
+| `s` | cycle the sort column; `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
+| `1`–`7` / `Enter` | open a detail pane |
+| `p` / `Space` | pause / resume |
+| `T` | theme picker |
+| `?` / `h` | help |
+| `q` / `Esc` | quit |
 
-- **`6` / `Enter` PROCESS** — drill into the selected process: full command line,
-  cpu + memory bars, **its rank against every other process on the machine** (so you
-  instantly know if it's *the* hog — "#1 CPU consumer right now" — instead of
-  guessing), disk read/write, thread count, a *plain-language* run-state ("◆
-  uninterruptible — wedged on I/O, can't even be killed," not a cryptic `D` you'll
-  Google, understand for nine seconds, and forget forever), owner, and its listening
-  ports. `x`/`K` still end it from right here; `↑↓` walks the list.
+The mouse works too: click a row to select it, double-click to open it, click a
+header to sort, right-click a process to end it, and the wheel scrolls lists and
+panes.
 
-- **`7` USERS** — the *admin* pane, and the one thing neither `htop` nor `btop` will
-  do for you. Every other view answers "which **process**"; on a shared box — a
-  build farm, a jump host, a lab server, a CI runner — the real question is "which
-  **person**," and the answer currently lives in an `awk` one-liner you re-derive
-  from memory every single time. Here it's one keystroke: every user on the machine
-  with their **total** CPU (as a share of the whole box, with a bar, not a
-  meaningless `1179%`), total RAM, process and thread counts, I/O rate, a zombie
-  tally (`12 (3Z)` — someone's orphaned mess), and the single busiest thing they're
-  running. Sort by `c`·`m`·`u`·`i`·`D`·`n` (cpu, mem, procs, i/o, disk, name — lowercase
-  `d` stays "open the disk pane" like it does everywhere else, and `u` takes procs
-  because `p` is pause). Pressing the same key again — or clicking an already-active
-  column header — reverses the order, and the header arrow tracks it (`▼` biggest-first,
-  `▲` reversed). Re-sorting keeps your cursor on the **same user** rather
-  than dumping it back on row 0.
+### Themes
 
-  Press **`Enter`** on anyone and you get their **whole dashboard**: a CPU trace
-  scaled to the machine (not peak-normalised — the question is how much of the
-  *box* they are), a composition bar showing their RAM against everyone else's and
-  the free space, a process-state breakdown that separates *busy* from *stuck*
-  (`D`-state is waiting on storage, and no amount of CPU will help it), read/write
-  I/O split apart, storage against quota, every live login session with where it
-  came from, every port they have bound, and their heaviest processes ranked **both
-  by CPU and by memory** — because those two disagree more often than not, and
-  showing only one of them is how you blame the wrong process.
+616 themes from [maya](https://github.com/1ay1/maya)'s registry: Catppuccin,
+Gruvbox, Nord, Tokyo Night, Dracula, Solarized, Everforest, the Alacritty, iTerm
+and Windows Terminal collections, and more. Press `T` and type. The picker docks
+beside the live screen, so you judge a theme on the real process table (below
+about 108 columns it's a centred card instead). rb remembers your choice.
 
-  On a box with sixty accounts, scrolling until you spot someone is not a way to
-  find them — so **`/`** filters the roster itself, matching name, uid, real name,
-  home or shell. It's a safety feature as much as a convenience: the destructive
-  keys target whatever the cursor is on, and a short list is one you can actually
-  verify. `esc` unwinds one layer at a time — dashboard, then filter, then the pane
-  — so you never lose more context than you asked to.
+## What it costs to run
 
-  Then act on it: **`f`** drops you back
-  to the process list already filtered to that user, and **`X`** arms a SIGTERM
-  against *every process they own* (`K` for SIGKILL) behind the same `y`/`n` confirm
-  and the same pid-reuse revalidation as every other kill in the program. `root` is
-  refused outright — "kill every root process" isn't a recovery action, it's an
-  unbootable machine — and your own `rb` is never in the blast radius.
+A monitor that takes a large share of a core becomes part of the problem it's
+describing, so rb is measured, not assumed:
 
-  The cursor is anchored to the **user**, not to a row number. The table re-sorts
-  under you every second, so a bare index means `alice` at row 3 quietly becomes
-  `bob` at row 3 the moment her build finishes — and `X` would then reap bob while
-  you were looking at alice. The selection tracks the name across every re-sort,
-  and if it somehow can't, the kill is **refused** rather than retargeted.
+| 1 s refresh, idle desktop | CPU (one core) | Memory |
+|---|---:|---:|
+| **rb** (reading the GPU) | **~3.9%** | **9 MB** |
+| btop | ~1.6% | 38 MB |
+| htop (no GPU) | ~0.7% | 6 MB |
 
-  It also answers the other half of user management. A **`●2`** badge means that
-  person has two live login sessions *right now* (from logind, or utmp) — the
-  difference between "a daemon account owns processes" and "a human is sitting at
-  this machine", which is worth knowing *before* you mass-signal them. And the
-  **DISK** column answers the question that actually gets you paged: *who is filling
-  the disk*. Users who own no running processes still get a row, because the person
-  who filled `/home` and logged out is invisible to every process-based view.
+btop uses less CPU than rb, and htop less than both; rb uses a quarter of btop's
+memory and reads your GPU the whole time. If idle CPU is all you care about, use
+htop. Measured on a 12-core i5-12400F with an RTX 4060, 120×30 terminal, median
+of three 35-second runs. The rb row includes the `nvidia-smi` process. Against
+0.5.0 on the same machine, 0.6.0 uses ~37% less CPU and ~3 MB less memory. The
+btop and htop rows are from the 0.5.0 measurement.
 
-  Disk usage is the one number here with no cheap kernel counter, so rockbottom is
-  explicit about where it came from. If the filesystem has **quotas** enabled, that's
-  exact and instant. Otherwise a **background scanner** walks each home under a hard
-  wall-clock budget — never on the render path, never more than one at a time, and
-  cancelled instantly on quit (a real 242 GB home takes ~12s to walk; a monitor that
-  blocks a frame for twelve seconds has become the problem). While a walk is still
-  running the cell reads **`≥112G`** — a floor, not a guess. And if nothing has
-  measured that user yet it reads **`—`**, *not* `0`: a confident zero for an
-  unmeasured home is a lie an admin would act on. Where a quota exists you get
-  **`48G/50G`** — the cap is the whole story, since a bare red `48G` can't tell you
-  whether the limit is 50G or 500G. The scanner matches `du -sx`
-  byte-for-byte (same `st_blocks` accounting, same hardlink dedup, same
-  don't-cross-mounts rule) — verified against four real trees.
+Where the cost goes:
 
-  A raw **145G** still can't be ranked, though — it depends entirely on whether the
-  disk is 200G or 2T. So there's a **`DISK%`** column with its own meter: the user's
-  share of the filesystem their home actually lives on (resolved by longest
-  matching mount, the same rule the kernel uses — `/home` is its own volume on some
-  boxes and a directory on `/` on others, and picking wrong turns 50% into 250%).
-  Where a quota exists it becomes the denominator instead, marked **`31.5%q`**,
-  because the cap is the limit that actually bites. Sorting by disk ranks on this
-  share, so 40G of a 50G quota correctly outranks 200G on a 4T array. Unmeasured
-  stays **`—`** — never a fabricated percentage.
+- **Drawing is cheap and flat.** maya repaints only the cells that changed; a
+  frame takes ~1.2 ms and barely grows with the terminal (80×24 to 170×45 is
+  3.4% to 4.1%). The process table builds only the visible rows, so 400
+  processes or 40,000 cost the same.
+- **Fast signals every tick, slow ones on their own cadence.** CPU, memory,
+  network and disk rates refresh each second; filesystems, sensors, ports and
+  the GPU are throttled and cached. `/proc` and sysfs files are opened once and
+  re-read with `pread`. `nvidia-smi` runs as one long-lived loop, and its
+  per-process query only while the GPU pane is open.
+- **Expensive work only while you're looking.** The per-user disk scan runs only
+  while the Users pane is open. A `/proc/<pid>/io` refusal is remembered rather
+  than retried. Profiling cut a sample from 632k syscalls to 112k.
+- **It opens immediately.** The first frame has real data in a few milliseconds;
+  slow one-time probes (the Apple SMC sensor table, IOReport, Termux:API) run a
+  tick later. On an M1 that took start-up from ~470 ms to ~7 ms.
 
-  Daemon accounts are marked **`·svc`**, dimmed, and sorted *below* real people — on
-  a normal box forty service accounts otherwise bury the three humans. The
-  unknown-owner bucket (**`?`**) sorts last for the same reason: it can't be filtered
-  to and can't be signalled, so it has no business holding the row your cursor
-  starts on. Selecting a row also prints that account's uid, shell, home, and
-  *where the disk figure came from* — `quota` and a walk that gave up halfway are
-  very different numbers and shouldn't look alike.
+Check it yourself: `rb --bench` times the sampler without the UI, and
+`RB_PHASE=1 rb --bench` breaks the cost down per collector.
 
-Every pane is **responsive** (it reflows to your terminal — more core columns on a
-wide screen, tighter on a small one) and **scrollable** (`↑↓` / `PgUp` / `PgDn` /
-`g` / `G` / the wheel, with a live scrollbar), so no matter how dense the data or
-how cramped the window, nothing clips off the edge into the void — the way it does
-in, and we cannot stress this enough, *you know exactly what.* `Esc` closes (or
-backs out one layer, if you've drilled into something); number keys switch panes
-without backing out. Clicking **inside** a pane works the pane — it doesn't slam
-the door on you — and a click outside it dismisses. It's the "okay, tell me
-*everything*" button — gorgeous, exhaustive, and it *still* tells you what it means.
+## Platform
 
-## Everything else (for your brave days)
+rockbottom is an OS-independent core (the verdict, the update loop, the units)
+on a platform backend, one directory per OS under `src/core/platform/`.
 
-- **Verdict banner** — Calm / Busy / Stressed / Critical, with the guilty party
-  named out loud in front of God and everyone. Public shaming, as a service, at no
-  extra charge.
-- **PSI pressure chips** — the Linux kernel keeps a tiny diary of how long your
-  stuff sat around waiting (`/proc/pressure`). "tasks stalled on I/O 40% of the last
-  10s" is the kernel *tattling on your own disk.* `htop` and `btop` are far too
-  well-mannered to read someone else's diary. We are not well-mannered. We read it
-  aloud, at the dinner table, in a funny voice.
-- **CPU** — one big number ("am I busy?"), a fistful of little numbers ("which of my
-  brains is busy?"), and a graph shaped like a mountain range that goes up when you
-  do things and down when you don't. It is, functionally, a very expensive mood ring.
-- **Memory** — RAM + swap meters plus the cache/available breakdown, so you can
-  finally internalize the one sacred truth every other monitor lets you panic over
-  daily: **"used" memory is a filthy, load-bearing lie.** Linux hoards free RAM like
-  a dragon on gold; it is *supposed* to look almost full. Put the credit card down.
-  You do not need more RAM. You need this paragraph, tattooed somewhere.
-- **Disk** — read/write speeds and your actual drives, fullest first (btrfs
-  subvolumes deduped, so you don't see the same disk nine times and briefly believe
-  you own a data center). Answers "why slow?" and "am I out of room?" in one glance.
-- **Network** — download ▼ and upload ▲ per interface, with adorable little graphs.
-  Watch the number go up. Nod. You are basically in a heist film now.
-- **Processes** — pick things, filter things, and **kill** things. The loudest
-  offender comes pre-highlighted, so for once in your life you kill the *right* one.
-  Dots tell you who's genuinely working (●) vs. who's just napping on the disk (◆),
-  so you stop executing sleeping programs on a hunch like a process-shaped serial
-  killer.
-- **Per-process disk I/O** — the honest, unspun "who is grinding my SSD into powder"
-  number, straight from `/proc/<pid>/io`. Sort by it with `i`. The verdict even
-  hands you the culprit's name when the disk is the bottleneck. (It's a backup you
-  configured in 2019 and forgot about. It's fine. It loves you. It just needed to
-  be seen.)
-- **Ports** — which program is squatting on `:8080` like a smug little goblin
-  (`:8080 +2`), so the next time you get "address already in use" you can evict the
-  goblin instead of rebooting the whole machine like a frightened medieval peasant.
-  Sortable with `o`.
-- **Battery** — a charge chip in the corner, because sometimes "why is it slow" has
-  the deeply humbling answer "it is on 3% and quietly begging for a charger."
+- **Linux** reads `/proc` and `/sys`: PSI pressure, per-core clocks, the iowait
+  split, per-process disk I/O, thermal throttling. On Android (Termux) it uses
+  Termux:API for battery and wifi.
+- **macOS** uses `host_processor_info` / `host_statistics64` for CPU and memory,
+  `sysctl` for swap, uptime and model, `libproc` for processes and ports, IOKit
+  for disk throughput, GPU and battery, and `getifaddrs` for the network. PSI,
+  the iowait split and per-core clocks have no macOS equivalent, so those fields
+  are left out.
 
-## "Is it actually clever under the hood, or just mean?" — Both. It's both.
+Windows isn't supported. There are no runtime dependencies, and rb sends nothing
+anywhere.
 
-You get to be casual *because* the code is a paranoid genius doing your worrying for
-you. Every number carries a **type that knows what it is**, so the program
-*physically cannot* confuse bytes with hertz and cheerfully inform you your hard
-drive runs at 3.6 gigabytes-per-second of clock speed. It won't compile. The
-compiler stands in the doorway like a bouncer, looks at your unit mismatch, and says
-"nah." Try getting *that* out of a bash one-liner you copied off a 2011 Server Fault
-answer.
+**CPU clusters.** On Apple P/E cores, Intel hybrid Core/Atom and ARM
+big.LITTLE, each CPU is labelled with its cluster and the grid groups by
+cluster. It's probed once at start-up (sysfs `cpu_core` / `cpu_atom` and
+`cpu_capacity` on Linux, `hw.perflevel*` on macOS); a machine needs a ~15%
+capability spread before anything is called a cluster. `rb --topology` prints
+what was detected:
+
+```
+model     Apple M1
+logical   8
+clusters  heterogeneous — 4 Performance + 4 Efficiency
+```
+
+## When a panel is empty
+
+Every collector leaves its field blank when the data isn't there (a masked
+`/sys`, an ioctl that needs root, no NVMe drive) and the rest keeps running.
+`rb --doctor` says which collectors work and why the others don't:
+
+```
+  gpu        yes  1 adapter(s): Apple M1
+  psi        no   no PSI — /proc/pressure absent (Linux <4.20, CONFIG_PSI=n, or
+                  not Linux). Verdict falls back to load/iowait heuristics.
+  ssd        no   no SMART data — NVMe admin ioctl needs root, or no NVMe device
+```
+
+It always exits 0. Paste its output into any bug report about a blank panel.
+`rb --selfcheck` is the strict version: it runs the real collectors, checks the
+data is sane (a non-empty process list, rb's own pid present, CPU between 0 and
+1, used ≤ total) and exits non-zero if not. CI runs it on every platform.
+
+## Under the hood
+
+Every quantity has a type that knows its unit, so mixing up bytes and hertz
+doesn't compile:
 
 ```cpp
 using Bytes = Strong<BytesTag, std::uint64_t>;      // storage / memory
 using Hertz = Strong<HertzTag, std::uint64_t>;      // clock speed
 struct Ratio { double v; };                         // a proportion, clamped [0,1]
-template <class Q> struct Rate { double per_sec; }; // Q, but per second
+template <class Q> struct Rate { double per_sec; }; // Q, per second
 
-// The ONE legal way to turn Bytes into Bytes-per-second has a name and a
-// hall pass, signed by a teacher:
+// the one way to turn Bytes into Bytes per second
 constexpr ByteRate rate(Bytes delta, double dt_sec) noexcept;
 ```
 
-That's why `4.2G` and `118M/s` and `3.60GHz` are *always* right — not because some
-exhausted human remembered the unit at 2am, but because the **type** remembered it,
-permanently, so no human ever has to again. You are safe here. The nerds have
-handled it. Go outside.
-
-## "Okay but does the fancy monitor make my fans spin?" — No. That's the whole point.
-
-A system monitor that costs you a chunk of a core to run is a monitor that becomes
-part of the problem it's describing — a smoke detector that's on fire. So rb is
-**cheap on purpose**, and we measured it instead of vibing it:
-
-| At 1s refresh, idle desktop | steady-state CPU | RSS |
-|-----------------------------|:----------------:|:---:|
-| **rb** | **~3.9% of one core** (incl. nvidia-smi) | **9 MB** |
-| btop | ~1.6% | 38 MB |
-| htop | ~0.7% (no GPU) | 6 MB |
-
-Honest reading of that table: **btop is cheaper on CPU than we are**, and htop
-is cheaper than both. We buy back a third of btop's memory and we're reading
-your GPU the whole time — htop isn't, and btop's GPU support is newer than this
-sentence. If raw idle CPU is the only axis you care about, htop wins and you
-should use htop.
-
-(Measured on a 12-core i5-12400F with an RTX 4060 at 120×30, GCC 16 `-O3`,
-median of three 35-second windows. The rb figure now counts the `nvidia-smi`
-child too, which the old one didn't. Run interleaved against 0.5.0 on the same
-machine, 0.6.0 uses ~37% less CPU (3.9% vs 6.1%) and ~3 MB less memory. The
-btop/htop rows are from the 0.5.0 measurement. An earlier version of this table
-claimed ~0.3%; that was before the users pane, the GPU collector and maya's
-jaal runtime landed, and it had stopped being true. Numbers in a README that
-nobody re-measures are just advertising.)
-
-What we do still claim, and what we re-measure every release:
-
-- **The render is basically free, and FLAT.** `view()` is a pure function and
-  maya only repaints the cells that actually changed, so a frame costs
-  **~1.2ms** — and the part every *other* monitor gets wrong — that cost barely
-  moves as your terminal grows. 80×24 to 170×45 is 3.4% to 4.1%. Stretch rb
-  across a 300-column ultrawide and it does *not* quietly start eating a core
-  the way a certain gorgeous braille-fireworks monitor does; the
-  process table only builds the rows in the visible window, so 400 processes or
-  40,000, same frame.
-- **The sampler asks the kernel for the least it can get away with.** Fast signals
-  (CPU, memory, net, disk rates) refresh every tick; slow ones (filesystems,
-  sensors, ports, GPU) run on their own throttled cadences and serve a cache in
-  between. The per-process `/proc` files and the sysfs counters are opened once
-  and re-read in place with `pread`, so a tick is ~8× fewer `open` calls than it
-  was. The one collector that *has* to shell out — `nvidia-smi` — runs as a single
-  long-lived `-lms` loop instead of a fresh process every second, and its
-  per-process queries only run while the GPU pane is open. (btop still links NVML
-  and never forks at all. We see you, btop.)
-- **Expensive work only happens when you're looking at it.** A tick is
-  *syscall*-bound, not compute-bound, so the wins come from not making the call at
-  all: `/proc/pid/io` is 0600 and about three of every four processes deny it, so a
-  refusal is latched and never retried (permission can't change without an exec,
-  and an exec invalidates the cache entry anyway). Per-process CPU history ships
-  only while something is graphing it. And the per-user disk walk — by far the most
-  expensive thing in the program, hundreds of thousands of `lstat` calls — runs
-  *only* while the USERS pane is actually open. Profiling with `perf` + `strace`
-  rather than guessing took a sample from 632k syscalls to 112k, and system time
-  from 1.03s to 0.22s.
-
-Want to check it yourself instead of trusting a README that has, admittedly, been
-unreliable about tone? `rb --bench` times the sampler alone with no UI and prints
-the steady-state cost; `RB_PHASE=1 rb --bench` breaks it down per collector so you
-can see exactly what each tick spends. The numbers above came straight out of it.
-
-**It opens now, not in a second.** Time-to-first-frame is a few milliseconds:
-the window paints with real CPU load, every process, every core and real memory
-before anything slow runs. The genuinely expensive one-time probes — enumerating
-the ~1600-key AppleSMC table for temperatures, standing up the IOReport
-subscription for per-core clocks, cold-starting Termux:API for battery/wifi — are
-detail-pane data, so they're deferred to the first background tick a heartbeat
-later instead of blocking the launch. On an M1 that moved boot-to-first-frame
-from ~470ms to ~7ms. You press the key, it's there.
-
-## Architecture (skip this; we both know you were going to)
-
-rockbottom is an **Elm-style `Program`** — pure functions, no sneaky in-place
-mutations, the kind of tidy that would make your therapist weep with pride.
-maya draws it; [jaal](https://github.com/1ay1/jaal), maya's runtime, runs the
-loop, the timers and the background thread:
+rockbottom is an Elm-style program: a `Model`, messages, one `update` per
+message and a pure `view`. [maya](https://github.com/1ay1/maya) draws it, and
+[jaal](https://github.com/1ay1/jaal), maya's runtime, runs the loop, timers and
+background thread.
 
 | Layer | Where | Role |
-|-------|-------|------|
-| Units | `src/core/units.hpp` | Strong dimensional types + the humanizers that translate scary numbers into `4.2G` |
-| Data | `src/core/metrics.hpp` | Pure `Snapshot` value types + the almighty `Verdict` |
-| Sampler | `src/core/sampler.*` + `verdict.cpp` | OS-agnostic: orchestration, cross-tick deltas, and the diagnosis engine |
-| Platform | `src/core/platform/<os>/` | The one grubby room that touches the real world — `linux/` reads `/proc` + `/sys`; `darwin/` uses mach / sysctl / libproc / IOKit. CMake compiles exactly one |
-| App | `src/ui/app.hpp` | `Model` + `Msg` + one `update` per message + a pure `view` |
-| Widgets | `src/ui/widgets/` | Panels, meters, graphs, and the detail panes (one file each) |
+|---|---|---|
+| Units | `src/core/units.hpp` | strong unit types, and the formatting (`4.2G`, `118M/s`) |
+| Data | `src/core/metrics.hpp` | the `Snapshot` value types and the `Verdict` |
+| Sampler | `src/core/sampler.*`, `verdict.cpp` | orchestration, deltas between ticks, the diagnosis |
+| Platform | `src/core/platform/<os>/` | `linux/` reads `/proc` and `/sys`; `darwin/` uses mach, sysctl, libproc, IOKit |
+| App | `src/ui/app.hpp` | `Model`, `Msg`, `update`, `view` |
+| Widgets | `src/ui/widgets/` | panels, meters, graphs and the detail panes |
 
-The program **declares what it's allowed to do**, and the compiler holds it to
-it. `Cmd` lists the effects rockbottom issues and `Sub` lists the event sources
-it reads (`on_key`, `on_mouse`, `on_resize` — no paste, no focus), so reaching
-for an effect that isn't on the list doesn't compile. Our `Cmd` row is *empty*,
-which is the interesting part: rb never sets the title, never touches your
-clipboard, never writes to scrollback. That's now a fact the build enforces
-rather than a habit.
-
-The same check runs across the thread boundary. The background sample is an
-isolated task whose body **captures nothing** — everything it needs (the sampler
-handle, the sort key, the epoch) is passed by value — and every value that
-crosses is verified as safe to send, field by field. That check earned its keep
-immediately: it flagged a `const char*` tag sitting in `UserAccount`, which is
-now a `DiskSource` enum. The pointers were harmless string literals, but the
-three call sites comparing them were each building a `std::string` to test a
-three-way tag.
-
-No pane hand-counts breakpoints like a savage. Every layout is *measured*: maya's
-responsive toolkit (`fit_row` sheds the header **and** the footer hints as they
-narrow, `pick` re-renders the detail tab bar at the richest density that actually
-fits, `col` stacks the narrow-mode stat band, `solve_columns` keeps the process
-table's header and rows on one width plan, `fill` sizes each graph to exactly the
-height left over) means the thing measured is the thing drawn — so nothing ever
-drifts off its rail at some cursed terminal size, unlike a certain gorgeous monitor
-that shall remain named earlier. See maya's
-[Responsive Layouts](third_party/maya/docs/15-responsive.md) guide.
-
-`update()` ticks once a second, like a very calm heartbeat that has done a lot of
-therapy. `view()` is a pure function of the state. The sampler keeps the last
-sample, so every rate is a real delta and not a hopeful guess. It is genuinely
-serene in here. Please take your shoes off.
+The program declares the effects it may use and the events it reads, and the
+compiler enforces it: rb's list of effects is empty, so it can't set the
+terminal title, touch your clipboard or write to scrollback. The background
+sampler captures nothing and every value crossing the thread boundary is checked
+as safe to send. Layouts are measured with maya's responsive toolkit, so the
+screen holds together at any terminal size (see
+[Responsive Layouts](third_party/maya/docs/15-responsive.md)).
 
 ## Building
 
-Needs a C++26 compiler (GCC 16+ or Clang 22+) and CMake 3.28+. Yes, it's a fancy
-compiler. The type theory has *demands.* It's an artist, and it will not be
-rushed. C++26 is a hard floor, not a preference: jaal reads a struct's fields
-with structured-binding packs (P1061), which landed in GCC 16 and Clang 22, so
-there is no C++23 fallback to fall back to.
-
-The submodules are **recursive**: maya carries jaal. `--recurse-submodules` on
-the clone handles it; if you forget, the CMake configure will tell you which one
-is missing instead of failing somewhere deep in a header.
+C++26 (GCC 16+ or Clang 22+) and CMake 3.28+. C++26 is required: jaal uses
+structured-binding packs (P1061). The submodules are recursive (maya carries
+jaal); if one is missing, CMake says which.
 
 **Linux:**
 
-```bash
+```sh
 git clone --recurse-submodules https://github.com/1ay1/rockbottom
 cd rockbottom
 cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -527,235 +294,28 @@ cmake --build build -j
 ./build/rb
 ```
 
-**macOS** (Apple Silicon or Intel) builds with Homebrew GCC — the same toolchain
-maya's own CI uses. That's the entire story: no Clang, no libc++ gymnastics, no
-tears.
+**macOS** (Apple Silicon or Intel) builds with Homebrew GCC:
 
-```bash
+```sh
 brew install gcc cmake
 git clone --recurse-submodules https://github.com/1ay1/rockbottom
 cd rockbottom
-cmake -B build -DCMAKE_BUILD_TYPE=Release   # auto-picks Homebrew g++
+cmake -B build -DCMAKE_BUILD_TYPE=Release   # picks Homebrew's newest g++
 cmake --build build -j
 ./build/rb
 ```
 
-CMake hunts down Homebrew's newest `g++-N` for you (override with
-`-DCMAKE_CXX_COMPILER=g++-15` or `CXX=...`). Apple's kernel headers use the C11
-`_Static_assert` spelling that g++ rejects at namespace scope, so the macOS backend
-aliases it to C++'s `static_assert` before any SDK header gets included
-(`src/core/platform/darwin/mach_util.hpp`) — one polite line that lets plain GCC
-parse all of mach / IOKit / libproc without a meltdown. Why not just use Clang?
-Because Apple/LLVM libc++ *still* doesn't ship `std::move_only_function`, which maya
-requires, and libstdc++ does. So GCC it is. We didn't make the rules; we just
-refuse to lose to them.
+Override the compiler with `-DCMAKE_CXX_COMPILER=g++-15` or `CXX=…`. Apple's
+libc++ doesn't ship `std::move_only_function`, which maya needs, so macOS builds
+use GCC; `src/core/platform/darwin/mach_util.hpp` makes Apple's kernel headers
+parse under it.
 
-Cloned it and forgot `--recurse-submodules`, you beautiful, chaotic disaster?
+Cloned without `--recurse-submodules`:
 
-```bash
+```sh
 git submodule update --init --recursive
 ```
 
-There. Fixed. You're welcome. We're not mad. We could never be mad at you.
-
-## Keys (mostly one hand — we assume the other is holding a snack)
-
-| Key | Action |
-|-----|--------|
-| `↑↓` / `j k` | pick a process (`j k` is for people who use vim and cannot physically stop telling you) |
-| `*` | **pin** the selected process to the top of the list and hold it there, still selected, while everything else re-sorts around it — so you can *watch one thing* without it squirming away the instant its CPU% changes. Press again (or just move the cursor) to let go. |
-| `/` | filter by name or pid (`Esc` un-does it the instant you inevitably typo) |
-| `^w` / `^u` | while filtering: delete the last term / clear the lot. `^c` cancels, like `Esc`. Same in the theme picker and the users roster filter |
-| `x` / `Del` | politely ask a process to leave (SIGTERM — it even knocks first) |
-| `K` | *firmly* remove a process (SIGKILL — still asks you first; we're unhinged, not savages) |
-| `y` / `n` | yes, commit the crime / no, I panicked, put it back |
-| `s` | cycle sort · `c` cpu · `m` mem · `i` i/o · `n` name · `P` pid · `o` port |
-| `1`–`7` / `Enter` | open a detail pane (cpu · mem · net · gpu · disk · process · users) |
-| `7` then `Enter` | open that user's full dashboard — cpu, ram, i/o, disk, sessions, ports |
-| `7` then `/` | find a user by name, uid, real name, home or shell |
-| `7` then `f` | see who's eating the box, then filter the list to that one user |
-| `7` then `D` | sort users by DISK — who is filling `/home` (quota, or a budgeted scan) |
-| `7` then `X` | end **every** process a user owns (asks first; refuses `root`, never touches `rb`) |
-| `↑↓` / `PgUp`/`PgDn` / `g`/`G` | scroll the detail pane (the wheel works too) |
-| `p` / `Space` | pause / resume (freeze the chaos so you can point at it and go "there") |
-| `T` | theme picker — **docked** beside the live UI, type to search 616 |
-| `?` / `h` | help, for when every key you just read immediately evaporates from your brain |
-| `q` / `Esc` | leave. go outside. the grass misses you. |
-
-### Themes
-
-There are **616**, and we wrote none of them. They come from
-[maya](https://github.com/1ay1/maya)'s theme registry — Catppuccin, Gruvbox,
-Nord, Tokyo Night, Dracula, Solarized, Everforest, the Alacritty / iTerm /
-Windows Terminal collections, and a long tail of the deeply weird (`Hot Dog
-Stand` is in there, and we are not going to discuss it).
-
-rb used to ship 35 hand-tuned palettes. Maintaining those meant re-tuning 35
-things by hand every time anything moved, so they're gone.
-
-Press `T` and start typing. The picker **docks to the side** rather than
-covering the screen, and the dashboard repaints beside it in whatever the
-cursor is on — so you are judging a theme by looking at the actual process
-table, not at a swatch. (Below ~108 columns there isn't room for both, so it
-falls back to a centered card.)
-
-The list narrows as you type and the matched letters light up, so you can see
-*why* a row ranked where it did: `cmocha` finds Catppuccin Mocha, `tnsto`
-finds TokyoNight Storm. Each row shows a ◐/◑ for light/dark — the one thing
-you cannot guess from a name — plus that theme's canvas, two domain accents
-and its whole load ramp, painted in its own colours.
-
-The themes you actually use float to the top, because the honest use case is
-cycling between two or three favourites, and finding those in 616
-alphabetical rows is the exact thing a long list is worst at.
-
-| In the picker | |
-|---|---|
-| type | filter |
-| `↑` `↓`, `Ctrl+N/P` | move + preview |
-| wheel | scroll the list *without* moving the preview |
-| click | preview a row; click it again to keep it |
-| `Ctrl+D` / `Ctrl+L` | only dark / only light themes |
-| `Ctrl+G` | jump back to the theme you opened with |
-| `Enter` | keep it |
-| `Esc` | clear the filter; again to revert and close |
-
-From the shell, `--theme=NAME` takes the same loose matching
-(`--theme=cmocha` works) and `rb --themes` prints all 616 one per line, so it
-pipes into `grep` or `fzf`.
-
-**What rb adds on top.** A maya theme is a vocabulary for an *app*: primary,
-surface, border, error, selection. A monitor needs something else — a four-rung
-load ramp (`good → warn → hot → crit`) where the rungs stay tellable apart at
-a glance, because that ramp *is* the reading. So rb derives its palette from
-maya's 24 slots rather than using them directly, and the ramp is **constructed
-to be ordinal instead of trusted to be**: schemes are authored for editors,
-where success/warning/error rarely sit next to each other, and a few dozen make
-them near-identical (`HaX0R Blue` uses one colour for all three). Painted
-straight through, a full disk would look like an idle one. Every scheme gets
-checked and, where needed, spread along an amber→orange→red path anchored on
-its own error hue — so it keeps its character and still tells you the truth.
-
-**Or just use your mouse, you absolute animal.** Full mouse support, zero misses:
-
-| Do this | Get that |
-|---------|----------|
-| **click a process** | pins it in place + selects it, so it stops squirming as the list re-sorts and you can keep your eyes on it |
-| **double-click a process** | opens its detail pane |
-| **click a column header** | sorts by it (CPU, MEM, DISK, PORT, NAME) |
-| **click a panel** | opens its detail pane |
-| **click inside a detail pane** | works the pane (selects a row, drags the scrollbar) — it does **not** close it; `esc` or a click outside does |
-| **click a user row** | selects that user · **double-click** opens their full dashboard |
-| **click a users column header** | sorts the roster by it — including `DISK%`; click again to reverse (▼ / ▲) |
-| **click a footer hint** | fires that action — **every hint in the strip is live**, not just some: `q`, `g`, `/`, `x`, `K`, `l`, `r`, `t`, `s`, `1-7`, `space`, `?`. (The `y`/`n` on a kill confirm are deliberately keyboard-only; a stray click must never confirm a kill.) |
-| **right-click a process** | arms an end (SIGTERM — still asks first) |
-| **right-click anywhere else** | **go back** — one level per click, same as `Esc`. Closes a detail pane, the theme picker, help, a signal menu; a zoomed user drops to the roster first. Left-click *works* an overlay, so this is the way out of one without reaching for the keyboard. |
-| **drag a scrollbar** | slides that list or pane to any position — the process list, every detail pane, and this help all grab-and-slide |
-| **scroll wheel** | rolls the process list (or the detail pane, if one's open) |
-
-The click-to-row math is anchored to the layout, so a click lands on *exactly* the
-row you clicked, at every terminal size — and the scrollbar drag reads the bar's
-real painted rectangle, so the thumb goes exactly where you drag it. No "close
-enough," no "off by one," no "why did I just kill systemd." We checked. `btop` did
-not check. `btop` is beautiful and it did not check.
-
-## Platform
-
-**Linux and macOS.** rockbottom is a thin OS-agnostic core (the verdict engine, the
-Elm loop, the strong-typed units) sitting on a **platform backend** — one directory
-per OS under `src/core/platform/`, and CMake compiles exactly one. Adding an OS is
-adding a directory; the verdict never changes, because the verdict is the whole
-point and everything else is plumbing.
-
-- **Linux** — reads `/proc` and `/sys` with its bare hands. Full fidelity: PSI
-  pressure, per-core clocks, iowait split, per-process disk I/O, the entire buffet.
-- **macOS** — talks to the kernel the native way: `host_processor_info` /
-  `host_statistics64` (CPU + memory), `sysctl` (swap, uptime, model), `libproc`
-  (processes + bound ports), IOKit (disk throughput, GPU, battery), `getifaddrs`
-  (network). A few Linux-only signals have no macOS analogue — PSI, the iowait
-  split, per-core clock — so those panes simply omit them, exactly the way the app
-  already hides a GPU field your card won't report. No fake `N/A` theater. Everything
-  else is there.
-
-No ncurses, no runtime dependencies, no phoning home to sell your fan speeds to
-advertisers. On Windows? Still not for you — but sincerely, genuinely, from the
-bottom of our hearts: props for reading this entire thing.
-
-### Per-core, per-cluster
-
-On heterogeneous silicon — Apple P/E, Intel hybrid Core/Atom, ARM big.LITTLE —
-every logical CPU is labelled with the cluster it actually belongs to, and the
-grid groups and averages by cluster. This is probed **once at startup**, not per
-tick, and never by forking a subprocess: sysfs `cpu_core`/`cpu_atom` cpulists and
-`cpu_capacity` on Linux, `hw.perflevel*` on macOS. A machine that is genuinely
-homogeneous is left alone — a ~15% capability spread is required before anything
-is called a cluster, so ordinary frequency scatter and favoured-core boost don't
-conjure a phantom P/E column on your server.
-
-To see exactly what was detected on your machine — useful in a bug report, and
-the fastest way to tell "the kernel exposed nothing" from "we misread it":
-
-```sh
-rb --topology
-```
-
-```
-model      Apple M1
-logical    8
-clusters   heterogeneous — 4 Performance + 4 Efficiency
-
- cpu  class   phys       freq     temp  load
-   0  E          -          -        -   12%
-   ...
-   4  P          -          -        -   63%
-```
-
-(`RB_SYSFS_ROOT=/path/to/a/captured/sys` replays another machine's `/sys` tree
-through the same classifier, which is how the Linux path gets tested without
-owning every CPU ever made.)
-
-## When a panel is empty
-
-Every collector in rockbottom degrades silently on purpose — if `/sys` is masked,
-the ioctl needs root, or the machine simply has no NVMe, the field goes blank and
-the tool keeps running. That's right for a monitor and useless for debugging, so
-there's a subcommand that says the quiet part out loud:
-
-```sh
-rb --doctor
-```
-
-```
-COLLECTOR    OK   DETAIL
-  procs      yes  311 processes, 1189 threads, 3 running, 0 zombie
-  cpu        yes  8 cores, 4P+4E, busy 16%
-  memory     yes  16G total, 13G available, swap 1.0G
-  diskio     no   no per-device I/O or latency — /proc/diskstats absent (normal
-                  on macOS; the aggregate read/write rate still works)
-  gpu        yes  1 adapter(s): Apple M1
-  psi        no   no PSI — /proc/pressure absent (Linux <4.20, CONFIG_PSI=n, or
-                  not Linux). Verdict falls back to load/iowait heuristics.
-  ssd        no   no SMART data — NVMe admin ioctl needs root, or no NVMe device
-```
-
-Every `no` carries the reason it's a `no`, so you can tell "this machine has no
-GPU" from "nvidia-smi isn't on PATH" from "you need root for that ioctl" without
-reaching for strace. It always exits 0 — a missing GPU is information, not
-failure. **Paste this into any bug report about a blank panel.**
-
-Its stricter sibling `rb --selfcheck` runs the real collectors and asserts the
-data is sane (non-empty process list, our own pid present, cpu in 0..1, used ≤
-total), exiting non-zero if not. That one is a pass/fail gate and runs in CI on
-every platform.
-
 ## License
 
-MIT — see [LICENSE](LICENSE). Do whatever you want; we are not your dad, and we
-would not presume. Vendored maya (and its jaal) is MIT too. Everybody's chill.
-Go be free.
-
----
-
-<p align="center">
-  <i>rockbottom: for when "is my computer okay?" finally deserved a real answer — and you deserved to never have to think about it again.</i>
-</p>
+MIT, see [LICENSE](LICENSE). The vendored maya and jaal are MIT too.
