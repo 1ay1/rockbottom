@@ -7,18 +7,18 @@
 <title>Page not found · rockbottom</title>
 <link rel="icon" href="/rockbottom/icon.svg" type="image/svg+xml">
 <style>
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0e0f10; color: #e6e6e3;
-         font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center; }
-  @media (prefers-color-scheme: light) { body { background: #fbfbfa; color: #16181a; } }
-  code { font-family: ui-monospace, Menlo, monospace; color: #f0546a; }
-  a { color: #729fcf; }
+  :root { color-scheme: light dark; --bg: #fffcf0; --fg: #100f0f; --mut: #6f6e69; --acc: #af3029; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #100f0f; --fg: #cecdc3; --mut: #878580; --acc: #d14d41; } }
+  body { margin: 0; padding: 48px 24px 0 40px; background: var(--bg); color: var(--fg);
+         font: 14px/1.7 ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+  .r { color: var(--acc); }
+  p { margin: 0 0 1.7em; }
+  a { color: var(--fg); text-underline-offset: 3px; }
+  a:hover { color: var(--acc); }
 </style>
 </head>
 <body>
-  <main>
-    <p><code>▲ Critical — this page is missing</code></p>
-    <h1>Page not found</h1>
-    <p><a href="/rockbottom/">Back to rockbottom</a></p>
-  </main>
+  <p><span class="r">▲ critical</span> — this page is missing</p>
+  <p><a href="/rockbottom/">back to rockbottom</a></p>
 </body>
 </html>
